@@ -1,0 +1,108 @@
+<!doctype html>
+
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os-preview.phil-opp.com/news/pure-rust/" />
+    
+    <link href="/css/poole.css" rel="stylesheet">
+    <link href="/css/main.css" rel="stylesheet">
+
+    <script async src="/js/main.js"></script>
+
+    <title>Writing an OS in pure Rust | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h1 class="masthead-title">
+                    <a href="https:&#x2f;&#x2f;os-preview.phil-opp.com" title="Home">Writing an OS in Rust (Second Edition)</a>
+                </h1>
+                <p><small>Philipp&nbsp;Oppermann&#x27;s&nbsp;blog</small></p>
+                
+            </div>
+        </header>
+
+        <main>
+    <h1>Writing an OS in pure Rust</h1>
+    <time datetime="2018-03-09" class="post-date">
+        Mar 09, 2018
+        
+    </time>
+    <p>Over the past six months we've been working on a second edition of this blog. Our goals for this new version are <a href="https://github.com/phil-opp/blog_os/issues/360">numerous</a> and we are still not done yet, but today we reached a major milestone: It is now possible to build the OS natively on Windows, macOS, and Linux <strong>without any non-Rust dependendencies</strong>.</p>
+<p id="zola-continue-reading"><a name="continue-reading"></a></p>
+<p>The <a href="https://os-preview.phil-opp.com/first-edition/">first edition</a> required several C-tools for building:</p>
+<ul>
+<li>We used the <a href="https://www.gnu.org/software/grub/"><code>GRUB</code></a> bootloader for booting our kernel. To create a bootable disk/CD image we used the <a href="https://www.gnu.org/software/grub/manual/grub/html_node/Invoking-grub_002dmkrescue.html"><code>grub-mkrescue</code></a> tool, which is very difficult to get to run on Windows.</li>
+<li>The <a href="https://www.gnu.org/software/xorriso/"><code>xorriso</code></a> program was also required, because it is used by <code>grub-mkrescue</code>.</li>
+<li>GRUB only boots to protected mode, so we needed some assembly code for <a href="https://os-preview.phil-opp.com/entering-longmode/">entering long mode</a>. For building the assembly code, we used the <a href="http://www.nasm.us/xdoc/2.13.03/html/nasmdoc1.html"><code>nasm</code></a> assembler.</li>
+<li>We used the GNU linker <a href="https://ftp.gnu.org/old-gnu/Manuals/ld-2.9.1/html_node/ld_3.html"><code>ld</code></a> for linking together the assembly files with the rust code, using a custom <a href="http://www.scoberlin.de/content/media/http/informatik/gcc_docs/ld_3.html">linker script</a>.</li>
+<li>Finally, we used <a href="https://www.gnu.org/software/make/"><code>make</code></a> for automating the various build steps (assembling, compiling the Rust code, linking, invoking <code>grub-mkrescue</code>).</li>
+</ul>
+<p>We got lots of feedback that this setup was difficult to get running <a href="https://github.com/phil-opp/blog_os/issues/55">under macOS</a> and Windows. As a workaround, we <a href="https://github.com/phil-opp/blog_os/pull/373">added support for docker</a>, but that still required users to install and understand an additional dependency. So when we decided to create a second edition of the blog - originally because the order of posts led to jumps in difficulty - we thought about how we could avoid these C-dependencies.</p>
+<p>There are lots of alternatives to <code>make</code>, including some Rust tools such as <a href="https://github.com/casey/just">just</a> and <a href="https://sagiegurari.github.io/cargo-make/">cargo-make</a>. Avoiding <code>nasm</code> is also possible by using Rust's <a href="https://doc.rust-lang.org/unstable-book/language-features/global-asm.html"><code>global_asm</code></a> feature instead. So there are only two problems left: the bootloader and the linker.</p>
+<h2 id="a-custom-bootloader">A custom Bootloader</h2>
+<p>To avoid the dependency on GRUB and to make things more ergonomic, we decided to write <a href="https://github.com/rust-osdev/bootloader">our own bootloader</a> using Rust's <a href="https://doc.rust-lang.org/unstable-book/language-features/global-asm.html"><code>global_asm</code></a> feature. This way, the kernel can be significantly simplified, since the switch to long mode and the initial page table layout can already be done in the bootloader. Thus, we can avoid the initial assembly level blog posts in the second edition and directly start with high level Rust code.</p>
+<p>The bootloader is still an early prototype, but it is already capable of switching to long mode and loading the kernel in form of an 64-bit ELF binary. It also performs the correct page table mapping (with the correct read/write/execute permissions) as it's specified in the ELF file and creates an initial physical memory map.</p>
+<p>The plan for the future is to make the bootloader more stable, add documentation, and ultimately add a “Writing a Bootloader” series to the blog, which explains in detail how the bootloader works.</p>
+<h2 id="linking-with-lld">Linking with LLD</h2>
+<p>With our custom bootloader in place, the last remaining problem is platform independent linking. Fortunately there is <a href="https://lld.llvm.org/"><code>LLD</code></a>, the cross-platform linker from the LLVM project, which is already very stable for the <code>x86</code> architecture. As a bonus, <code>LLD</code> is <a href="https://github.com/rust-lang/rust/pull/48125">now shipped with Rust</a>, which means that it can be used without any extra installation.</p>
+<h2 id="the-new-posts">The new Posts</h2>
+<p>The second edition is already live at <a href="https://os-preview.phil-opp.com/second-edition/">https://os.phil-opp.com/second-edition</a>. Please tell us if you have any feedback on the new posts! We're planning to move over the content from the <a href="https://os-preview.phil-opp.com/first-edition/">first edition</a> iteratively, in a different order and with various other improvements.</p>
+<p>Many thanks to everyone who helped to make Rust an even better language for OS development!</p>
+
+</main>
+
+        <div>
+    <hr>
+    <section>
+        <h2 id="comments">Comments</h2>
+        
+    <script src="https://utteranc.es/client.js"
+        repo="phil-opp/blog_os"
+        issue-term="url"
+        label="comments"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    </section>
+
+</div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2019">2019</time>. All rights reserved.
+                <a href="https:&#x2f;&#x2f;os-preview.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+            </small>
+        </footer>
+    </div>
+
+    <!-- Fathom - simple website analytics - https://github.com/usefathom/fathom -->
+    <script>
+        (function(f, a, t, h, o, m){
+            a[h]=a[h]||function(){
+                (a[h].q=a[h].q||[]).push(arguments)
+            };
+            o=f.createElement('script'),
+            m=f.getElementsByTagName('script')[0];
+            o.async=1; o.src=t; o.id='fathom-script';
+            m.parentNode.insertBefore(o,m)
+        })(document, window, '//fathom.phil-opp.com/tracker.js', 'fathom');
+        fathom('set', 'siteId', 'MUXWM');
+        fathom('trackPageview');
+    </script>
+    <!-- / Fathom -->
+</body>
+
+</html>
