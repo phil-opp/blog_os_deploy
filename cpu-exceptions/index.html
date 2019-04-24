@@ -10,7 +10,7 @@
     <meta name="author" content="Philipp Oppermann">
 
     
-        <link rel="canonical" href="https://os-preview.phil-opp.com/cpu-exceptions/" />
+        <link rel="canonical" href="https://os.phil-opp.com/cpu-exceptions/" />
     
     <link href="/css/poole.css" rel="stylesheet">
     <link href="/css/main.css" rel="stylesheet">
@@ -25,11 +25,11 @@
         <header class="masthead">
             <div style="position:relative">
                 <h1 class="masthead-title">
-                    <a href="https:&#x2f;&#x2f;os-preview.phil-opp.com" title="Home">Writing an OS in Rust (Second Edition)</a>
+                    <a href="https:&#x2f;&#x2f;os.phil-opp.com" title="Home">Writing an OS in Rust (Second Edition)</a>
                 </h1>
                 <p><small>Philipp&nbsp;Oppermann&#x27;s&nbsp;blog</small></p>
                 
-    <aside id="all-posts-link"><a href="https:&#x2f;&#x2f;os-preview.phil-opp.com" title="All Posts">« All Posts</a></aside>
+    <aside id="all-posts-link"><a href="https:&#x2f;&#x2f;os.phil-opp.com" title="All Posts">« All Posts</a></aside>
 
             </div>
         </header>
@@ -94,7 +94,7 @@
 
     <p>CPU exceptions occur in various erroneous situations, for example when accessing an invalid memory address or when dividing by zero. To react to them we have to set up an <em>interrupt descriptor table</em> that provides handler functions. At the end of this post, our kernel will be able to catch <a href="http://wiki.osdev.org/Exceptions#Breakpoint">breakpoint exceptions</a> and to resume normal execution afterwards.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
-<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os-preview.phil-opp.com/cpu-exceptions/#comments">at the bottom</a>. The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-06"><code>post-06</code></a> branch.</p>
+<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/cpu-exceptions/#comments">at the bottom</a>. The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-06"><code>post-06</code></a> branch.</p>
 
     <details id = "toc-inline">
         <summary><b>Table of Contents</b></summary>
@@ -253,7 +253,7 @@ Preserving all Registers</h3>
 <h3 id="the-interrupt-stack-frame"><a class="zola-anchor" href="#the-interrupt-stack-frame" aria-label="Anchor link for: the-interrupt-stack-frame">🔗</a>
 The Interrupt Stack Frame</h3>
 <p>On a normal function call (using the <code>call</code> instruction), the CPU pushes the return address before jumping to the target function. On function return (using the <code>ret</code> instruction), the CPU pops this return address and jumps to it. So the stack frame of a normal function call looks like this:</p>
-<p><img src="https://os-preview.phil-opp.com/cpu-exceptions/function-stack-frame.svg" alt="function stack frame" /></p>
+<p><img src="https://os.phil-opp.com/cpu-exceptions/function-stack-frame.svg" alt="function stack frame" /></p>
 <p>For exception and interrupt handlers, however, pushing a return address would not suffice, since interrupt handlers often run in a different context (stack pointer, CPU flags, etc.). Instead, the CPU performs the following steps when an interrupt occurs:</p>
 <ol>
 <li><strong>Aligning the stack pointer</strong>: An interrupt can occur at any instructions, so the stack pointer can have any value, too. However, some CPU instructions (e.g. some SSE instructions) require that the stack pointer is aligned on a 16 byte boundary, therefore the CPU performs such an alignment right after the interrupt.</li>
@@ -265,7 +265,7 @@ The Interrupt Stack Frame</h3>
 <li><strong>Invoking the interrupt handler</strong>: The CPU reads the address and the segment descriptor of the interrupt handler function from the corresponding field in the IDT. It then invokes this handler by loading the values into the <code>rip</code> and <code>cs</code> registers.</li>
 </ol>
 <p>So the <em>interrupt stack frame</em> looks like this:</p>
-<p><img src="https://os-preview.phil-opp.com/cpu-exceptions/exception-stack-frame.svg" alt="interrupt stack frame" /></p>
+<p><img src="https://os.phil-opp.com/cpu-exceptions/exception-stack-frame.svg" alt="interrupt stack frame" /></p>
 <p>In the <code>x86_64</code> crate, the interrupt stack frame is represented by the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/idt/struct.InterruptStackFrame.html"><code>InterruptStackFrame</code></a> struct. It is passed to interrupt handlers as <code>&amp;mut</code> and can be used to retrieve additional information about the exception's cause. The struct contains no error code field, since only some few exceptions push an error code. These exceptions use the separate <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a> function type, which has an additional <code>error_code</code> argument.</p>
 <p>Note that there is currently <a href="https://github.com/rust-lang/rust/issues/57270">a bug in LLVM</a> that leads to wrong error code arguments. The cause of the issue is already known and a solution is <a href="https://reviews.llvm.org/D56275">being worked on</a>.</p>
 <h3 id="behind-the-scenes"><a class="zola-anchor" href="#behind-the-scenes" aria-label="Anchor link for: behind-the-scenes">🔗</a>
@@ -277,7 +277,7 @@ Behind the Scenes</h3>
 <li><strong>Handling the error code</strong>: The error code, which is pushed for some exceptions, makes things much more complex. It changes the stack alignment (see the next point) and needs to be popped off the stack before returning. The <code>x86-interrupt</code> calling convention handles all that complexity. However, it doesn't know which handler function is used for which exception, so it needs to deduce that information from the number of function arguments. That means that the programmer is still responsible to use the correct function type for each exception. Luckily, the <code>InterruptDescriptorTable</code> type defined by the <code>x86_64</code> crate ensures that the correct function types are used.</li>
 <li><strong>Aligning the stack</strong>: There are some instructions (especially SSE instructions) that require a 16-byte stack alignment. The CPU ensures this alignment whenever an exception occurs, but for some exceptions it destroys it again later when it pushes an error code. The <code>x86-interrupt</code> calling convention takes care of this by realigning the stack in this case.</li>
 </ul>
-<p>If you are interested in more details: We also have a series of posts that explains exception handling using <a href="https://github.com/rust-lang/rfcs/blob/master/text/1201-naked-fns.md">naked functions</a> linked <a href="https://os-preview.phil-opp.com/cpu-exceptions/#too-much-magic">at the end of this post</a>.</p>
+<p>If you are interested in more details: We also have a series of posts that explains exception handling using <a href="https://github.com/rust-lang/rfcs/blob/master/text/1201-naked-fns.md">naked functions</a> linked <a href="https://os.phil-opp.com/cpu-exceptions/#too-much-magic">at the end of this post</a>.</p>
 <h2 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>
 Implementation</h2>
 <p>Now that we've understood the theory, it's time to handle CPU exceptions in our kernel. We'll start by creating a new interrupts module in <code>src/interrupts.rs</code>, that first creates an <code>init_idt</code> function that creates a new <code>InterruptDescriptorTable</code>:</p>
@@ -379,7 +379,7 @@ Loading the IDT</h3>
 <h4 id="lazy-statics-to-the-rescue"><a class="zola-anchor" href="#lazy-statics-to-the-rescue" aria-label="Anchor link for: lazy-statics-to-the-rescue">🔗</a>
 Lazy Statics to the Rescue</h4>
 <p>Fortunately the <code>lazy_static</code> macro exists. Instead of evaluating a <code>static</code> at compile time, the macro performs the initialization when the <code>static</code> is referenced the first time. Thus, we can do almost everything in the initialization block and are even able to read runtime values.</p>
-<p>We already imported the <code>lazy_static</code> crate when we <a href="https://os-preview.phil-opp.com/vga-text-mode/#lazy-statics">created an abstraction for the VGA text buffer</a>. So we can directly use the <code>lazy_static!</code> macro to create our static IDT:</p>
+<p>We already imported the <code>lazy_static</code> crate when we <a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">created an abstraction for the VGA text buffer</a>. So we can directly use the <code>lazy_static!</code> macro to create our static IDT:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts.rs
 
@@ -419,7 +419,7 @@ Testing it</h3>
 }
 </span></pre>
 <p>When we run it in QEMU now (using <code>bootimage run</code>), we see the following:</p>
-<p><img src="https://os-preview.phil-opp.com/cpu-exceptions/qemu-breakpoint-exception.png" alt="QEMU printing EXCEPTION: BREAKPOINT and the interrupt stack frame" /></p>
+<p><img src="https://os.phil-opp.com/cpu-exceptions/qemu-breakpoint-exception.png" alt="QEMU printing EXCEPTION: BREAKPOINT and the interrupt stack frame" /></p>
 <p>It works! The CPU successfully invokes our breakpoint handler, which prints the message, and then returns back to the <code>_start</code> function, where the <code>It did not crash!</code> message is printed.</p>
 <p>We see that the interrupt stack frame tells us the instruction and stack pointers at the time when the exception occured. This information is very useful when debugging unexpected exceptions.</p>
 <h3 id="adding-a-test"><a class="zola-anchor" href="#adding-a-test" aria-label="Anchor link for: adding-a-test">🔗</a>
@@ -485,7 +485,7 @@ Fixing <code>cargo test</code> on Windows</h3>
 <p>Both variants have the exact same effects, so it comes down to personal preference which one to use. I prefer the inner attribute in this case because it does not clutter our <code>lib.rs</code> with a workaround for a LLVM bug, but either way is fine.</p>
 <h2 id="too-much-magic"><a class="zola-anchor" href="#too-much-magic" aria-label="Anchor link for: too-much-magic">🔗</a>
 Too much Magic?</h2>
-<p>The <code>x86-interrupt</code> calling convention and the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> type made the exception handling process relatively straightforward and painless. If this was too much magic for you and you like to learn all the gory details of exception handling, we got you covered: Our <a href="https://os-preview.phil-opp.com/first-edition/extra/naked-exceptions/">“Handling Exceptions with Naked Functions”</a> series shows how to handle exceptions without the <code>x86-interrupt</code> calling convention and also creates its own IDT type. Historically, these posts were the main exception handling posts before the <code>x86-interrupt</code> calling convention and the <code>x86_64</code> crate existed. Note that these posts are based on the <a href="https://os-preview.phil-opp.com/first-edition/">first edition</a> of this blog and might be out of date.</p>
+<p>The <code>x86-interrupt</code> calling convention and the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> type made the exception handling process relatively straightforward and painless. If this was too much magic for you and you like to learn all the gory details of exception handling, we got you covered: Our <a href="https://os.phil-opp.com/first-edition/extra/naked-exceptions/">“Handling Exceptions with Naked Functions”</a> series shows how to handle exceptions without the <code>x86-interrupt</code> calling convention and also creates its own IDT type. Historically, these posts were the main exception handling posts before the <code>x86-interrupt</code> calling convention and the <code>x86_64</code> crate existed. Note that these posts are based on the <a href="https://os.phil-opp.com/first-edition/">first edition</a> of this blog and might be out of date.</p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
 What's next?</h2>
 <p>We've successfully caught our first exception and returned from it! The next step is to ensure that we catch all exceptions, because an uncaught exception causes a fatal <a href="http://wiki.osdev.org/Triple_Fault">triple fault</a>, which leads to a system reset. The next post explains how we can avoid this by correctly catching <a href="http://wiki.osdev.org/Double_Fault#Double_Fault">double faults</a>.</p>
@@ -528,7 +528,7 @@ What's next?</h2>
             <hr>
             <small>
                 &copy; <time datetime="2019">2019</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os-preview.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
             </small>
         </footer>
     </div>

@@ -80,10 +80,10 @@
     </aside>
 
     <div class="warning">
-        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2f;&#x2f;os-preview.phil-opp.com&#x2f;second-edition&#x2f;">here</a>.
+        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;second-edition&#x2f;">here</a>.
     </div>
 
-    <p>In the previous posts we created a <a href="https://os-preview.phil-opp.com/multiboot-kernel/">minimal Multiboot kernel</a> and <a href="https://os-preview.phil-opp.com/entering-longmode/">switched to Long Mode</a>. Now we can finally switch to <a href="https://www.rust-lang.org/">Rust</a> code. Rust is a high-level language without runtime. It allows us to not link the standard library and write bare metal code. Unfortunately the setup is not quite hassle-free yet.</p>
+    <p>In the previous posts we created a <a href="https://os.phil-opp.com/multiboot-kernel/">minimal Multiboot kernel</a> and <a href="https://os.phil-opp.com/entering-longmode/">switched to Long Mode</a>. Now we can finally switch to <a href="https://www.rust-lang.org/">Rust</a> code. Rust is a high-level language without runtime. It allows us to not link the standard library and write bare metal code. Unfortunately the setup is not quite hassle-free yet.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
 <p>This blog post tries to set up Rust step-by-step and point out the different problems. If you have any questions, problems, or suggestions please <a href="https://github.com/phil-opp/blog_os/issues">file an issue</a> or create a comment at the bottom. The code from this post is in a <a href="https://github.com/phil-opp/blog_os/tree/first_edition_post_3">Github repository</a>, too.</p>
 <h2 id="installing-rust"><a class="zola-anchor" href="#installing-rust" aria-label="Anchor link for: installing-rust">🔗</a>
@@ -137,7 +137,7 @@ Building Rust</h2>
 <li><strong>x86_64</strong>: Our target CPU is a recent <code>x86_64</code> CPU.</li>
 <li><strong>No operating system</strong>: Our target does not run any operating system (we're currently writing it), so the compiler should not assume any OS-specific functionality.</li>
 <li><strong>Handles hardware interrupts</strong>: We're writing a kernel, so we'll need to handle asynchronous hardware interrupts at some point. This means that we have to disable a certain stack pointer optimization (the so-called <a href="http://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64#the-red-zone">red zone</a>), because it would cause stack corruptions otherwise.</li>
-<li><strong>No SSE</strong>: Our target might not have <a href="https://en.wikipedia.org/wiki/Streaming_SIMD_Extensions">SSE</a> support. Even if it does, we probably don't want to use SSE instructions in our kernel, because it makes interrupt handling much slower. We will explain this in detail in the <a href="https://os-preview.phil-opp.com/handling-exceptions/">“Handling Exceptions”</a> post.</li>
+<li><strong>No SSE</strong>: Our target might not have <a href="https://en.wikipedia.org/wiki/Streaming_SIMD_Extensions">SSE</a> support. Even if it does, we probably don't want to use SSE instructions in our kernel, because it makes interrupt handling much slower. We will explain this in detail in the <a href="https://os.phil-opp.com/handling-exceptions/">“Handling Exceptions”</a> post.</li>
 <li><strong>No hardware floats</strong>: The <code>x86_64</code> architecture uses SSE instructions for floating point operations, which we don't want to use (see the previous point). So we also need to avoid hardware floating point operations in our kernel. Instead, we will use <em>soft floats</em>, which are basically software functions that emulate floating point operations using normal integers.</li>
 </ul>
 <h3 id="target-specifications"><a class="zola-anchor" href="#target-specifications" aria-label="Anchor link for: target-specifications">🔗</a>
@@ -180,11 +180,11 @@ A Kernel Target Specification</h3>
 <h4 id="the-red-zone"><a class="zola-anchor" href="#the-red-zone" aria-label="Anchor link for: the-red-zone">🔗</a>
 The Red Zone</h4>
 <p>The <a href="http://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64#the-red-zone">red zone</a> is an optimization of the <a href="http://wiki.osdev.org/System_V_ABI">System V ABI</a> that allows functions to temporary use the 128 bytes below its stack frame without adjusting the stack pointer:</p>
-<p><img src="https://os-preview.phil-opp.com/set-up-rust/red-zone.svg" alt="stack frame with red zone" /></p>
+<p><img src="https://os.phil-opp.com/set-up-rust/red-zone.svg" alt="stack frame with red zone" /></p>
 <p>The image shows the stack frame of a function with <code>n</code> local variables. On function entry, the stack pointer is adjusted to make room on the stack for the local variables.</p>
 <p>The red zone is defined as the 128 bytes below the adjusted stack pointer. The function can use this area for temporary data that's not needed across function calls. Thus, the two instructions for adjusting the stack pointer can be avoided in some cases (e.g. in small leaf functions).</p>
 <p>However, this optimization leads to huge problems with exceptions or hardware interrupts. Let's assume that an exception occurs while a function uses the red zone:</p>
-<p><img src="https://os-preview.phil-opp.com/set-up-rust/red-zone-overwrite.svg" alt="red zone overwritten by exception handler" /></p>
+<p><img src="https://os.phil-opp.com/set-up-rust/red-zone-overwrite.svg" alt="red zone overwritten by exception handler" /></p>
 <p>The CPU and the exception handler overwrite the data in red zone. But this data is still needed by the interrupted function. So the function won't work correctly anymore when we return from the exception handler. This might lead to strange bugs that <a href="http://forum.osdev.org/viewtopic.php?t=21720">take weeks to debug</a>.</p>
 <p>To avoid such bugs when we implement exception handling in the future, we disable the red zone right from the beginning. This is achieved by adding the <code>&quot;disable-redzone&quot;: true</code> line to our target configuration file.</p>
 <h4 id="simd-extensions"><a class="zola-anchor" href="#simd-extensions" aria-label="Anchor link for: simd-extensions">🔗</a>
@@ -196,7 +196,7 @@ SIMD Extensions</h4>
 <li><a href="https://en.wikipedia.org/wiki/Advanced_Vector_Extensions">AVX</a>: The <em>Advanced Vector Extensions</em> are extensions that further increase the size of the multimedia registers. The new registers are called <code>ymm0</code> through <code>ymm15</code> and are 256 bits each. They extend the <code>xmm</code> registers, so e.g. <code>xmm0</code> is the lower half of <code>ymm0</code>.</li>
 </ul>
 <p>By using such SIMD standards, programs can often speed up significantly. Good compilers are able to transform normal loops into such SIMD code automatically through a process called <a href="https://en.wikipedia.org/wiki/Automatic_vectorization">auto-vectorization</a>.</p>
-<p>However, the large SIMD registers lead to problems in OS kernels. The reason is that the kernel has to backup all registers that it uses on each hardware interrupt (we will look into this in the <a href="https://os-preview.phil-opp.com/handling-exceptions/">“Handling Exceptions”</a> post). So if the kernel uses SIMD registers, it has to backup a lot more data, which noticably decreases performance. To avoid this performance loss, we disable the <code>sse</code> and <code>mmx</code> features (the <code>avx</code> feature is disabled by default).</p>
+<p>However, the large SIMD registers lead to problems in OS kernels. The reason is that the kernel has to backup all registers that it uses on each hardware interrupt (we will look into this in the <a href="https://os.phil-opp.com/handling-exceptions/">“Handling Exceptions”</a> post). So if the kernel uses SIMD registers, it has to backup a lot more data, which noticably decreases performance. To avoid this performance loss, we disable the <code>sse</code> and <code>mmx</code> features (the <code>avx</code> feature is disabled by default).</p>
 <p>As noted above, floating point operations on <code>x86_64</code> use SSE registers, so floats are no longer usable without SSE. Unfortunately, the Rust core library already uses floats (e.g., it implements traits for <code>f32</code> and <code>f64</code>), so we need an alternative way to implement float operations. The <code>soft-float</code> feature solves this problem by emulating all floating point operations through software functions based on normal integers.</p>
 <h3 id="compiling"><a class="zola-anchor" href="#compiling" aria-label="Anchor link for: compiling">🔗</a>
 Compiling</h3>
@@ -426,10 +426,10 @@ Hello World!</h2>
 </ul>
 <h3 id="stack-overflows"><a class="zola-anchor" href="#stack-overflows" aria-label="Anchor link for: stack-overflows">🔗</a>
 Stack Overflows</h3>
-<p>Since we still use the small 64 byte <a href="https://os-preview.phil-opp.com/entering-longmode/#creating-a-stack">stack from the last post</a>, we must be careful not to <a href="https://en.wikipedia.org/wiki/Stack_overflow">overflow</a> it. Normally, Rust tries to avoid stack overflows through <em>guard pages</em>: The page below the stack isn't mapped and such a stack overflow triggers a page fault (instead of silently overwriting random memory). But we can't unmap the page below our stack right now since we currently use only a single big page. Fortunately the stack is located just above the page tables. So some important page table entry would probably get overwritten on stack overflow and then a page fault occurs, too.</p>
+<p>Since we still use the small 64 byte <a href="https://os.phil-opp.com/entering-longmode/#creating-a-stack">stack from the last post</a>, we must be careful not to <a href="https://en.wikipedia.org/wiki/Stack_overflow">overflow</a> it. Normally, Rust tries to avoid stack overflows through <em>guard pages</em>: The page below the stack isn't mapped and such a stack overflow triggers a page fault (instead of silently overwriting random memory). But we can't unmap the page below our stack right now since we currently use only a single big page. Fortunately the stack is located just above the page tables. So some important page table entry would probably get overwritten on stack overflow and then a page fault occurs, too.</p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
 What's next?</h2>
-<p>Until now we write magic bits to some memory location when we want to print something to screen. In the <a href="https://os-preview.phil-opp.com/printing-to-screen/">next post</a> we create a abstraction for the VGA text buffer that allows us to print strings in different colors and provides a simple interface.</p>
+<p>Until now we write magic bits to some memory location when we want to print something to screen. In the <a href="https://os.phil-opp.com/printing-to-screen/">next post</a> we create a abstraction for the VGA text buffer that allows us to print strings in different colors and provides a simple interface.</p>
 
 </main>
 
@@ -937,7 +937,7 @@ About the <code>rlibc</code>... <code>make run</code> seems to work fine without
             <hr>
             <small>
                 &copy; <time datetime="2017">2017</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os-preview.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
             </small>
         </footer>
     </div>

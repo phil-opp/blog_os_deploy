@@ -112,7 +112,7 @@
     </aside>
 
     <div class="warning">
-        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2f;&#x2f;os-preview.phil-opp.com&#x2f;second-edition&#x2f;">here</a>.
+        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;second-edition&#x2f;">here</a>.
     </div>
 
     <p>In this post we will create a new page table to map the kernel sections correctly. Therefore we will extend the paging module to support modifications of <em>inactive</em> page tables as well. Then we will switch to the new table and secure our kernel stack by creating a guard page.</p>
@@ -120,12 +120,12 @@
 <p>As always, you can find the source code on <a href="https://github.com/phil-opp/blog_os/tree/first_edition_post_7">GitHub</a>. Don't hesitate to file issues there if you have any problems or improvement suggestions. There is also a comment section at the end of this page. Note that this post requires a current Rust nightly.</p>
 <h2 id="motivation"><a class="zola-anchor" href="#motivation" aria-label="Anchor link for: motivation">🔗</a>
 Motivation</h2>
-<p>In the <a href="https://os-preview.phil-opp.com/page-tables/">previous post</a>, we had a strange bug in the <code>unmap</code> function. Its reason was a silent stack overflow, which corrupted the page tables. Fortunately, our kernel stack is right above the page tables so that we noticed the overflow relatively quickly. This won't be the case when we add threads with new stacks in the future. Then a silent stack overflow could overwrite some data without us noticing. But eventually some completely unrelated function fails because a variable changed its value.</p>
+<p>In the <a href="https://os.phil-opp.com/page-tables/">previous post</a>, we had a strange bug in the <code>unmap</code> function. Its reason was a silent stack overflow, which corrupted the page tables. Fortunately, our kernel stack is right above the page tables so that we noticed the overflow relatively quickly. This won't be the case when we add threads with new stacks in the future. Then a silent stack overflow could overwrite some data without us noticing. But eventually some completely unrelated function fails because a variable changed its value.</p>
 <p>As you can imagine, these kinds of bugs are horrendous to debug. For that reason we will create a new hierarchical page table in this post, which has <em>guard page</em> below the stack. A guard page is basically an unmapped page that causes a page fault when accessed. Thus we can catch stack overflows right when they happen.</p>
-<p>Also, we will use the <a href="https://os-preview.phil-opp.com/allocating-frames/#kernel-elf-sections">information about kernel sections</a> to map the various sections individually instead of blindly mapping the first gigabyte. To improve safety even further, we will set the correct page table flags for the various sections. Thus it won't be possible to modify the contents of <code>.text</code> or to execute code from <code>.data</code> anymore.</p>
+<p>Also, we will use the <a href="https://os.phil-opp.com/allocating-frames/#kernel-elf-sections">information about kernel sections</a> to map the various sections individually instead of blindly mapping the first gigabyte. To improve safety even further, we will set the correct page table flags for the various sections. Thus it won't be possible to modify the contents of <code>.text</code> or to execute code from <code>.data</code> anymore.</p>
 <h2 id="preparation"><a class="zola-anchor" href="#preparation" aria-label="Anchor link for: preparation">🔗</a>
 Preparation</h2>
-<p>There are many things that can go wrong when we switch to a new table. Therefore it's a good idea to <a href="https://os-preview.phil-opp.com/set-up-gdb/">set up a debugger</a>. You should not need it when you follow this post, but it's good to know how to debug a problem when it occurs<sup class="footnote-reference"><a href="#fn-debug-notes">1</a></sup>.</p>
+<p>There are many things that can go wrong when we switch to a new table. Therefore it's a good idea to <a href="https://os.phil-opp.com/set-up-gdb/">set up a debugger</a>. You should not need it when you follow this post, but it's good to know how to debug a problem when it occurs<sup class="footnote-reference"><a href="#fn-debug-notes">1</a></sup>.</p>
 <p>We also update the <code>Page</code> and <code>Frame</code> types to make our lives easier. The <code>Page</code> struct gets some derived traits:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/memory/paging/mod.rs
@@ -152,7 +152,7 @@ Preparation</h2>
 <p>We can't do that for a <code>Frame</code>. If we wanted to be sure that a given frame is unused, we would need to look at all mapped <em>pages</em> and verify that none of them is mapped to the given frame. Since this is impractical, we need to rely on the fact that a passed <code>Frame</code> is always unused. For that reason it must not be possible to create a new <code>Frame</code> or to clone one from other modules. The only valid way to get a frame is to allocate it from a <code>FrameAllocator</code>.</p>
 <h2 id="recap-the-paging-module"><a class="zola-anchor" href="#recap-the-paging-module" aria-label="Anchor link for: recap-the-paging-module">🔗</a>
 Recap: The Paging Module</h2>
-<p>This post builds upon the post about <a href="https://os-preview.phil-opp.com/page-tables/">page tables</a>, so let's start by quickly recapitulating what we've done there.</p>
+<p>This post builds upon the post about <a href="https://os.phil-opp.com/page-tables/">page tables</a>, so let's start by quickly recapitulating what we've done there.</p>
 <p>We created a <code>memory::paging</code> module, which reads and modifies the hierarchical page table through recursive mapping. The owner of the active P4 table and thus all subtables is an <code>ActivePageTable</code> struct, which must be instantiated only once.</p>
 <p>The <code>ActivePageTable</code> struct provides the following interface:</p>
 <pre style="background-color:#1e1e1e;">
@@ -339,7 +339,7 @@ Temporary Mapping</h3>
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#569cd6;">&amp;mut *</span><span style="color:#dcdcdc;">(self.map(frame, active_table) </span><span style="color:#569cd6;">as *mut </span><span style="color:#dcdcdc;">Table&lt;Level1&gt;) }
 }
 </span></pre>
-<p>This function interprets the given frame as a page table frame and returns a <code>Table</code> reference. We return a table of level 1 because it <a href="https://os-preview.phil-opp.com/page-tables/#some-clever-solution">forbids calling the <code>next_table</code> methods</a>. Calling <code>next_table</code> must not be possible since it's not a page of the recursive mapping. To be able to return a <code>Table&lt;Level1&gt;</code>, we need to make the <code>Level1</code> enum in <code>memory/paging/table.rs</code> public.</p>
+<p>This function interprets the given frame as a page table frame and returns a <code>Table</code> reference. We return a table of level 1 because it <a href="https://os.phil-opp.com/page-tables/#some-clever-solution">forbids calling the <code>next_table</code> methods</a>. Calling <code>next_table</code> must not be possible since it's not a page of the recursive mapping. To be able to return a <code>Table&lt;Level1&gt;</code>, we need to make the <code>Level1</code> enum in <code>memory/paging/table.rs</code> public.</p>
 <p>The <code>unsafe</code> block is safe since the <code>VirtualAddress</code> returned by the <code>map</code> function is always valid and the type cast just reinterprets the frame's content.</p>
 <p>To complete the <code>temporary_page</code> module, we add a <code>TemporaryPage::new</code> constructor:</p>
 <pre style="background-color:#1e1e1e;">
@@ -384,9 +384,9 @@ Zeroing the InactivePageTable</h3>
 Revisiting Recursive Mapping</h2>
 <p>Recursive mapping works by mapping the last P4 entry to the P4 table itself. Thus we can access the page tables by looping one or more times.</p>
 <p>For example, accessing a P3 table requires lopping three times:</p>
-<p><img src="https://os-preview.phil-opp.com/remap-the-kernel/recursive_mapping_access_p3.svg" alt="access active P3 table through recursive mapping" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_access_p3.svg" alt="access active P3 table through recursive mapping" /></p>
 <p>We can use the same mechanism to access inactive tables. The trick is to change the recursive mapping of the active P4 table to point to the inactive P4 table:</p>
-<p><img src="https://os-preview.phil-opp.com/remap-the-kernel/recursive_mapping_access_p3_inactive_table.svg" alt="access inactive P3 table through recursive mapping" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_access_p3_inactive_table.svg" alt="access inactive P3 table through recursive mapping" /></p>
 <p>Now the inactive table can be accessed exactly as the active table, even the magic addresses are the same. This allows us to use the <code>ActivePageTable</code> interface and the existing mapping methods for inactive tables, too. Note that everything besides the recursive mapping continues to work exactly as before since we've never changed the active table in the CPU.</p>
 <h3 id="implementation-draft"><a class="zola-anchor" href="#implementation-draft" aria-label="Anchor link for: implementation-draft">🔗</a>
 Implementation Draft</h3>
@@ -411,7 +411,7 @@ Implementation Draft</h3>
 </span></pre>
 <p>It overwrites the 511th P4 entry and points it to the inactive table frame. Then it flushes the <a href="http://wiki.osdev.org/TLB">translation lookaside buffer (TLB)</a>, which still contains some old translations. We need to flush all pages that are part of the recursive mapping, so the easiest way is to flush the TLB completely.</p>
 <p>Now that the recursive mapping points to the given inactive table, we execute the closure in the new context. The closure can call all active table methods such as <code>translate</code> or <code>map_to</code>. It could even call <code>with</code> again and chain another inactive table! Wait… that would not work:</p>
-<p><img src="https://os-preview.phil-opp.com/remap-the-kernel/recursive_mapping_access_p1_invalid_chaining.svg" alt="access inactive P3 table through recursive mapping" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_access_p1_invalid_chaining.svg" alt="access inactive P3 table through recursive mapping" /></p>
 <p>Here the closure called <code>with</code> again and thus changed the recursive mapping of the inactive table to point to a second inactive table. Now we want to modify the P1 of the <em>second</em> inactive table, but instead we land on the P1 of the <em>first</em> inactive table since we never follow the pointer to the second table. Only when modifying the P2, P3, or P4 table we really access the second inactive table. This inconsistency would break our mapping functions completely.</p>
 <p>So we should really prohibit the closure from calling <code>with</code> again. We could add some runtime assertion that panics when the active table is not recursive mapped anymore. But a cleaner solution is to split off the mapping code from <code>ActivePageTable</code> into a new <code>Mapper</code> type.</p>
 <h3 id="refactoring"><a class="zola-anchor" href="#refactoring" aria-label="Anchor link for: refactoring">🔗</a>
@@ -492,10 +492,10 @@ Restoring the Recursive Mapping</h3>
 </span></pre>
 <p>Why is it unsafe? Because reading the CR3 register leads to a CPU exception if the processor is not running in kernel mode (<a href="http://wiki.osdev.org/Security#Low-level_Protection_Mechanisms">Ring 0</a>). But this code will always run in kernel mode, so the <code>unsafe</code> block is completely safe here.</p>
 <p>Now that we have a backup of the original P4 frame, we need a way to restore it after the closure has run. So we need to somehow modify the 511th entry of the original P4 frame, which is still the active table in the CPU. But we can't access it because the recursive mapping now points to the inactive table:</p>
-<p><img src="https://os-preview.phil-opp.com/remap-the-kernel/recursive_mapping_inactive_table_scheme.svg" alt="it's not possible to access the original P4 through recursive mapping anymore" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_inactive_table_scheme.svg" alt="it's not possible to access the original P4 through recursive mapping anymore" /></p>
 <p>It's just not possible to access the active P4 entry in 4 steps, so we can't reach it through the 4-level page table.</p>
 <p>We could try to overwrite the recursive mapping of the <em>inactive</em> P4 table and point it back to the original P4 frame:</p>
-<p><img src="https://os-preview.phil-opp.com/remap-the-kernel/cyclic_mapping_inactive_tables.svg" alt="cyclic map active and inactive P4 tables" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/cyclic_mapping_inactive_tables.svg" alt="cyclic map active and inactive P4 tables" /></p>
 <p>Now we can reach the active P4 entry in 4 steps and could restore the original mapping in the active table. But this hack has a drawback: The inactive table is now invalid since it is no longer recursive mapped. We would need to fix it by using a temporary page again (as above).</p>
 <p>But if we need a temporary page anyway, we can just use it to map the original P4 frame directly. Thus we avoid the above hack and make the code simpler. So let's do it that way.</p>
 <h3 id="completing-the-implementation"><a class="zola-anchor" href="#completing-the-implementation" aria-label="Anchor link for: completing-the-implementation">🔗</a>
@@ -565,7 +565,7 @@ Remapping the Kernel</h2>
 }
 </span></pre>
 <p>First, we create a temporary page at page number <code>0xcafebabe</code>. We could use <code>0xdeadbeaf</code> or <code>0x123456789</code> as well, as long as the page is unused. The <code>active_table</code> and the <code>new_table</code> are created using their constructor functions.</p>
-<p>Then we use the <code>with</code> function to temporary change the recursive mapping and execute the closure as if the <code>new_table</code> were active. This allows us to map the sections in the new table without changing the active mapping. To get the kernel sections, we use the <a href="https://os-preview.phil-opp.com/allocating-frames/#the-multiboot-information-structure">Multiboot information structure</a>.</p>
+<p>Then we use the <code>with</code> function to temporary change the recursive mapping and execute the closure as if the <code>new_table</code> were active. This allows us to map the sections in the new table without changing the active mapping. To get the kernel sections, we use the <a href="https://os.phil-opp.com/allocating-frames/#the-multiboot-information-structure">Multiboot information structure</a>.</p>
 <p>Let's resolve the above <code>TODO</code> by identity mapping the sections:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> section </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> elf_sections_tag.sections() {
@@ -789,7 +789,7 @@ println!(</span><span style="color:#d69d85;">&quot;NEW TABLE!!!&quot;</span><spa
 <p>… and it fails with a boot loop.</p>
 <h3 id="debugging"><a class="zola-anchor" href="#debugging" aria-label="Anchor link for: debugging">🔗</a>
 Debugging</h3>
-<p>A QEMU boot loop indicates that some CPU exception occured. We can see all thrown CPU exception by starting QEMU with <code>-d int</code> (as described <a href="https://os-preview.phil-opp.com/set-up-rust/#debugging">here</a>):</p>
+<p>A QEMU boot loop indicates that some CPU exception occured. We can see all thrown CPU exception by starting QEMU with <code>-d int</code> (as described <a href="https://os.phil-opp.com/set-up-rust/#debugging">here</a>):</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">&gt; qemu-system-x86_64 -d int -no-reboot -cdrom build/os-x86_64.iso
 ...
@@ -807,13 +807,13 @@ check_exception old: 0xffffffff new 0xe
 <p><code>e=0002</code>: The CPU set an <a href="http://wiki.osdev.org/Exceptions#Error_code">error code</a>, which tells us why the exception occurred. The <code>0x2</code> bit tells us that it was caused by a write operation. And since the <code>0x1</code> bit is not set, the target page was not present.</p>
 </li>
 <li>
-<p><code>IP=0008:000000000010ab97</code> or <code>pc=000000000010ab97</code>: The program counter register tells us that the exception occurred when the CPU tried to execute the instruction at <code>0x10ab97</code>. We can disassemble this address to see the corresponding function. The <code>0008:</code> prefix in <code>IP</code> indicates the code <a href="https://os-preview.phil-opp.com/entering-longmode/#loading-the-gdt">GDT segment</a>.</p>
+<p><code>IP=0008:000000000010ab97</code> or <code>pc=000000000010ab97</code>: The program counter register tells us that the exception occurred when the CPU tried to execute the instruction at <code>0x10ab97</code>. We can disassemble this address to see the corresponding function. The <code>0008:</code> prefix in <code>IP</code> indicates the code <a href="https://os.phil-opp.com/entering-longmode/#loading-the-gdt">GDT segment</a>.</p>
 </li>
 <li>
-<p><code>SP=0010:00000000001182d0</code>: The stack pointer was <code>0x1182d0</code> (the <code>0010:</code> prefix indicates the data <a href="https://os-preview.phil-opp.com/entering-longmode/#loading-the-gdt">GDT segment</a>). This tells us if it the stack overflowed.</p>
+<p><code>SP=0010:00000000001182d0</code>: The stack pointer was <code>0x1182d0</code> (the <code>0010:</code> prefix indicates the data <a href="https://os.phil-opp.com/entering-longmode/#loading-the-gdt">GDT segment</a>). This tells us if it the stack overflowed.</p>
 </li>
 <li>
-<p><code>CR2=00000000000b8f00</code>: Finally the most useful register. It tells us which virtual address caused the page fault. In our case it's <code>0xb8f00</code>, which is part of the <a href="https://os-preview.phil-opp.com/printing-to-screen/#the-vga-text-buffer">VGA text buffer</a>.</p>
+<p><code>CR2=00000000000b8f00</code>: Finally the most useful register. It tells us which virtual address caused the page fault. In our case it's <code>0xb8f00</code>, which is part of the <a href="https://os.phil-opp.com/printing-to-screen/#the-vga-text-buffer">VGA text buffer</a>.</p>
 </li>
 </ul>
 <p>So let's find out which function caused the exception:</p>
@@ -983,7 +983,7 @@ The Write Protect Bit</h3>
 <h2 id="creating-a-guard-page"><a class="zola-anchor" href="#creating-a-guard-page" aria-label="Anchor link for: creating-a-guard-page">🔗</a>
 Creating a Guard Page</h2>
 <p>The final step is to create a guard page for our kernel stack.</p>
-<p>The decision to place the kernel stack right above the page tables was already useful to detect a silent stack overflow in the <a href="https://os-preview.phil-opp.com/page-tables/#translate">previous post</a>. Now we profit from it again. Let's look at our assembly <code>.bss</code> section again to understand why:</p>
+<p>The decision to place the kernel stack right above the page tables was already useful to detect a silent stack overflow in the <a href="https://os.phil-opp.com/page-tables/#translate">previous post</a>. Now we profit from it again. Let's look at our assembly <code>.bss</code> section again to understand why:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">; in src/arch/x86_64/boot.asm
 
@@ -1032,7 +1032,7 @@ align </span><span style="color:#b4cea8;">4096
 <p>Unfortunately stack probes require compiler support. They already work on Windows but they don't exist on Linux yet. The problem seems to be in LLVM, which Rust uses as backend. Hopefully it gets resolved soon so that our kernel stack becomes safe. For the current status and more information about stack probes check out the <a href="https://github.com/rust-lang/rust/issues/16012#issuecomment-160380183">tracking issue</a>.</p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
 What's next?</h2>
-<p>Now that we have a (mostly) safe kernel stack and a working page table module, we can add a virtual memory allocator. The <a href="https://os-preview.phil-opp.com/kernel-heap/">next post</a> will explore Rust's allocator API and create a very basic allocator. At the end of that post, we will be able to use Rust's allocation and collections types such as <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html">Box</a>, <a href="https://doc.rust-lang.org/nightly/collections/vec/struct.Vec.html">Vec</a>, or even <a href="https://doc.rust-lang.org/nightly/collections/btree_map/struct.BTreeMap.html">BTreeMap</a>.</p>
+<p>Now that we have a (mostly) safe kernel stack and a working page table module, we can add a virtual memory allocator. The <a href="https://os.phil-opp.com/kernel-heap/">next post</a> will explore Rust's allocator API and create a very basic allocator. At the end of that post, we will be able to use Rust's allocation and collections types such as <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html">Box</a>, <a href="https://doc.rust-lang.org/nightly/collections/vec/struct.Vec.html">Vec</a>, or even <a href="https://doc.rust-lang.org/nightly/collections/btree_map/struct.BTreeMap.html">BTreeMap</a>.</p>
 <h2 id="footnotes"><a class="zola-anchor" href="#footnotes" aria-label="Anchor link for: footnotes">🔗</a>
 Footnotes</h2>
 <div class="footnote-definition" id="fn-debug-notes"><sup class="footnote-definition-label">1</sup>
@@ -1221,7 +1221,7 @@ Footnotes</h2>
             <hr>
             <small>
                 &copy; <time datetime="2017">2017</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os-preview.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
             </small>
         </footer>
     </div>
