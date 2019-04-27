@@ -63,16 +63,22 @@
                     </li><li>
                         <a href="#building-our-kernel">Building our Kernel</a>
                     </li><li>
-                        <a href="#printing-to-screen">Printing to Screen</a>
+                        <a href="#set-a-default-target">Set a Default Target</a>
                     </li><li>
-                        <a href="#creating-a-bootimage">Creating a Bootimage</a>
+                        <a href="#printing-to-screen">Printing to Screen</a>
                     </li>
                 </ol>
             </li><li>
-                <a href="#booting-it">Booting it!</a>
+                <a href="#running-our-kernel">Running our Kernel</a>
                 <ol>
                     <li>
+                        <a href="#creating-a-bootimage">Creating a Bootimage</a>
+                    </li><li>
+                        <a href="#booting-it-in-qemu">Booting it in QEMU</a>
+                    </li><li>
                         <a href="#real-machine">Real Machine</a>
+                    </li><li>
+                        <a href="#using-cargo-run">Using cargo run</a>
                     </li>
                 </ol>
             </li><li>
@@ -110,16 +116,22 @@
                     </li><li>
                         <a href="#building-our-kernel">Building our Kernel</a>
                     </li><li>
-                        <a href="#printing-to-screen">Printing to Screen</a>
+                        <a href="#set-a-default-target">Set a Default Target</a>
                     </li><li>
-                        <a href="#creating-a-bootimage">Creating a Bootimage</a>
+                        <a href="#printing-to-screen">Printing to Screen</a>
                     </li>
                 </ul>
             </li><li>
-                <a href="#booting-it">Booting it!</a>
+                <a href="#running-our-kernel">Running our Kernel</a>
                 <ul>
                     <li>
+                        <a href="#creating-a-bootimage">Creating a Bootimage</a>
+                    </li><li>
+                        <a href="#booting-it-in-qemu">Booting it in QEMU</a>
+                    </li><li>
                         <a href="#real-machine">Real Machine</a>
+                    </li><li>
+                        <a href="#using-cargo-run">Using cargo run</a>
                     </li>
                 </ul>
             </li><li>
@@ -293,6 +305,16 @@ Cargo xbuild</h4>
 </span></pre>
 <p>We see that <code>cargo xbuild</code> cross-compiles the <code>core</code>, <code>compiler_builtin</code>, and <code>alloc</code> libraries for our new custom target. Since these libraries use a lot of unstable features internally, this only works with a <a href="https://os.phil-opp.com/freestanding-rust-binary/#installing-rust-nightly">nightly Rust compiler</a>. Afterwards, <code>cargo xbuild</code> successfully compiles our <code>blog_os</code> crate.</p>
 <p>Now we are able to build our kernel for a bare metal target. However, our <code>_start</code> entry point, which will be called by the boot loader, is still empty. So let's output something to screen from it.</p>
+<h3 id="set-a-default-target"><a class="zola-anchor" href="#set-a-default-target" aria-label="Anchor link for: set-a-default-target">🔗</a>
+Set a Default Target</h3>
+<p>To avoid passing the <code>--target</code> parameter on every invocation of <code>cargo xbuild</code>, we can override the default target. To do this, we create a <a href="https://doc.rust-lang.org/cargo/reference/config.html">cargo configuration</a> file at <code>.cargo/config</code> with the following content:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;"># in .cargo/config
+
+</span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">build</span><span style="color:#dcdcdc;">]
+</span><span style="color:#569cd6;">target </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;x86_64-blog_os.json&quot;
+</span></pre>
+<p>This tells <code>cargo</code> to use our <code>x86_64-blog_os.json</code> target when no explicit <code>--target</code> argument is passed. This means that we can now build our kernel with a simple <code>cargo xbuild</code>. For more information on cargo configuration options, check out the <a href="https://doc.rust-lang.org/cargo/reference/config.html">official documentation</a>.</p>
 <h3 id="printing-to-screen"><a class="zola-anchor" href="#printing-to-screen" aria-label="Anchor link for: printing-to-screen">🔗</a>
 Printing to Screen</h3>
 <p>The easiest way to print text to the screen at this stage is the <a href="https://en.wikipedia.org/wiki/VGA-compatible_text_mode">VGA text buffer</a>. It is a special memory area mapped to the VGA hardware that contains the contents displayed on screen. It normally consists of 25 lines that each contain 80 character cells. Each character cell displays an ASCII character with some foreground and background colors. The screen output looks like this:</p>
@@ -320,9 +342,12 @@ Printing to Screen</h3>
 <p>Note that there's an <a href="https://doc.rust-lang.org/stable/book/ch19-01-unsafe-rust.html"><code>unsafe</code></a> block around all memory writes. The reason is that the Rust compiler can't prove that the raw pointers we create are valid. They could point anywhere and lead to data corruption. By putting them into an <code>unsafe</code> block we're basically telling the compiler that we are absolutely sure that the operations are valid. Note that an <code>unsafe</code> block does not turn off Rust's safety checks. It only allows you to do <a href="https://doc.rust-lang.org/stable/book/ch19-01-unsafe-rust.html#unsafe-superpowers">four additional things</a>.</p>
 <p>I want to emphasize that <strong>this is not the way we want to do things in Rust!</strong> It's very easy to mess up when working with raw pointers inside unsafe blocks, for example, we could easily write behind the buffer's end if we're not careful.</p>
 <p>So we want to minimize the use of <code>unsafe</code> as much as possible. Rust gives us the ability to do this by creating safe abstractions. For example, we could create a VGA buffer type that encapsulates all unsafety and ensures that it is <em>impossible</em> to do anything wrong from the outside. This way, we would only need minimal amounts of <code>unsafe</code> and can be sure that we don't violate <a href="https://en.wikipedia.org/wiki/Memory_safety">memory safety</a>. We will create such a safe VGA buffer abstraction in the next post.</p>
+<h2 id="running-our-kernel"><a class="zola-anchor" href="#running-our-kernel" aria-label="Anchor link for: running-our-kernel">🔗</a>
+Running our Kernel</h2>
+<p>Now that we have an executable that does something perceptible, it is time to run it. First, we need to turn our compiled kernel into a bootable disk image by linking it with a bootloader. Then we can run the disk image in the <a href="https://www.qemu.org/">QEMU</a> virtual machine or boot it on real hardware using an USB stick.</p>
 <h3 id="creating-a-bootimage"><a class="zola-anchor" href="#creating-a-bootimage" aria-label="Anchor link for: creating-a-bootimage">🔗</a>
 Creating a Bootimage</h3>
-<p>Now that we have an executable that does something perceptible, it is time to turn it into a bootable disk image. As we learned in the <a href="https://os.phil-opp.com/minimal-rust-kernel/#the-boot-process">section about booting</a>, we need a bootloader for that, which initializes the CPU and loads our kernel.</p>
+<p>To turn our compiled kernel into a bootable disk image, we need to link it with a bootloader. As we learned in the <a href="https://os.phil-opp.com/minimal-rust-kernel/#the-boot-process">section about booting</a>, the bootloader is responsible for initializing the CPU and loading our kernel.</p>
 <p>Instead of writing our own bootloader, which is a project on its own, we use the <a href="https://crates.io/crates/bootloader"><code>bootloader</code></a> crate. This crate implements a basic BIOS bootloader without any C dependencies, just Rust and inline assembly. To use it for booting our kernel, we need to add a dependency on it:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;"># in Cargo.toml
@@ -330,16 +355,16 @@ Creating a Bootimage</h3>
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">bootloader </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.5.1&quot;
 </span></pre>
-<p>Adding the bootloader as dependency is not enough to actually create a bootable disk image. The problem is that we need to combine the bootloader with the kernel after it has been compiled, but cargo has no support for additional build steps after successful compilation (see <a href="https://github.com/rust-lang/cargo/issues/545">this issue</a> for more information).</p>
-<p>To solve this problem, we created a tool named <code>bootimage</code> that first compiles the kernel and bootloader, and then combines them to create a bootable disk image. To install the tool, execute the following command in your terminal:</p>
+<p>Adding the bootloader as dependency is not enough to actually create a bootable disk image. The problem is that we need to link our kernel with the bootloader after compilation, but cargo has no support for <a href="https://github.com/rust-lang/cargo/issues/545">post-build scripts</a>.</p>
+<p>To solve this problem, we created a tool named <code>bootimage</code> that first compiles the kernel and bootloader, and then links them together to create a bootable disk image. To install the tool, execute the following command in your terminal:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo install bootimage --version &quot;^0.7.1&quot;
+<span style="color:#dcdcdc;">cargo install bootimage --version &quot;^0.7.3&quot;
 </span></pre>
-<p>The <code>^0.7.1</code> is a so-called <a href="https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#caret-requirements"><em>caret requirement</em></a>, which means &quot;version <code>0.7.1</code> or a later compatible version&quot;. So if we find a bug and publish version <code>0.7.2</code> or <code>0.7.3</code>, cargo would automatically use the latest version, as long as it is still a version <code>0.7.x</code>. However, it wouldn't choose version <code>0.8.0</code>, because it is not considered as compatible. Note that dependencies in your <code>Cargo.toml</code> are caret requirements by default, so the same rules are applied to our bootloader dependency.</p>
+<p>The <code>^0.7.3</code> is a so-called <a href="https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#caret-requirements"><em>caret requirement</em></a>, which means &quot;version <code>0.7.3</code> or a later compatible version&quot;. So if we find a bug and publish version <code>0.7.4</code> or <code>0.7.5</code>, cargo would automatically use the latest version, as long as it is still a version <code>0.7.x</code>. However, it wouldn't choose version <code>0.8.0</code>, because it is not considered as compatible. Note that dependencies in your <code>Cargo.toml</code> are caret requirements by default, so the same rules are applied to our bootloader dependency.</p>
 <p>For running <code>bootimage</code> and building the bootloader, you need to have the <code>llvm-tools-preview</code> rustup component installed. You can do so by executing <code>rustup component add llvm-tools-preview</code>.</p>
 <p>After installing <code>bootimage</code> and adding the <code>llvm-tools-preview</code> component, we can create a bootable disk image by executing:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; bootimage build --target x86_64-blog_os.json
+<span style="color:#dcdcdc;">&gt; cargo bootimage
 </span></pre>
 <p>We see that the tool recompiles our kernel using <code>cargo xbuild</code>, so it will automatically pick up any changes you make. Afterwards it compiles the bootloader, which might take a while. Like all crate dependencies it is only built once and then cached, so subsequent builds will be much faster. Finally, <code>bootimage</code> combines the bootloader and your kernel to a bootable disk image.</p>
 <p>After executing the command, you should see a bootable disk image named <code>bootimage-blog_os.bin</code> in your <code>target/x86_64-blog_os/debug</code> directory. You can boot it in a virtual machine or copy it to an USB drive to boot it on real hardware. (Note that this is not a CD image, which have a different format, so burning it to a CD doesn't work).</p>
@@ -349,32 +374,19 @@ How does it work?</h4>
 <ul>
 <li>It compiles our kernel to an <a href="https://en.wikipedia.org/wiki/Executable_and_Linkable_Format">ELF</a> file.</li>
 <li>It compiles the bootloader dependency as a standalone executable.</li>
-<li>It appends the bytes of the kernel ELF file to the bootloader.</li>
+<li>It links the bytes of the kernel ELF file to the bootloader.</li>
 </ul>
 <p>When booted, the bootloader reads and parses the appended ELF file. It then maps the program segments to virtual addresses in the page tables, zeroes the <code>.bss</code> section, and sets up a stack. Finally, it reads the entry point address (our <code>_start</code> function) and jumps to it.</p>
-<h4 id="bootimage-configuration"><a class="zola-anchor" href="#bootimage-configuration" aria-label="Anchor link for: bootimage-configuration">🔗</a>
-Bootimage Configuration</h4>
-<p>The <code>bootimage</code> tool can be configured through a <code>[package.metadata.bootimage]</code> table in the <code>Cargo.toml</code> file. We can add a <code>default-target</code> option so that we no longer need to pass the <code>--target</code> argument:</p>
-<pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
-
-</span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
-</span><span style="color:#569cd6;">default-target </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;x86_64-blog_os.json&quot;
-</span></pre>
-<p>Now we can omit the <code>--target</code> argument and just run <code>bootimage build</code>.</p>
-<h2 id="booting-it"><a class="zola-anchor" href="#booting-it" aria-label="Anchor link for: booting-it">🔗</a>
-Booting it!</h2>
+<h3 id="booting-it-in-qemu"><a class="zola-anchor" href="#booting-it-in-qemu" aria-label="Anchor link for: booting-it-in-qemu">🔗</a>
+Booting it in QEMU</h3>
 <p>We can now boot the disk image in a virtual machine. To boot it in <a href="https://www.qemu.org/">QEMU</a>, execute the following command:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">&gt; qemu-system-x86_64 -drive format=raw,file=bootimage-blog_os.bin
 warning: TCG doesn&#39;t support requested feature: CPUID.01H:ECX.vmx [bit 5]
 </span></pre>
+<p>This opens a separate window with that looks like this:</p>
 <p><img src="https://os.phil-opp.com/minimal-rust-kernel/qemu.png" alt="QEMU showing &quot;Hello World!&quot;" /></p>
-<p>Alternatively, you can invoke the <code>run</code> subcommand of the <code>bootimage</code> tool:</p>
-<pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; bootimage run
-</span></pre>
-<p>By default it invokes the exact same QEMU command as above. Additional QEMU options can be passed after a <code>--</code>. For example, <code>bootimage run -- --help</code> will show the QEMU help. It's also possible to change the default command through an <code>run-command</code> key in the <code>package.metadata.bootimage</code> table in the <code>Cargo.toml</code>. For more information see the <code>--help</code> output or the <a href="https://github.com/rust-osdev/bootimage/blob/master/Readme.md">Readme file</a>.</p>
+<p>We see that our &quot;Hello World!&quot; is visible on the screen.</p>
 <h3 id="real-machine"><a class="zola-anchor" href="#real-machine" aria-label="Anchor link for: real-machine">🔗</a>
 Real Machine</h3>
 <p>It is also possible to write it to an USB stick and boot it on a real machine:</p>
@@ -382,6 +394,19 @@ Real Machine</h3>
 <span style="color:#dcdcdc;">&gt; dd if=target/x86_64-blog_os/debug/bootimage-blog_os.bin of=/dev/sdX &amp;&amp; sync
 </span></pre>
 <p>Where <code>sdX</code> is the device name of your USB stick. <strong>Be careful</strong> to choose the correct device name, because everything on that device is overwritten.</p>
+<p>After writing the image to the USB stick, you can run it on real hardware by booting from it. You probably need to use a special boot menu or change the boot order in your BIOS configuration to boot from the USB stick. Note that it currently doesn't work for UEFI machines, since the <code>bootloader</code> crate has no UEFI support yet.</p>
+<h3 id="using-cargo-run"><a class="zola-anchor" href="#using-cargo-run" aria-label="Anchor link for: using-cargo-run">🔗</a>
+Using <code>cargo run</code></h3>
+<p>To make it easier to run our kernel in QEMU, we can set the <code>runner</code> configuration key for cargo:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;"># in .cargo/config
+
+</span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;none&quot;)&#39;</span><span style="color:#dcdcdc;">]
+</span><span style="color:#569cd6;">runner </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;bootimage runner&quot;
+</span></pre>
+<p>The <code>target.'cfg(target_os = &quot;none&quot;)'</code> table applies to all targets that have set the <code>&quot;os&quot;</code> field of their target configuration file to <code>&quot;none&quot;</code>. This includes our <code>x86_64-blog_os.json</code> target. The <code>runner</code> key specifies the command that should be invoked for <code>cargo run</code>. The command is run after a successful build with the executable path passed as first argument. See the <a href="https://doc.rust-lang.org/cargo/reference/config.html">cargo documentation</a> for more details.</p>
+<p>The <code>bootimage runner</code> command is specifically designed to be usable as a <code>runner</code> executable. It links the given executable with the project's bootloader dependency and then launches QEMU. See the <a href="https://github.com/rust-osdev/bootimage">Readme of <code>bootimage</code></a> for more details and possible configuration options.</p>
+<p>Now we can use <code>cargo xrun</code> to compile our kernel and boot it in QEMU. Like <code>xbuild</code>, the <code>xrun</code> subcommand builds the sysroot crates before invoking the actual cargo command. The subcommand is also provided by <code>cargo-xbuild</code>, so you don't need to install an additional tool.</p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
 What's next?</h2>
 <p>In the next post, we will explore the VGA text buffer in more detail and write a safe interface for it. We will also add support for the <code>println</code> macro.</p>
