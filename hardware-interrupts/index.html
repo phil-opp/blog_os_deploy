@@ -76,6 +76,9 @@
                     </li>
                 </ol>
             </li><li>
+                <a href="#fixing-a-race-condition">Fixing a Race Condition</a>
+                
+            </li><li>
                 <a href="#the-hlt-instruction">The hlt Instruction</a>
                 
             </li><li>
@@ -103,7 +106,7 @@
 
     <p>In this post we set up the programmable interrupt controller to correctly forward hardware interrupts to the CPU. To handle these interrupts we add new entries to our interrupt descriptor table, just like we did for our exception handlers. We will learn how to get periodic timer interrupts and how to get input from the keyboard.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
-<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/hardware-interrupts/#comments">at the bottom</a>.  The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-08"><code>post-08</code></a> branch.</p>
+<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/hardware-interrupts/#comments">at the bottom</a>.  The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-07"><code>post-07</code></a> branch.</p>
 
     <details id = "toc-inline">
         <summary><b>Table of Contents</b></summary>
@@ -139,6 +142,9 @@
                         <a href="#fixing-the-deadlock">Fixing the Deadlock</a>
                     </li>
                 </ul>
+            </li><li>
+                <a href="#fixing-a-race-condition">Fixing a Race Condition</a>
+                
             </li><li>
                 <a href="#the-hlt-instruction">The hlt Instruction</a>
                 
@@ -194,7 +200,7 @@ Secondary ATA ----&gt; |____________|   Parallel Port 1----&gt; |____________|
 
 </span></pre>
 <p>This graphic shows the typical assignment of interrupt lines. We see that most of the 15 lines have a fixed mapping, e.g. line 4 of the secondary PIC is assigned to the mouse.</p>
-<p>Each controller can be configured through two <a href="https://os.phil-opp.com/integration-tests/#port-i-o">I/O ports</a>, one “command” port and one “data” port. For the primary controller these ports are <code>0x20</code> (command) and <code>0x21</code> (data). For the secondary controller they are <code>0xa0</code> (command) and <code>0xa1</code> (data). For more information on how the PICs can be configured see the <a href="https://wiki.osdev.org/8259_PIC">article on osdev.org</a>.</p>
+<p>Each controller can be configured through two <a href="https://os.phil-opp.com/testing/#i-o-ports">I/O ports</a>, one “command” port and one “data” port. For the primary controller these ports are <code>0x20</code> (command) and <code>0x21</code> (data). For the secondary controller they are <code>0xa0</code> (command) and <code>0xa1</code> (data). For more information on how the PICs can be configured see the <a href="https://wiki.osdev.org/8259_PIC">article on osdev.org</a>.</p>
 <h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>
 Implementation</h3>
 <p>The default configuration of the PICs is not usable, because it sends interrupt vector numbers in the range 0–15 to the CPU. These numbers are already occupied by CPU exceptions, for example number 8 corresponds to a double fault. To fix this overlapping issue, we need to remap the PIC interrupts to different numbers. The actual range doesn't matter as long as it does not overlap with the exceptions, but typically the range 32–47 is chosen, because these are the first free numbers after the 32 exception slots.</p>
@@ -220,24 +226,15 @@ Implementation</h3>
     </span><span style="color:#dcdcdc;">spin::Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ ChainedPics::new(</span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span style="color:#dcdcdc;">, </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span style="color:#dcdcdc;">) });
 </span></pre>
 <p>We're setting the offsets for the pics to the range 32–47 as we noted above. By wrapping the <code>ChainedPics</code> struct in a <code>Mutex</code> we are able to get safe mutable access (through the <a href="https://docs.rs/spin/0.4.8/spin/struct.Mutex.html#method.lock"><code>lock</code> method</a>), which we need in the next step. The <code>ChainedPics::new</code> function is unsafe because wrong offsets could cause undefined behavior.</p>
-<p>We can now initialize the 8259 PIC from our <code>_start</code> function:</p>
+<p>We can now initialize the 8259 PIC in our <code>init</code> function:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<span style="color:#608b4e;">// in src/lib.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::interrupts::</span><span style="color:#b4cea8;">PICS</span><span style="color:#dcdcdc;">;                  </span><span style="color:#608b4e;">// new
-
-    </span><span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
-
-    blog_os::gdt::init();
-    blog_os::interrupts::init_idt();
-    </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#b4cea8;">PICS</span><span style="color:#dcdcdc;">.lock().initialize() }; </span><span style="color:#608b4e;">// new
-
-    </span><span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
-    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
-}
+</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
+    gdt::init();
+    interrupts::init_idt();
+    </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span style="color:#dcdcdc;">.lock().initialize() }; </span><span style="color:#608b4e;">// new
+</span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>We use the <a href="https://docs.rs/pic8259_simple/0.1.1/pic8259_simple/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> function to perform the PIC initialization. Like the <code>ChainedPics::new</code> function, this function is also unsafe because it can cause undefined behavior if the PIC is misconfigured.</p>
 <p>If all goes well we should continue to see the &quot;It did not crash&quot; message when executing <code>cargo xrun</code>.</p>
@@ -245,23 +242,14 @@ Implementation</h3>
 Enabling Interrupts</h2>
 <p>Until now nothing happened because interrupts are still disabled in the CPU configuration. This means that the CPU does not listen to the interrupt controller at all, so no interrupts can reach the CPU. Let's change that:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<span style="color:#608b4e;">// in src/lib.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::interrupts::</span><span style="color:#b4cea8;">PICS</span><span style="color:#dcdcdc;">;
-
-    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
-
-    blog_os::gdt::init();
-    blog_os::interrupts::init_idt();
-    </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#b4cea8;">PICS</span><span style="color:#dcdcdc;">.lock().initialize() };
+</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
+    gdt::init();
+    interrupts::init_idt();
+    </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span style="color:#dcdcdc;">.lock().initialize() };
     x86_64::instructions::interrupts::enable();     </span><span style="color:#608b4e;">// new
-
-    </span><span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
-    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
-}
+</span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>The <code>interrupts::enable</code> function of the <code>x86_64</code> crate executes the special <code>sti</code> instruction (“set interrupts”) to enable external interrupts. When we try <code>cargo xrun</code> now, we see that a double fault occurs:</p>
 <p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT because of hardware timer" /></p>
@@ -374,8 +362,7 @@ Provoking a Deadlock</h3>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
+</span><span style="color:#dcdcdc;">#[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     […]
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{
@@ -425,6 +412,73 @@ Fixing the Deadlock</h3>
 }
 </span></pre>
 <p>Note that disabling interrupts shouldn't be a general solution. The problem is that it increases the worst case interrupt latency, i.e. the time until the system reacts to an interrupt. Therefore interrupts should be only disabled for a very short time.</p>
+<h2 id="fixing-a-race-condition"><a class="zola-anchor" href="#fixing-a-race-condition" aria-label="Anchor link for: fixing-a-race-condition">🔗</a>
+Fixing a Race Condition</h2>
+<p>If you run <code>cargo xtest</code> you might see the <code>test_println_output</code> test failing:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">&gt; cargo xtest --lib
+[…]
+Running 4 tests
+test_breakpoint_exception...[ok]
+test_println... [ok]
+test_println_many... [ok]
+test_println_output... [failed]
+
+Error: panicked at &#39;assertion failed: `(left == right)`
+  left: `&#39;.&#39;`,
+ right: `&#39;S&#39;`&#39;, src/vga_buffer.rs:205:9
+</span></pre>
+<p>The reason is a <em>race condition</em> between the test and our timer handler. Remember, the test looks like this:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/vga_buffer.rs
+
+</span><span style="color:#dcdcdc;">#[test_case]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println_output() {
+    serial_print!(</span><span style="color:#d69d85;">&quot;test_println_output... &quot;</span><span style="color:#dcdcdc;">);
+
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> s </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span style="color:#dcdcdc;">;
+    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, s);
+    </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">(i, c) </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> s.chars().enumerate() {
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> screen_char </span><span style="color:#569cd6;">= </span><span style="color:#b4cea8;">WRITER</span><span style="color:#dcdcdc;">.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">][i].read();
+        assert_eq!(</span><span style="color:#569cd6;">char</span><span style="color:#dcdcdc;">::from(screen_char.ascii_character), c);
+    }
+
+    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
+}
+</span></pre>
+<p>The test prints a string to the VGA buffer and then checks the output by manually iterating over the <code>buffer_chars</code> array. The race condition occurs because the timer interrupt handler might run between the <code>println</code> and the reading of the screen characters. Note that this isn't a dangerous <em>data race</em>, which Rust completely prevents at compile time. See the <a href="https://doc.rust-lang.org/nomicon/races.html"><em>Rustonomicon</em></a> for details.</p>
+<p>To fix this, we need to keep the <code>WRITER</code> locked for the complete duration of the test, so that the timer handler can't write a <code>.</code> to the screen in between. The fixed test looks like this:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/vga_buffer.rs
+
+</span><span style="color:#dcdcdc;">#[test_case]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println_output() {
+    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::fmt::Write;
+    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::instructions::interrupts;
+
+    serial_print!(</span><span style="color:#d69d85;">&quot;test_println_output... &quot;</span><span style="color:#dcdcdc;">);
+
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> s </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span style="color:#dcdcdc;">;
+    interrupts::without_interrupts(|| {
+        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> writer </span><span style="color:#569cd6;">= </span><span style="color:#b4cea8;">WRITER</span><span style="color:#dcdcdc;">.lock();
+        writeln!(writer, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, s).expect(</span><span style="color:#d69d85;">&quot;writeln failed&quot;</span><span style="color:#dcdcdc;">);
+        </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">(i, c) </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> s.chars().enumerate() {
+            </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> screen_char </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> writer.buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">][i].read();
+            assert_eq!(</span><span style="color:#569cd6;">char</span><span style="color:#dcdcdc;">::from(screen_char.ascii_character), c);
+        }
+    });
+
+    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
+}
+</span></pre>
+<p>We performed the following changes:</p>
+<ul>
+<li>We keep the writer locked for the complete test by using the <code>lock()</code> method explicitly. Instead of <code>println</code>, we use the <a href="https://doc.rust-lang.org/core/macro.writeln.html"><code>writeln</code></a> marco that allows printing to an already locked writer.</li>
+<li>To avoid another deadlock, we disable interrupts for the tests duration. Otherwise the test might get interrupted while the writer is still locked.</li>
+<li>Since the timer interrupt handler can still run before the test, we print an additional newline <code>\n</code> before printing the string <code>s</code>. This way, we avoid test failure when the timer handler already printed some <code>.</code> characters to the current line.</li>
+</ul>
+<p>With the above changes, <code>cargo xtest</code> now deterministically succeeds again.</p>
+<p>This was a very harmless race condition that only caused a test failure. As you can imagine, other race conditions can be much more difficult to debug due to their non-deterministic nature. Luckily, Rust prevents us from data races, which are the most serious class of race conditions since they can cause all kinds of undefined behavior, including system crashes and silent memory corruptions.</p>
 <h2 id="the-hlt-instruction"><a class="zola-anchor" href="#the-hlt-instruction" aria-label="Anchor link for: the-hlt-instruction">🔗</a>
 The <code>hlt</code> Instruction</h2>
 <p>Until now we used a simple empty loop statement at the end of our <code>_start</code> and <code>panic</code> functions. This causes the CPU to spin endlessly and thus works as expected. But it is also very inefficient, because the CPU continues to run at full speed even though there's no work to do. You can see this problem in your task manager when you run your kernel: The QEMU process needs close to 100% CPU the whole time.</p>
@@ -443,8 +497,7 @@ The <code>hlt</code> Instruction</h2>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
+</span><span style="color:#dcdcdc;">#[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     […]
 
@@ -461,7 +514,27 @@ The <code>hlt</code> Instruction</h2>
 </span><span style="color:#dcdcdc;">}
 
 </span></pre>
-<p>We can also use <code>hlt_loop</code> in our double fault exception handler as well:</p>
+<p>Let's update our <code>lib.rs</code> as well:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/lib.rs
+
+/// Entry point for `cargo xtest`
+</span><span style="color:#dcdcdc;">#[cfg(test)]
+#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    init();
+    test_main();
+    hlt_loop();         </span><span style="color:#608b4e;">// new
+</span><span style="color:#dcdcdc;">}
+
+</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">test_panic_handler(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">);
+    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, info);
+    exit_qemu(QemuExitCode::Failed);
+    hlt_loop();         </span><span style="color:#608b4e;">// new
+</span><span style="color:#dcdcdc;">}
+</span></pre>
+<p>We can also use <code>hlt_loop</code> in our double fault exception handler:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts.rs
 
@@ -522,7 +595,7 @@ lazy_static! {
 <p>We now see that a <code>k</code> appears on the screen when we press a key. However, this only works for the first key we press, even if we continue to press keys no more <code>k</code>s appear on the screen. This is because the keyboard controller won't send another interrupt until we have read the so-called <em>scancode</em> of the pressed key.</p>
 <h3 id="reading-the-scancodes"><a class="zola-anchor" href="#reading-the-scancodes" aria-label="Anchor link for: reading-the-scancodes">🔗</a>
 Reading the Scancodes</h3>
-<p>To find out <em>which</em> key was pressed, we need to query the keyboard controller. We do this by reading from the data port of the PS/2 controller, which is the <a href="https://os.phil-opp.com/integration-tests/#port-i-o">I/O port</a> with number <code>0x60</code>:</p>
+<p>To find out <em>which</em> key was pressed, we need to query the keyboard controller. We do this by reading from the data port of the PS/2 controller, which is the <a href="https://os.phil-opp.com/testing/#i-o-ports">I/O port</a> with number <code>0x60</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts.rs
 

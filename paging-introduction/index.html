@@ -101,7 +101,7 @@
 
     <p>This post introduces <em>paging</em>, a very common memory management scheme that we will also use for our operating system. It explains why memory isolation is needed, how <em>segmentation</em> works, what <em>virtual memory</em> is, and how paging solves memory fragmentation issues. It also explores the layout of multilevel page tables on the x86_64 architecture.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
-<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/paging-introduction/#comments">at the bottom</a>.  The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-09"><code>post-09</code></a> branch.</p>
+<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/paging-introduction/#comments">at the bottom</a>.  The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-08"><code>post-08</code></a> branch.</p>
 
     <details id = "toc-inline">
         <summary><b>Table of Contents</b></summary>
@@ -324,7 +324,6 @@ Page Faults</h3>
     stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> InterruptStackFrame,
     _error_code: PageFaultErrorCode,
 ) {
-    </span><span style="color:#569cd6;">use crate</span><span style="color:#dcdcdc;">::hlt_loop;
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::registers::control::Cr2;
 
     println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: PAGE FAULT&quot;</span><span style="color:#dcdcdc;">);
@@ -338,23 +337,19 @@ Page Faults</h3>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
+</span><span style="color:#dcdcdc;">#[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::interrupts::</span><span style="color:#b4cea8;">PICS</span><span style="color:#dcdcdc;">;
-
     println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
 
-    </span><span style="color:#608b4e;">// set up the IDT first, otherwise we would enter a boot loop instead of
-    // invoking our page fault handler
-    </span><span style="color:#dcdcdc;">blog_os::gdt::init();
-    blog_os::interrupts::init_idt();
-    </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#b4cea8;">PICS</span><span style="color:#dcdcdc;">.lock().initialize() };
-    x86_64::instructions::interrupts::enable();
+    blog_os::init();
 
     </span><span style="color:#608b4e;">// new
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> ptr </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u32</span><span style="color:#dcdcdc;">;
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">ptr </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">42</span><span style="color:#dcdcdc;">; }
+
+    </span><span style="color:#608b4e;">// as before
+    </span><span style="color:#dcdcdc;">#[cfg(test)]
+    test_main();
 
     println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     blog_os::hlt_loop();
@@ -380,19 +375,19 @@ Accessing the Page Tables</h3>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
+</span><span style="color:#dcdcdc;">#[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    […] </span><span style="color:#608b4e;">// initialize GDT, IDT, PICS
+    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
+
+    blog_os::init();
 
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::registers::control::Cr3;
 
     </span><span style="color:#569cd6;">let </span><span style="color:#dcdcdc;">(level_4_page_table, </span><span style="color:#569cd6;">_</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Cr3::read();
     println!(</span><span style="color:#d69d85;">&quot;Level 4 page table at: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, level_4_page_table.start_address());
 
-    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
-    blog_os::hlt_loop();
-}
+    […] </span><span style="color:#608b4e;">// test_main(), println(…), and hlt_loop()
+</span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>The <a href="https://docs.rs/x86_64/0.5.2/x86_64/registers/control/struct.Cr3.html#method.read"><code>Cr3::read</code></a> function of the <code>x86_64</code> returns the currently active level 4 page table from the <code>CR3</code> register. It returns a tuple of a <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/frame/struct.PhysFrame.html"><code>PhysFrame</code></a> and a <a href="https://docs.rs/x86_64/0.5.2/x86_64/registers/control/struct.Cr3Flags.html"><code>Cr3Flags</code></a> type. We are only interested in the frame, so we ignore the second element of the tuple.</p>
 <p>When we run it, we see the following output:</p>

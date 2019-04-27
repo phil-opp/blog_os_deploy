@@ -73,11 +73,9 @@
                     <li>
                         <a href="#loading-the-idt">Loading the IDT</a>
                     </li><li>
-                        <a href="#testing-it">Testing it</a>
+                        <a href="#running-it">Running it</a>
                     </li><li>
                         <a href="#adding-a-test">Adding a Test</a>
-                    </li><li>
-                        <a href="#fixing-cargo-test-on-windows">Fixing cargo test on Windows</a>
                     </li>
                 </ol>
             </li><li>
@@ -94,7 +92,7 @@
 
     <p>CPU exceptions occur in various erroneous situations, for example when accessing an invalid memory address or when dividing by zero. To react to them we have to set up an <em>interrupt descriptor table</em> that provides handler functions. At the end of this post, our kernel will be able to catch <a href="http://wiki.osdev.org/Exceptions#Breakpoint">breakpoint exceptions</a> and to resume normal execution afterwards.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
-<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/cpu-exceptions/#comments">at the bottom</a>. The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-06"><code>post-06</code></a> branch.</p>
+<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/cpu-exceptions/#comments">at the bottom</a>. The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-05"><code>post-05</code></a> branch.</p>
 
     <details id = "toc-inline">
         <summary><b>Table of Contents</b></summary>
@@ -128,11 +126,9 @@
                     <li>
                         <a href="#loading-the-idt">Loading the IDT</a>
                     </li><li>
-                        <a href="#testing-it">Testing it</a>
+                        <a href="#running-it">Running it</a>
                     </li><li>
                         <a href="#adding-a-test">Adding a Test</a>
-                    </li><li>
-                        <a href="#fixing-cargo-test-on-windows">Fixing cargo test on Windows</a>
                     </li>
                 </ul>
             </li><li>
@@ -398,21 +394,33 @@ lazy_static! {
 }
 </span></pre>
 <p>Note how this solution requires no <code>unsafe</code> blocks. The <code>lazy_static!</code> macro does use <code>unsafe</code> behind the scenes, but it is abstracted away in a safe interface.</p>
-<h3 id="testing-it"><a class="zola-anchor" href="#testing-it" aria-label="Anchor link for: testing-it">🔗</a>
-Testing it</h3>
-<p>Now we should be able to handle breakpoint exceptions! Let's try it in our <code>_start</code> function:</p>
+<h3 id="running-it"><a class="zola-anchor" href="#running-it" aria-label="Anchor link for: running-it">🔗</a>
+Running it</h3>
+<p>The last step for making exceptions work in our kernel it to call the <code>init_idt</code> function from our <code>main.rs</code>. Instead of calling it directly, we introduce a general <code>init</code> function in our <code>lib.rs</code>:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/lib.rs
+
+</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
+    interrupts::init_idt();
+}
+</span></pre>
+<p>With this function we now have a central place for initialization routines that can be shared between the different <code>_start</code> functions in our <code>main.rs</code>, <code>lib.rs</code>, and integration tests.</p>
+<p>Now we can update the <code>_start</code> function of our <code>main.rs</code> to call <code>init</code> and then trigger a breakpoint exception:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
+</span><span style="color:#dcdcdc;">#[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
 
-    blog_os::interrupts::init_idt();
+    blog_os::init(); </span><span style="color:#608b4e;">// new
 
-    </span><span style="color:#608b4e;">// invoke a breakpoint exception
-    </span><span style="color:#dcdcdc;">x86_64::instructions::interrupts::int3();
+    // invoke a breakpoint exception
+    </span><span style="color:#dcdcdc;">x86_64::instructions::interrupts::int3(); </span><span style="color:#608b4e;">// new
+
+    // as before
+    </span><span style="color:#dcdcdc;">#[cfg(test)]
+    test_main();
 
     println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
@@ -424,65 +432,37 @@ Testing it</h3>
 <p>We see that the interrupt stack frame tells us the instruction and stack pointers at the time when the exception occured. This information is very useful when debugging unexpected exceptions.</p>
 <h3 id="adding-a-test"><a class="zola-anchor" href="#adding-a-test" aria-label="Anchor link for: adding-a-test">🔗</a>
 Adding a Test</h3>
-<p>Let's create an integration test that ensures that the above continues to work. For that we create a file named <code>test-exception-breakpoint.rs</code>:</p>
-<pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/bin/test-exception-breakpoint.rs
-
-</span><span style="color:#dcdcdc;">#![no_std]
-#![cfg_attr(not(test), no_main)]
-#![cfg_attr(test, allow(dead_code, unused_macros, unused_imports))]
-
-</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
-</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::{exit_qemu, serial_println};
-
-#[cfg(not(test))]
-#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    blog_os::interrupts::init_idt();
-
-    x86_64::instructions::interrupts::int3();
-
-    serial_println!(</span><span style="color:#d69d85;">&quot;ok&quot;</span><span style="color:#dcdcdc;">);
-
-    </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ exit_qemu(); }
-    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
-}
-
-
-#[cfg(not(test))]
-#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    serial_println!(</span><span style="color:#d69d85;">&quot;failed&quot;</span><span style="color:#dcdcdc;">);
-
-    serial_println!(</span><span style="color:#d69d85;">&quot;{}&quot;</span><span style="color:#dcdcdc;">, info);
-
-    </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ exit_qemu(); }
-    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
-}
-</span></pre>
-<p>It is similar to our <code>main.rs</code>, but instead of printing &quot;It did not crash!&quot; to the VGA buffer, it prints &quot;ok&quot; to the serial output and calls <code>exit_qemu</code>. This allows the <code>bootimage</code> tool to detect that our code successfully continued after invoking the <code>int3</code> instruction. If our <code>panic_handler</code> is called, we instead print <code>failed</code> to signalize the failure to <code>bootimage</code>.</p>
-<p>You can try this new test by running <code>bootimage test</code>.</p>
-<h3 id="fixing-cargo-test-on-windows"><a class="zola-anchor" href="#fixing-cargo-test-on-windows" aria-label="Anchor link for: fixing-cargo-test-on-windows">🔗</a>
-Fixing <code>cargo test</code> on Windows</h3>
-<p>The <code>x86-interrupt</code> calling convention has an annoying problem: There is a bug in LLVM that leads to a &quot;LLVM ERROR: offset is not a multiple of 16&quot; when compiling a function with the <code>x86-interrupt</code> calling convention <em>for a Windows target</em>. Normally this is no problem, since we only compile for our custom <code>x86_64-blog_os.json</code> target. But <code>cargo test</code> compiles our crate for the host system, so the error occurs if the host system is Windows.</p>
-<p>To fix this problem, we add a conditional compilation attribute, so that the <code>x86-interrupt</code> functions are not compiled on Windows systems. We don't have any unit tests that rely on the <code>interrupts</code> module, so we can simply skip compilation of the whole module:</p>
-<pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts.rs
-
-// LLVM throws an error if a function with the
-// x86-interrupt calling convention is compiled
-// for a Windows system.
-</span><span style="color:#dcdcdc;">#![cfg(not(windows))]
-</span></pre>
-<p>The bang (&quot;!&quot;) after the hash (&quot;#&quot;) indicates that this is an <a href="https://doc.rust-lang.org/reference/attributes.html">inner attribute</a> and applies to the module we're in. Without the bang it would only apply to the next item in the file. Note that inner attributes must be right at the beginning of a module.</p>
-<p>We could achieve the same effect by using an <em>outer</em> attribute (without a bang) in our <code>lib.rs</code>:</p>
+<p>Let's create a test that ensures that the above continues to work. First, we update the <code>_start</code> function to also call <code>init</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(windows))] </span><span style="color:#608b4e;">// no bang (&quot;!&quot;) after the hash (&quot;#&quot;)
-</span><span style="color:#569cd6;">pub mod </span><span style="color:#dcdcdc;">interrupts;
+/// Entry point for `cargo xtest`
+</span><span style="color:#dcdcdc;">#[cfg(test)]
+#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    init();      </span><span style="color:#608b4e;">// new
+    </span><span style="color:#dcdcdc;">test_main();
+    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
+}
 </span></pre>
-<p>Both variants have the exact same effects, so it comes down to personal preference which one to use. I prefer the inner attribute in this case because it does not clutter our <code>lib.rs</code> with a workaround for a LLVM bug, but either way is fine.</p>
+<p>Remember, this <code>_start</code> function is used when running <code>cargo xtest --lib</code>, since Rust's tests the <code>lib.rs</code> completely independent of the <code>main.rs</code>. We need to call <code>init</code> here to set up an IDT before running the tests.</p>
+<p>Now we can create a <code>test_breakpoint_exception</code> test:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/interrupts.rs
+
+</span><span style="color:#dcdcdc;">#[cfg(test)]
+</span><span style="color:#569cd6;">use crate</span><span style="color:#dcdcdc;">::{serial_print, serial_println};
+
+#[test_case]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_breakpoint_exception() {
+    serial_print!(</span><span style="color:#d69d85;">&quot;test_breakpoint_exception...&quot;</span><span style="color:#dcdcdc;">);
+    </span><span style="color:#608b4e;">// invoke a breakpoint exception
+    </span><span style="color:#dcdcdc;">x86_64::instructions::interrupts::int3();
+    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
+}
+</span></pre>
+<p>Apart from printing status messages through the <a href="https://os.phil-opp.com/testing/#serial-port">serial port</a>, the test invokes the <code>int3</code> function to trigger a breakpoint exception. By checking that the execution continues afterwards, we verify that our breakpoint handler is working correctly.</p>
+<p>You can try this new test by running <code>cargo xtest</code> (all tests) or <code>cargo xtest --lib</code> (only tests of <code>lib.rs</code> and its modules). You should see <code>test_breakpoint_exception...[ok]</code> in the output.</p>
 <h2 id="too-much-magic"><a class="zola-anchor" href="#too-much-magic" aria-label="Anchor link for: too-much-magic">🔗</a>
 Too much Magic?</h2>
 <p>The <code>x86-interrupt</code> calling convention and the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> type made the exception handling process relatively straightforward and painless. If this was too much magic for you and you like to learn all the gory details of exception handling, we got you covered: Our <a href="https://os.phil-opp.com/first-edition/extra/naked-exceptions/">“Handling Exceptions with Naked Functions”</a> series shows how to handle exceptions without the <code>x86-interrupt</code> calling convention and also creates its own IDT type. Historically, these posts were the main exception handling posts before the <code>x86-interrupt</code> calling convention and the <code>x86_64</code> crate existed. Note that these posts are based on the <a href="https://os.phil-opp.com/first-edition/">first edition</a> of this blog and might be out of date.</p>
@@ -501,7 +481,7 @@ What's next?</h2>
     <hr>
     <div class="PageNavigation">
         
-            <a class="prev" href="/integration-tests/">&laquo; Integration Tests</a>
+            <a class="prev" href="/testing/">&laquo; Testing</a>
         
         
             <a class="next" href="/double-fault-exceptions/">Double Faults &raquo;</a>

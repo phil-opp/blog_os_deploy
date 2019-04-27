@@ -75,6 +75,17 @@
                     </li>
                 </ol>
             </li><li>
+                <a href="#a-stack-overflow-test">A Stack Overflow Test</a>
+                <ol>
+                    <li>
+                        <a href="#implementing-start">Implementing _start</a>
+                    </li><li>
+                        <a href="#the-test-idt">The Test IDT</a>
+                    </li><li>
+                        <a href="#the-double-fault-handler">The Double Fault Handler</a>
+                    </li>
+                </ol>
+            </li><li>
                 <a href="#summary">Summary</a>
                 
             </li><li>
@@ -88,7 +99,7 @@
 
     <p>This post explores the double fault exception in detail, which occurs when the CPU fails to invoke an exception handler. By handling this exception we avoid fatal <em>triple faults</em> that cause a system reset. To prevent triple faults in all cases we also set up an <em>Interrupt Stack Table</em> to catch double faults on a separate kernel stack.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
-<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/double-fault-exceptions/#comments">at the bottom</a>.  The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-07"><code>post-07</code></a> branch.</p>
+<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/double-fault-exceptions/#comments">at the bottom</a>.  The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-06"><code>post-06</code></a> branch.</p>
 
     <details id = "toc-inline">
         <summary><b>Table of Contents</b></summary>
@@ -124,6 +135,17 @@
                     </li>
                 </ul>
             </li><li>
+                <a href="#a-stack-overflow-test">A Stack Overflow Test</a>
+                <ul>
+                    <li>
+                        <a href="#implementing-start">Implementing _start</a>
+                    </li><li>
+                        <a href="#the-test-idt">The Test IDT</a>
+                    </li><li>
+                        <a href="#the-double-fault-handler">The Double Fault Handler</a>
+                    </li>
+                </ul>
+            </li><li>
                 <a href="#summary">Summary</a>
                 
             </li><li>
@@ -143,17 +165,20 @@ Triggering a Double Fault</h3>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
+</span><span style="color:#dcdcdc;">#[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
 
-    blog_os::interrupts::init_idt();
+    blog_os::init();
 
     </span><span style="color:#608b4e;">// trigger a page fault
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
         </span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">(</span><span style="color:#b5cea8;">0xdeadbeef </span><span style="color:#569cd6;">as *mut u64</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">42</span><span style="color:#dcdcdc;">;
     };
+
+    </span><span style="color:#608b4e;">// as before
+    </span><span style="color:#dcdcdc;">#[cfg(test)]
+    test_main();
 
     println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
@@ -187,8 +212,7 @@ A Double Fault Handler</h2>
 </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">double_fault_handler(
     stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> InterruptStackFrame, _error_code: </span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">)
 {
-    println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: DOUBLE FAULT</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, stack_frame);
-    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
+    panic!(</span><span style="color:#d69d85;">&quot;EXCEPTION: DOUBLE FAULT</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">{:#?}&quot;</span><span style="color:#dcdcdc;">, stack_frame);
 }
 </span></pre>
 <p>Our handler prints a short error message and dumps the exception stack frame. The error code of the double fault handler is always zero, so there's no reason to print it.</p>
@@ -242,12 +266,11 @@ Kernel Stack Overflow</h3>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle] </span><span style="color:#608b4e;">// don&#39;t mangle the name of this function
+</span><span style="color:#dcdcdc;">#[no_mangle] </span><span style="color:#608b4e;">// don&#39;t mangle the name of this function
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
 
-    blog_os::interrupts::init_idt();
+    blog_os::init();
 
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">stack_overflow() {
         stack_overflow(); </span><span style="color:#608b4e;">// for each recursion, the return address is pushed
@@ -256,9 +279,8 @@ Kernel Stack Overflow</h3>
     </span><span style="color:#608b4e;">// trigger a stack overflow
     </span><span style="color:#dcdcdc;">stack_overflow();
 
-    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
-    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
-}
+    […] </span><span style="color:#608b4e;">// test_main(), println(…), and loop {}
+</span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>When we try this code in QEMU, we see that the system enters a boot-loop again.</p>
 <p>So how can we avoid this problem? We can't omit the pushing of the exception stack frame, since the CPU itself does it. So we need to ensure somehow that the stack is always valid when a double fault exception occurs. Fortunately, the x86_64 architecture has a solution to this problem.</p>
@@ -349,7 +371,7 @@ lazy_static! {
 <p>We use <code>lazy_static</code> again, because Rust's const evaluator is not powerful enough yet. We create a new GDT with a code segment and a TSS segment.</p>
 <h4 id="loading-the-gdt"><a class="zola-anchor" href="#loading-the-gdt" aria-label="Anchor link for: loading-the-gdt">🔗</a>
 Loading the GDT</h4>
-<p>To load our GDT we create a new <code>gdt::init</code> function, that we call from our <code>_start</code> function:</p>
+<p>To load our GDT we create a new <code>gdt::init</code> function, that we call from our <code>init</code> function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/gdt.rs
 
@@ -357,21 +379,14 @@ Loading the GDT</h4>
     </span><span style="color:#b4cea8;">GDT</span><span style="color:#dcdcdc;">.load();
 }
 
-</span><span style="color:#608b4e;">// in src/main.rs
+</span><span style="color:#608b4e;">// in src/lib.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
-#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
-
-    blog_os::gdt::init();
-    blog_os::interrupts::init_idt();
-
-    […]
+</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
+    gdt::init();
+    interrupts::init_idt();
 }
-
 </span></pre>
-<p>Now our GDT is loaded, but we still see the boot loop on stack overflow.</p>
+<p>Now our GDT is loaded (since the <code>_start</code> function calls <code>init</code>), but we still see the boot loop on stack overflow.</p>
 <h3 id="the-final-steps"><a class="zola-anchor" href="#the-final-steps" aria-label="Anchor link for: the-final-steps">🔗</a>
 The final Steps</h3>
 <p>The problem is that the GDT segments are not yet active because the segment and TSS registers still contain the values from the old GDT. We also need to modify the double fault IDT entry so that it uses the new stack.</p>
@@ -439,8 +454,113 @@ lazy_static! {
 <p>The <code>set_stack_index</code> method is unsafe because the the caller must ensure that the used index is valid and not already used for another exception.</p>
 <p>That's it! Now the CPU should switch to the double fault stack whenever a double fault occurs. Thus, we are able to catch <em>all</em> double faults, including kernel stack overflows:</p>
 <p><img src="https://os.phil-opp.com/double-fault-exceptions/qemu-double-fault-on-stack-overflow.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT and a dump of the exception stack frame" /></p>
-<p>From now on we should never see a triple fault again!</p>
-<p>To ensure that we don't accidentally break the above, we should add a integration test for this. We don't show the code here for space reasons, but you can find it <a href="https://github.com/phil-opp/blog_os/blob/post-07/src/bin/test-exception-double-fault-stack-overflow.rs">on Github</a>. The idea is to do a <code>serial_println!(&quot;ok&quot;);</code> from the double fault handler to ensure that it is called. The rest of the file is is very similar to our <code>main.rs</code>.</p>
+<p>From now on we should never see a triple fault again! To ensure that we don't accidentally break the above, we should add a test for this.</p>
+<h2 id="a-stack-overflow-test"><a class="zola-anchor" href="#a-stack-overflow-test" aria-label="Anchor link for: a-stack-overflow-test">🔗</a>
+A Stack Overflow Test</h2>
+<p>To test our new <code>gdt</code> module and ensure that the double fault handler is correctly called on a stack overflow, we can add an integration test. The idea is to do provoke a double fault in the test function and verify that the double fault handler is called.</p>
+<p>Let's start with a minimal skeleton:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in tests/stack_overflow.rs
+
+</span><span style="color:#dcdcdc;">#![no_std]
+#![no_main]
+
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
+
+#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    unimplemented!();
+}
+
+#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    blog_os::test_panic_handler(info)
+}
+</span></pre>
+<p>Like our <code>panic_handler</code> test, the test will run <a href="https://os.phil-opp.com/testing/#no-harness">without a test harness</a>. The reason is that we can't continue execution after a double fault, so more than one test doesn't make sense. To disable, the test harness for the test, we add the following to our <code>Cargo.toml</code>:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;"># in Cargo.toml
+
+</span><span style="color:#dcdcdc;">[[</span><span style="color:#808080;">test</span><span style="color:#dcdcdc;">]]
+</span><span style="color:#569cd6;">name </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;stack_overflow&quot;
+</span><span style="color:#569cd6;">harness </span><span style="color:#dcdcdc;">= </span><span style="color:#569cd6;">false
+</span></pre>
+<p>Now <code>cargo xtest --test stack_overflow</code> should compile successfully. The test fails of course, since the <code>unimplemented</code> macro panics.</p>
+<h3 id="implementing-start"><a class="zola-anchor" href="#implementing-start" aria-label="Anchor link for: implementing-start">🔗</a>
+Implementing <code>_start</code></h3>
+<p>The implementation of the <code>_start</code> function looks like this:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in tests/stack_overflow.rs
+
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::serial_print;
+
+#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    serial_print!(</span><span style="color:#d69d85;">&quot;stack_overflow... &quot;</span><span style="color:#dcdcdc;">);
+
+    blog_os::gdt::init();
+    init_test_idt();
+
+    </span><span style="color:#608b4e;">// trigger a stack overflow
+    </span><span style="color:#dcdcdc;">stack_overflow();
+
+    panic!(</span><span style="color:#d69d85;">&quot;Execution continued after stack overflow&quot;</span><span style="color:#dcdcdc;">);
+}
+
+#[allow(unconditional_recursion)]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">stack_overflow() {
+    stack_overflow(); </span><span style="color:#608b4e;">// for each recursion, the return address is pushed
+</span><span style="color:#dcdcdc;">}
+</span></pre>
+<p>We call our <code>gdt::init</code> function to initialize a new GDT. Instead of calling our <code>interrupts::init_idt</code> function, we call a <code>init_test_idt</code> function that will be explained in a moment. The reason is that we want to register a custom double fault handler that does a <code>exit_qemu(QemuExitCode::Success)</code> instead of panicking.</p>
+<p>The <code>stack_overflow</code> function is identical to the function in our <code>main.rs</code>. We additionally added the <code>allow(unconditional_recursion)</code> attribute to silence the warning that the function recurses endlessly.</p>
+<h3 id="the-test-idt"><a class="zola-anchor" href="#the-test-idt" aria-label="Anchor link for: the-test-idt">🔗</a>
+The Test IDT</h3>
+<p>As noted above, the test needs its own IDT with a custom double fault handler. The implementation looks like this:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in tests/stack_overflow.rs
+
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">lazy_static::lazy_static;
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::structures::idt::InterruptDescriptorTable;
+
+lazy_static! {
+    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">TEST_IDT</span><span style="color:#dcdcdc;">: InterruptDescriptorTable </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">{
+        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">InterruptDescriptorTable::new();
+        </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
+            idt.double_fault
+                .set_handler_fn(test_double_fault_handler)
+                .set_stack_index(blog_os::gdt::</span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX</span><span style="color:#dcdcdc;">);
+        }
+
+        idt
+    };
+}
+
+</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init_test_idt() {
+    </span><span style="color:#b4cea8;">TEST_IDT</span><span style="color:#dcdcdc;">.load();
+}
+</span></pre>
+<p>The implementation is very similar to our normal IDT in <code>interrupts.rs</code>. Like in the normal IDT, we set a stack index into the IST for the double fault handler in order to switch to a separate stack. The <code>init_test_idt</code> function loads the IDT on the CPU through the <code>load</code> method.</p>
+<h3 id="the-double-fault-handler"><a class="zola-anchor" href="#the-double-fault-handler" aria-label="Anchor link for: the-double-fault-handler">🔗</a>
+The Double Fault Handler</h3>
+<p>The only missing piece is our double fault handler. It looks like this:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in tests/stack_overflow.rs
+
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::{exit_qemu, QemuExitCode, serial_println};
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::structures::idt::InterruptStackFrame;
+
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_double_fault_handler(
+    _stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> InterruptStackFrame,
+    _error_code: </span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">,
+) {
+    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
+    exit_qemu(QemuExitCode::Success);
+    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
+}
+</span></pre>
+<p>When the double fault handler is called, we exit QEMU with a success exit code, which marks the test as passed. Since integration tests are completely separate executables, we need to set <code>#![feature(abi_x86_interrupt)]</code> attribute again at the top of our test file.</p>
+<p>Now we can run our test through <code>cargo xtest --test stack_overflow</code> (or <code>cargo xtest</code> to run all tests). As expected, we see the <code>stack_overflow... [ok]</code> output in the console. TRy to comment out the <code>set_stack_index</code> line: it should cause the test to fail.</p>
 <h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>
 Summary</h2>
 <p>In this post we learned what a double fault is and under which conditions it occurs. We added a basic double fault handler that prints an error message and added an integration test for it.</p>

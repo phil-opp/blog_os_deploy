@@ -107,7 +107,7 @@
 
     <p>This post shows how to implement paging support in our kernel. It first explores different techniques to make the physical page table frames accessible to the kernel and discusses their respective advantages and drawbacks. It then implements an address translation function and a function to create a new mapping.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
-<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/paging-implementation/#comments">at the bottom</a>. The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-10"><code>post-10</code></a> branch.</p>
+<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/paging-implementation/#comments">at the bottom</a>. The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-09"><code>post-09</code></a> branch.</p>
 <aside class="post_aside">
 <h2 id="another-paging-post"><a class="zola-anchor" href="#another-paging-post" aria-label="Anchor link for: another-paging-post">🔗</a>
 Another Paging Post?</h2>
@@ -185,10 +185,10 @@ Introduction</h2>
 <p>To implement the approach, we will need support from the bootloader, so we'll configure it first. Afterward, we will implement a function that traverses the page table hierarchy in order to translate virtual to physical addresses. Finally, we learn how to create new mappings in the page tables and how to find unused memory frames for creating new page tables.</p>
 <h3 id="dependency-updates"><a class="zola-anchor" href="#dependency-updates" aria-label="Anchor link for: dependency-updates">🔗</a>
 Dependency Updates</h3>
-<p>This post requires version 0.5.1 or later of the <code>bootloader</code> dependency and version 0.5.2 or later of the <code>x86_64</code> dependency. You can update the dependencies in your <code>Cargo.toml</code>:</p>
+<p>This post requires version 0.6.0 or later of the <code>bootloader</code> dependency and version 0.5.2 or later of the <code>x86_64</code> dependency. You can update the dependencies in your <code>Cargo.toml</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
-</span><span style="color:#569cd6;">bootloader </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.5.1&quot;
+</span><span style="color:#569cd6;">bootloader </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.6.0&quot;
 </span><span style="color:#569cd6;">x86_64 </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.5.2&quot;
 </span></pre>
 <p>For an overview of the changes in these versions, check out the <a href="https://github.com/rust-osdev/bootloader/blob/master/Changelog.md"><code>bootloader</code> changelog</a> and the <a href="https://github.com/rust-osdev/x86_64/blob/master/Changelog.md"><code>x86_64</code> changelog</a>.</p>
@@ -353,7 +353,7 @@ Bootloader Support</h2>
 <p>We choose the first approach for our kernel since it is simple, platform-independent, and more powerful (it also allows to access non-page-table-frames). To enable the required bootloader support, we add the <code>map_physical_memory</code> feature to our <code>bootloader</code> dependency:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
-</span><span style="color:#569cd6;">bootloader </span><span style="color:#dcdcdc;">= { </span><span style="color:#569cd6;">version </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.5.1&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#569cd6;">features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;map_physical_memory&quot;</span><span style="color:#dcdcdc;">]}
+</span><span style="color:#569cd6;">bootloader </span><span style="color:#dcdcdc;">= { </span><span style="color:#569cd6;">version </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.6.0&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#569cd6;">features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;map_physical_memory&quot;</span><span style="color:#dcdcdc;">]}
 </span></pre>
 <p>With this feature enabled, the bootloader maps the complete physical memory to some unused virtual address range. To communicate the virtual address range to our kernel, the bootloader passes a <em>boot information</em> structure.</p>
 <h3 id="boot-information"><a class="zola-anchor" href="#boot-information" aria-label="Anchor link for: boot-information">🔗</a>
@@ -369,7 +369,6 @@ Boot Information</h3>
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">bootloader::BootInfo;
 
-#[cfg(not(test))]
 #[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{ </span><span style="color:#608b4e;">// new argument
     </span><span style="color:#dcdcdc;">[…]
@@ -379,7 +378,7 @@ Boot Information</h3>
 <h3 id="the-entry-point-macro"><a class="zola-anchor" href="#the-entry-point-macro" aria-label="Anchor link for: the-entry-point-macro">🔗</a>
 The <code>entry_point</code> Macro</h3>
 <p>Since our <code>_start</code> function is called externally from the bootloader, no checking of our function signature occurs. This means that we could let it take arbitrary arguments without any compilation errors, but it would fail or cause undefined behavior at runtime.</p>
-<p>To make sure that the entry point function has always the correct signature that the bootloader expects, the <code>bootloader</code> crate provides an <a href="https://docs.rs/bootloader/0.5.1/bootloader/macro.entry_point.html"><code>entry_point</code></a> macro that provides a type-checked way to define a Rust function as the entry point. Let's rewrite our entry point function to use this macro:</p>
+<p>To make sure that the entry point function has always the correct signature that the bootloader expects, the <code>bootloader</code> crate provides an <a href="https://docs.rs/bootloader/0.6.0/bootloader/macro.entry_point.html"><code>entry_point</code></a> macro that provides a type-checked way to define a Rust function as the entry point. Let's rewrite our entry point function to use this macro:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
@@ -387,15 +386,34 @@ The <code>entry_point</code> Macro</h3>
 
 entry_point!(kernel_main);
 
-#[cfg(not(test))]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     […]
 }
 </span></pre>
 <p>We no longer need to use <code>extern &quot;C&quot;</code> or <code>no_mangle</code> for our entry point, as the macro defines the real lower level <code>_start</code> entry point for us. The <code>kernel_main</code> function is now a completely normal Rust function, so we can choose an arbitrary name for it. The important thing is that it is type-checked so that a compilation error occurs when we use a wrong function signature, for example by adding an argument or changing the argument type.</p>
+<p>Let's perform the same change in our <code>lib.rs</code>:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/lib.rs
+
+</span><span style="color:#dcdcdc;">#[cfg(test)]
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">bootloader::{entry_point, BootInfo};
+
+#[cfg(test)]
+entry_point!(test_kernel_main);
+
+</span><span style="color:#608b4e;">/// Entry point for `cargo xtest`
+</span><span style="color:#dcdcdc;">#[cfg(test)]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_kernel_main(_boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#608b4e;">// like before
+    </span><span style="color:#dcdcdc;">init();
+    test_main();
+    hlt_loop();
+}
+</span></pre>
+<p>Since the entry point is only used in test mode, we add the <code>#[cfg(test)]</code> attribute to all items. We give our test entry point the distinct name <code>test_kernel_main</code> to avoid confusion with the <code>kernel_main</code> of our <code>main.rs</code>. We don't use the <code>BootInfo</code> parameter for now, so we prefix the parameter name with a <code>_</code> to silence the unused variable warning.</p>
 <h2 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>
 Implementation</h2>
-<p>Now that we have access to physical memory, we can finally start our implementation. First, we will take a look at the currently active page tables that our kernel runs on. In the second step, we will create a translation function that returns the physical address that a given virtual address is mapped to. As the last step, we will try to modify the page tables in order to create a new mapping.</p>
+<p>Now that we have access to physical memory, we can finally start to implement our page table code. First, we will take a look at the currently active page tables that our kernel runs on. In the second step, we will create a translation function that returns the physical address that a given virtual address is mapped to. As the last step, we will try to modify the page tables in order to create a new mapping.</p>
 <p>Before we begin, we create a new <code>memory</code> module for our code:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
@@ -437,11 +455,11 @@ Accessing the Page Tables</h3>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    […] </span><span style="color:#608b4e;">// initialize GDT, IDT, PICS
-
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::memory::active_level_4_table;
+
+    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
+    blog_os::init();
 
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> l4_table </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{
         active_level_4_table(boot_info.physical_memory_offset)
@@ -451,6 +469,10 @@ Accessing the Page Tables</h3>
             println!(</span><span style="color:#d69d85;">&quot;L4 Entry </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, i, entry);
         }
     }
+
+    </span><span style="color:#608b4e;">// as before
+    </span><span style="color:#dcdcdc;">#[cfg(test)]
+    test_main();
 
     println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     blog_os::hlt_loop();
@@ -551,17 +573,16 @@ Translating Addresses</h3>
 </span></pre>
 <p>Instead of reusing our <code>active_level_4_table</code> function, we read the level 4 frame from the <code>CR3</code> register again. We do this because it simplifies this prototype implementation. Don't worry, we will create a better solution in a moment.</p>
 <p>The <code>VirtAddr</code> struct already provides methods to compute the indexes into the page tables of the four levels. We store these indexes in a small array because it allows us to traverse the page tables using a <code>for</code> loop. Outside of the loop, we remember the last visited <code>frame</code> to calculate the physical address later. The <code>frame</code> points to page table frames while iterating, and to the mapped frame after the last iteration, i.e. after following the level 1 entry.</p>
-<p>Inside the loop, we again use the <code>physical_memory_offset</code> to convert the frame into a page table reference. We then read the entry of the current page table and use the <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/page_table/struct.PageTableEntry.html#method.frame"><code>PageTableEntry::frame</code></a> function to retrieve the mapped frame. If the entry is not mapped to a frame we return <code>None</code>. If the entry maps a huge 2MiB or 1GiB page we panic for now.</p>
+<p>Inside the loop, we again use the <code>physical_memory_offset</code> to convert the frame into a page table reference. We then read the entry of the current page table and use the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html#method.frame"><code>PageTableEntry::frame</code></a> function to retrieve the mapped frame. If the entry is not mapped to a frame we return <code>None</code>. If the entry maps a huge 2MiB or 1GiB page we panic for now.</p>
 <p>Let's test our translation function by translating some addresses:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    […] </span><span style="color:#608b4e;">// initialize GDT, IDT, PICS
-
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::memory::translate_addr;
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::VirtAddr;
+
+    […] </span><span style="color:#608b4e;">// hello world and blog_os::init
 
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> addresses </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">[
         </span><span style="color:#608b4e;">// the identity-mapped vga buffer page
@@ -582,9 +603,8 @@ Translating Addresses</h3>
         println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;"> -&gt; </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, virt, phys);
     }
 
-    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
-    blog_os::hlt_loop();
-}
+    […] </span><span style="color:#608b4e;">// test_main(), &quot;it did not crash&quot; printing, and hlt_loop()
+</span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>When we run it, we see the following output:</p>
 <p><img src="https://os.phil-opp.com/paging-implementation/qemu-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x20010a -&gt; 0x40010a, 0x57ac001ffe48 -&gt; 0x27be48, &quot;panicked at 'huge pages not supported'" /></p>
@@ -594,10 +614,10 @@ Using <code>MappedPageTable</code></h3>
 <p>Translating virtual to physical addresses is a common task in an OS kernel, therefore the <code>x86_64</code> crate provides an abstraction for it. The implementation already supports huge pages and several other page table functions apart from <code>translate_addr</code>, so we will use it in the following instead of adding huge page support to our own implementation.</p>
 <p>The base of the abstraction are two traits that define various page table mapping functions:</p>
 <ul>
-<li>The <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> trait is generic over the page size and provides functions that operate on pages. Examples are <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.translate_page"><code>translate_page</code></a>, which translates a given page to a frame of the same size, and <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.map_to"><code>map_to</code></a>, which creates a new mapping in the page table.</li>
-<li>The <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.MapperAllSizes.html"><code>MapperAllSizes</code></a> trait implies that the implementor implements <code>Mapper</code> for all pages sizes. In addition, it provides functions that work with multiple page sizes such as <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.MapperAllSizes.html#method.translate_addr"><code>translate_addr</code></a> or the general <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.MapperAllSizes.html#tymethod.translate"><code>translate</code></a>.</li>
+<li>The <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> trait is generic over the page size and provides functions that operate on pages. Examples are <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.translate_page"><code>translate_page</code></a>, which translates a given page to a frame of the same size, and <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.map_to"><code>map_to</code></a>, which creates a new mapping in the page table.</li>
+<li>The <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.MapperAllSizes.html"><code>MapperAllSizes</code></a> trait implies that the implementor implements <code>Mapper</code> for all pages sizes. In addition, it provides functions that work with multiple page sizes such as <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.MapperAllSizes.html#method.translate_addr"><code>translate_addr</code></a> or the general <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.MapperAllSizes.html#tymethod.translate"><code>translate</code></a>.</li>
 </ul>
-<p>The traits only define the interface, they don't provide any implementation. The <code>x86_64</code> crate currently provides two types that implement the traits: <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/struct.MappedPageTable.html"><code>MappedPageTable</code></a> and <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a>. The former type requires that each page table frame is mapped somewhere (e.g. at an offset). The latter type can be used when the level 4 table is <a href="https://os.phil-opp.com/paging-implementation/#recursive-page-tables">mapped recursively</a>.</p>
+<p>The traits only define the interface, they don't provide any implementation. The <code>x86_64</code> crate currently provides two types that implement the traits: <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/struct.MappedPageTable.html"><code>MappedPageTable</code></a> and <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a>. The former type requires that each page table frame is mapped somewhere (e.g. at an offset). The latter type can be used when the level 4 table is <a href="https://os.phil-opp.com/paging-implementation/#recursive-page-tables">mapped recursively</a>.</p>
 <p>We have the complete physical memory mapped at <code>physical_memory_offset</code>, so we can use the <code>MappedPageTable</code> type. To initialize it, we create a new <code>init</code> function in our <code>memory</code> module:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::structures::paging::{PhysFrame, MapperAllSizes, MappedPageTable};
@@ -631,15 +651,14 @@ Using <code>MappedPageTable</code></h3>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    […] </span><span style="color:#608b4e;">// initialize GDT, IDT, PICS
-
-    // new: different imports
+    </span><span style="color:#608b4e;">// new: different imports
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::memory;
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::{structures::paging::MapperAllSizes, VirtAddr};
 
-    </span><span style="color:#608b4e;">// new: initialize a mapper
+    […] </span><span style="color:#608b4e;">// hello world and blog_os::init
+
+    // new: initialize a mapper
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> mapper </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{ memory::init(boot_info.physical_memory_offset) };
 
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> addresses </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">[…]; </span><span style="color:#608b4e;">// same as before
@@ -651,9 +670,8 @@ Using <code>MappedPageTable</code></h3>
         println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;"> -&gt; </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, virt, phys);
     }
 
-    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
-    blog_os::hlt_loop();
-}
+    […] </span><span style="color:#608b4e;">// test_main(), &quot;it did not crash&quot; printing, and hlt_loop()
+</span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>When we run it now, we see the same translation results as before, with the difference that the huge page translation now also works:</p>
 <p><img src="https://os.phil-opp.com/paging-implementation/qemu-mapper-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x20010a -&gt; 0x40010a, 0x57ac001ffe48 -&gt; 0x27be48, 0xfffffc0000000000 -&gt; 0x0" /></p>
@@ -661,7 +679,7 @@ Using <code>MappedPageTable</code></h3>
 <h3 id="creating-a-new-mapping"><a class="zola-anchor" href="#creating-a-new-mapping" aria-label="Anchor link for: creating-a-new-mapping">🔗</a>
 Creating a new Mapping</h3>
 <p>Until now we only looked at the page tables without modifying anything. Let's change that by creating a new mapping for a previously unmapped page.</p>
-<p>We will use the <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.map_to"><code>map_to</code></a> function of the <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> trait for our implementation, so let's take a look at that function first. The documentation tells us that it takes four arguments: the page that we want to map, the frame that the page should be mapped to, a set of flags for the page table entry, and a <code>frame_allocator</code>. The frame allocator is needed because mapping the given page might require creating additional page tables, which need unused frames as backing storage.</p>
+<p>We will use the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.map_to"><code>map_to</code></a> function of the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> trait for our implementation, so let's take a look at that function first. The documentation tells us that it takes four arguments: the page that we want to map, the frame that the page should be mapped to, a set of flags for the page table entry, and a <code>frame_allocator</code>. The frame allocator is needed because mapping the given page might require creating additional page tables, which need unused frames as backing storage.</p>
 <h4 id="a-create-example-mapping-function"><a class="zola-anchor" href="#a-create-example-mapping-function" aria-label="Anchor link for: a-create-example-mapping-function">🔗</a>
 A <code>create_example_mapping</code> Function</h4>
 <p>The first step of our implementation is to create a new <code>create_example_mapping</code> function that maps a given page to <code>0xb8000</code>, the physical frame of the VGA text buffer. We choose that frame because it allows us to easily test if the mapping was created correctly: We just need to write to the newly mapped page and see whether we see the write appear on the screen.</p>
@@ -688,7 +706,7 @@ A <code>create_example_mapping</code> Function</h4>
     map_to_result.expect(</span><span style="color:#d69d85;">&quot;map_to failed&quot;</span><span style="color:#dcdcdc;">).flush();
 }
 </span></pre>
-<p>In addition to the <code>page</code> that should be mapped, the function expects a <code>mapper</code> instance and a <code>frame_allocator</code>. The <code>mapper</code> is a type that implements the <code>Mapper&lt;Size4KiB&gt;</code> trait, which provides the <code>map_to</code> method. The generic <code>Size4KiB</code> parameter is needed because the <a href="https://docs.rs/x86_64/0.5.1/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> trait is <a href="https://doc.rust-lang.org/book/ch10-00-generics.html">generic</a> over the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/trait.PageSize.html"><code>PageSize</code></a> trait to work with both standard 4KiB pages and huge 2MiB/1GiB pages. We only want to create 4KiB pages, so we can use <code>Mapper&lt;Size4KiB&gt;</code> instead of requiring <code>MapperAllSizes</code>.</p>
+<p>In addition to the <code>page</code> that should be mapped, the function expects a <code>mapper</code> instance and a <code>frame_allocator</code>. The <code>mapper</code> is a type that implements the <code>Mapper&lt;Size4KiB&gt;</code> trait, which provides the <code>map_to</code> method. The generic <code>Size4KiB</code> parameter is needed because the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> trait is <a href="https://doc.rust-lang.org/book/ch10-00-generics.html">generic</a> over the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/trait.PageSize.html"><code>PageSize</code></a> trait to work with both standard 4KiB pages and huge 2MiB/1GiB pages. We only want to create 4KiB pages, so we can use <code>Mapper&lt;Size4KiB&gt;</code> instead of requiring <code>MapperAllSizes</code>.</p>
 <p>For the mapping, we set the <code>PRESENT</code> flag because it is required for all valid entries and the <code>WRITABLE</code> flag to make the mapped page writable. Calling <code>map_to</code> is unsafe because it's possible to break memory safety with invalid arguments, so we need to use an <code>unsafe</code> block. For a list of all possible flags, see the <a href="https://os.phil-opp.com/paging-introduction/#page-table-format"><em>Page Table Format</em></a> section of the previous post.</p>
 <p>The <code>map_to</code> function can fail, so it returns a <a href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a>. Since this is just some example code that does not need to be robust, we just use <a href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>expect</code></a> to panic when an error occurs. On success, the function returns a <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/struct.MapperFlush.html"><code>MapperFlush</code></a> type that provides an easy way to flush the newly mapped page from the translation lookaside buffer (TLB) with its <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/struct.MapperFlush.html#method.flush"><code>flush</code></a> method. Like <code>Result</code>, the type uses the [<code>#[must_use]</code>] attribute to emit a warning when we accidentally forget to use it.</p>
 <p>[<code>#[must_use]</code>]: https://doc.rust-lang.org/std/result/#results-must-be-used</p>
@@ -713,12 +731,11 @@ A dummy <code>FrameAllocator</code></h4>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    […] </span><span style="color:#608b4e;">// initialize GDT, IDT, PICS
-
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::memory;
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::{structures::paging::Page, VirtAddr};
+
+    […] </span><span style="color:#608b4e;">// hello world and blog_os::init
 
     </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> mapper </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{ memory::init(boot_info.physical_memory_offset) };
     </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">memory::EmptyFrameAllocator;
@@ -731,9 +748,8 @@ A dummy <code>FrameAllocator</code></h4>
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> page_ptr: </span><span style="color:#569cd6;">*mut u64 =</span><span style="color:#dcdcdc;"> page.start_address().as_mut_ptr();
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ page_ptr.offset(</span><span style="color:#b5cea8;">400</span><span style="color:#dcdcdc;">).write_volatile(</span><span style="color:#b5cea8;">0x_f021_f077_f065_f04e</span><span style="color:#dcdcdc;">)};
 
-    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
-    blog_os::hlt_loop();
-}
+    […] </span><span style="color:#608b4e;">// test_main(), &quot;it did not crash&quot; printing, and hlt_loop()
+</span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>We first create the mapping for the page at <code>0x1000</code> by calling our <code>create_example_mapping</code> function with a mutable reference to the <code>mapper</code> and the <code>frame_allocator</code> instances. This maps the page <code>0x1000</code> to the VGA text buffer frame, so we should see any write to it on the screen.</p>
 <p>Then we convert the page to a raw pointer and write a value to offset <code>400</code>. We don't write to the start of the page because the top line of the VGA buffer is directly shifted off the screen by the next <code>println</code>. We write the value <code>0x_f021_f077_f065_f04e</code>, which represents the string <em>&quot;New!&quot;</em> on white background. As we learned <a href="https://os.phil-opp.com/vga-text-mode/#volatile">in the <em>“VGA Text Mode”</em> post</a>, writes to the VGA buffer should be volatile, so we use the <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write_volatile"><code>write_volatile</code></a> method.</p>
@@ -744,7 +760,6 @@ A dummy <code>FrameAllocator</code></h4>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     […]
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> page </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Page::containing_address(VirtAddr::new(</span><span style="color:#b5cea8;">0xdeadbeaf000</span><span style="color:#dcdcdc;">));
@@ -776,7 +791,7 @@ Allocating Frames</h3>
 </span></pre>
 <p>The <code>frames</code> field can be initialized with an arbitrary <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html"><code>Iterator</code></a> of frames. This allows us to just delegate <code>alloc</code> calls to the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#tymethod.next"><code>Iterator::next</code></a> method.</p>
 <p>For initializing the <code>BootInfoFrameAllocator</code> we use the <code>memory_map</code> that is passed by the bootloader as part of the <code>BootInfo</code> struct. As we explained in the <a href="https://os.phil-opp.com/paging-implementation/#boot-information"><em>Boot Information</em></a> section, the memory map is provided by the BIOS/UEFI firmware. It can only be queried very early in the boot process, so the bootloader already calls the respective functions for us.</p>
-<p>The memory map consists of a list of <a href="https://docs.rs/bootloader/0.5.1/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a> structs, which contain the start address, the length, and the type (e.g. unused, reserved, etc.) of each memory region. By creating an iterator that yields frames from unused regions, we can instantiate a valid <code>BootInfoFrameAllocator</code>.</p>
+<p>The memory map consists of a list of <a href="https://docs.rs/bootloader/0.6.0/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a> structs, which contain the start address, the length, and the type (e.g. unused, reserved, etc.) of each memory region. By creating an iterator that yields frames from unused regions, we can instantiate a valid <code>BootInfoFrameAllocator</code>.</p>
 <p>The initialization of the <code>BootInfoFrameAllocator</code> happens in a new <code>init_frame_allocator</code> function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/memory.rs
@@ -805,7 +820,7 @@ Allocating Frames</h3>
 </span></pre>
 <p>This function uses iterator combinator methods to transform the initial <code>MemoryMap</code> into an iterator of usable physical frames:</p>
 <ul>
-<li>First, we call the <code>iter</code> method to convert the memory map to an iterator of <a href="https://docs.rs/bootloader/0.5.1/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a>s. Then we use the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.filter"><code>filter</code></a> method to skip any reserved or otherwise unavailable regions. The bootloader updates the memory map for all the mappings it creates, so frames that are used by our kernel (code, data or stack) or to store the boot information are already marked as <code>InUse</code> or similar. Thus we can be sure that <code>Usable</code> frames are not used somewhere else.</li>
+<li>First, we call the <code>iter</code> method to convert the memory map to an iterator of <a href="https://docs.rs/bootloader/0.6.0/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a>s. Then we use the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.filter"><code>filter</code></a> method to skip any reserved or otherwise unavailable regions. The bootloader updates the memory map for all the mappings it creates, so frames that are used by our kernel (code, data or stack) or to store the boot information are already marked as <code>InUse</code> or similar. Thus we can be sure that <code>Usable</code> frames are not used somewhere else.</li>
 <li>In the second step, we use the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.map"><code>map</code></a> combinator and Rust's <a href="https://doc.rust-lang.org/core/ops/struct.Range.html">range syntax</a> to transform our iterator of memory regions to an iterator of address ranges.</li>
 <li>The third step is the most complicated: We convert each range to an iterator through the <code>into_iter</code> method and then choose every 4096th address using <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.step_by"><code>step_by</code></a>. Since 4096 bytes (= 4 KiB) is the page size, we get the start address of each frame. The bootloader page aligns all usable memory areas so that we don't need any alignment or rounding code here. By using <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.flat_map"><code>flat_map</code></a> instead of <code>map</code>, we get an <code>Iterator&lt;Item = u64&gt;</code> instead of an <code>Iterator&lt;Item = Iterator&lt;Item = u64&gt;&gt;</code>.</li>
 <li>In the final step, we convert the start addresses to <code>PhysFrame</code> types to construct the desired <code>Iterator&lt;Item = PhysFrame&gt;</code>. We then use this iterator to create and return a new <code>BootInfoFrameAllocator</code>.</li>
@@ -814,7 +829,6 @@ Allocating Frames</h3>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(not(test))]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     […]
     </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">memory::init_frame_allocator(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">boot_info.memory_map);
