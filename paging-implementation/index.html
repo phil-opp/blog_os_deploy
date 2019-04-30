@@ -773,69 +773,92 @@ A dummy <code>FrameAllocator</code></h4>
 <p>To map pages that don't have a level 1 page table yet we need to create a proper <code>FrameAllocator</code>. But how do we know which frames are unused and how much physical memory is available?</p>
 <h3 id="allocating-frames"><a class="zola-anchor" href="#allocating-frames" aria-label="Anchor link for: allocating-frames">🔗</a>
 Allocating Frames</h3>
-<p>In order to create new page tables, we need to create a proper frame allocator. We start with a generic skeleton:</p>
+<p>In order to create new page tables, we need to create a proper frame allocator. For that we use the <code>memory_map</code> that is passed by the bootloader as part of the <code>BootInfo</code> struct:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/memory.rs
 
-</span><span style="color:#569cd6;">pub struct </span><span style="color:#dcdcdc;">BootInfoFrameAllocator&lt;I&gt; where I: Iterator&lt;Item = PhysFrame&gt; {
-    frames: I,
+/// A FrameAllocator that returns usable frames from the bootloader&#39;s memory map.
+</span><span style="color:#569cd6;">pub struct </span><span style="color:#dcdcdc;">BootInfoFrameAllocator {
+    memory_map: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> MemoryMap,
+    next: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">,
 }
 
-</span><span style="color:#569cd6;">impl</span><span style="color:#dcdcdc;">&lt;I&gt; FrameAllocator&lt;Size4KiB&gt; </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">BootInfoFrameAllocator&lt;I&gt;
-    </span><span style="color:#569cd6;">where</span><span style="color:#dcdcdc;"> I: Iterator&lt;Item = PhysFrame&gt;
-{
-    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">allocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) -&gt; Option&lt;PhysFrame&gt; {
-        self.frames.next()
+</span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">BootInfoFrameAllocator {
+    </span><span style="color:#608b4e;">/// Create a FrameAllocator from the passed memory map.
+    </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init(memory_map: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> MemoryMap) -&gt; </span><span style="color:#569cd6;">Self </span><span style="color:#dcdcdc;">{
+        BootInfoFrameAllocator {
+            memory_map,
+            next: </span><span style="color:#b5cea8;">0</span><span style="color:#dcdcdc;">,
+        }
     }
 }
 </span></pre>
-<p>The <code>frames</code> field can be initialized with an arbitrary <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html"><code>Iterator</code></a> of frames. This allows us to just delegate <code>alloc</code> calls to the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#tymethod.next"><code>Iterator::next</code></a> method.</p>
-<p>For initializing the <code>BootInfoFrameAllocator</code> we use the <code>memory_map</code> that is passed by the bootloader as part of the <code>BootInfo</code> struct. As we explained in the <a href="https://os.phil-opp.com/paging-implementation/#boot-information"><em>Boot Information</em></a> section, the memory map is provided by the BIOS/UEFI firmware. It can only be queried very early in the boot process, so the bootloader already calls the respective functions for us.</p>
-<p>The memory map consists of a list of <a href="https://docs.rs/bootloader/0.6.0/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a> structs, which contain the start address, the length, and the type (e.g. unused, reserved, etc.) of each memory region. By creating an iterator that yields frames from unused regions, we can instantiate a valid <code>BootInfoFrameAllocator</code>.</p>
-<p>The initialization of the <code>BootInfoFrameAllocator</code> happens in a new <code>init_frame_allocator</code> function:</p>
+<p>The struct has two fields: A <code>'static</code> reference to the memory map passed by the bootloader and a <code>next</code> field that keeps track of number of the next frame that the allocator should return.</p>
+<p>As we explained in the <a href="https://os.phil-opp.com/paging-implementation/#boot-information"><em>Boot Information</em></a> section, the memory map is provided by the BIOS/UEFI firmware. It can only be queried very early in the boot process, so the bootloader already calls the respective functions for us. The memory map consists of a list of <a href="https://docs.rs/bootloader/0.6.0/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a> structs, which contain the start address, the length, and the type (e.g. unused, reserved, etc.) of each memory region.</p>
+<p>The <code>init</code> function initializes a <code>BootInfoFrameAllocator</code> with a given memory map. The <code>next</code> field is initialized with <code>0</code> and will be increased for every frame allocation to avoid returning the same frame twice.</p>
+<h4 id="a-usable-frames-method"><a class="zola-anchor" href="#a-usable-frames-method" aria-label="Anchor link for: a-usable-frames-method">🔗</a>
+A <code>usable_frames</code> Method</h4>
+<p>Before we implement the <code>FrameAllocator</code> trait, we add an auxiliary method that converts the memory map into an iterator of usable frames:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/memory.rs
 
-</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">bootloader::bootinfo::{MemoryMap, MemoryRegionType};
-
-</span><span style="color:#608b4e;">/// Create a FrameAllocator from the passed memory map
-</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init_frame_allocator(
-    memory_map: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> MemoryMap,
-) -&gt; BootInfoFrameAllocator&lt;impl Iterator&lt;Item = PhysFrame&gt;&gt; {
-    </span><span style="color:#608b4e;">// get usable regions from memory map
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> regions </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> memory_map
-        .iter()
-        .filter(|r| r.region_type </span><span style="color:#569cd6;">== </span><span style="color:#dcdcdc;">MemoryRegionType::Usable);
-    </span><span style="color:#608b4e;">// map each region to its address range
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> addr_ranges </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> regions.map(|r| r.range.start_addr()</span><span style="color:#569cd6;">..</span><span style="color:#dcdcdc;">r.range.end_addr());
-    </span><span style="color:#608b4e;">// transform to an iterator of frame start addresses
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> frame_addresses </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> addr_ranges.flat_map(|r| r.step_by(</span><span style="color:#b5cea8;">4096</span><span style="color:#dcdcdc;">));
-    </span><span style="color:#608b4e;">// create `PhysFrame` types from the start addresses
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> frames </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> frame_addresses.map(|addr| {
-        PhysFrame::containing_address(PhysAddr::new(addr))
-    });
-
-    BootInfoFrameAllocator { frames }
+</span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">BootInfoFrameAllocator {
+    </span><span style="color:#608b4e;">/// Returns an iterator over the usable frames specified in the memory map.
+    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">usable_frames(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) -&gt; impl Iterator&lt;Item = PhysFrame&gt; {
+        </span><span style="color:#608b4e;">// get usable regions from memory map
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> regions </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.memory_map.iter();
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> usable_regions </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> regions
+            .filter(|r| r.region_type </span><span style="color:#569cd6;">== </span><span style="color:#dcdcdc;">MemoryRegionType::Usable);
+        </span><span style="color:#608b4e;">// map each region to its address range
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> addr_ranges </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> usable_regions
+            .map(|r| r.range.start_addr()</span><span style="color:#569cd6;">..</span><span style="color:#dcdcdc;">r.range.end_addr());
+        </span><span style="color:#608b4e;">// transform to an iterator of frame start addresses
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> frame_addresses </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> addr_ranges.flat_map(|r| r.step_by(</span><span style="color:#b5cea8;">4096</span><span style="color:#dcdcdc;">));
+        </span><span style="color:#608b4e;">// create `PhysFrame` types from the start addresses
+</span><span style="color:#dcdcdc;">        frame_addresses
+            .map(|addr|PhysFrame::containing_address(PhysAddr::new(addr)))
+    }
 }
 </span></pre>
 <p>This function uses iterator combinator methods to transform the initial <code>MemoryMap</code> into an iterator of usable physical frames:</p>
 <ul>
-<li>First, we call the <code>iter</code> method to convert the memory map to an iterator of <a href="https://docs.rs/bootloader/0.6.0/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a>s. Then we use the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.filter"><code>filter</code></a> method to skip any reserved or otherwise unavailable regions. The bootloader updates the memory map for all the mappings it creates, so frames that are used by our kernel (code, data or stack) or to store the boot information are already marked as <code>InUse</code> or similar. Thus we can be sure that <code>Usable</code> frames are not used somewhere else.</li>
-<li>In the second step, we use the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.map"><code>map</code></a> combinator and Rust's <a href="https://doc.rust-lang.org/core/ops/struct.Range.html">range syntax</a> to transform our iterator of memory regions to an iterator of address ranges.</li>
-<li>The third step is the most complicated: We convert each range to an iterator through the <code>into_iter</code> method and then choose every 4096th address using <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.step_by"><code>step_by</code></a>. Since 4096 bytes (= 4 KiB) is the page size, we get the start address of each frame. The bootloader page aligns all usable memory areas so that we don't need any alignment or rounding code here. By using <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.flat_map"><code>flat_map</code></a> instead of <code>map</code>, we get an <code>Iterator&lt;Item = u64&gt;</code> instead of an <code>Iterator&lt;Item = Iterator&lt;Item = u64&gt;&gt;</code>.</li>
-<li>In the final step, we convert the start addresses to <code>PhysFrame</code> types to construct the desired <code>Iterator&lt;Item = PhysFrame&gt;</code>. We then use this iterator to create and return a new <code>BootInfoFrameAllocator</code>.</li>
+<li>First, we call the <code>iter</code> method to convert the memory map to an iterator of <a href="https://docs.rs/bootloader/0.6.0/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a>s.</li>
+<li>Then we use the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.filter"><code>filter</code></a> method to skip any reserved or otherwise unavailable regions. The bootloader updates the memory map for all the mappings it creates, so frames that are used by our kernel (code, data or stack) or to store the boot information are already marked as <code>InUse</code> or similar. Thus we can be sure that <code>Usable</code> frames are not used somewhere else.</li>
+<li>Afterwards, we use the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.map"><code>map</code></a> combinator and Rust's <a href="https://doc.rust-lang.org/core/ops/struct.Range.html">range syntax</a> to transform our iterator of memory regions to an iterator of address ranges.</li>
+<li>The next step is the most complicated: We convert each range to an iterator through the <code>into_iter</code> method and then choose every 4096th address using <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.step_by"><code>step_by</code></a>. Since 4096 bytes (= 4 KiB) is the page size, we get the start address of each frame. The bootloader page aligns all usable memory areas so that we don't need any alignment or rounding code here. By using <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.flat_map"><code>flat_map</code></a> instead of <code>map</code>, we get an <code>Iterator&lt;Item = u64&gt;</code> instead of an <code>Iterator&lt;Item = Iterator&lt;Item = u64&gt;&gt;</code>.</li>
+<li>Finally, we convert the start addresses to <code>PhysFrame</code> types to construct the desired <code>Iterator&lt;Item = PhysFrame&gt;</code>. We then use this iterator to create and return a new <code>BootInfoFrameAllocator</code>.</li>
 </ul>
+<p>The return type of the function uses the <a href="https://doc.rust-lang.org/book/ch10-02-traits.html#returning-traits"><code>impl Trait</code></a> feature. This way, we can specify that we return some type that implements the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html"><code>Iterator</code></a> trait with item type <code>PhysFrame</code>, but don't need to name the concrete return type. This is important here because we <em>can't</em> name the conrete type since it depends on unnamable closure types.</p>
+<h4 id="implementing-the-frameallocator-trait"><a class="zola-anchor" href="#implementing-the-frameallocator-trait" aria-label="Anchor link for: implementing-the-frameallocator-trait">🔗</a>
+Implementing the <code>FrameAllocator</code> Trait</h4>
+<p>Now we can implement the <code>FrameAllocator</code> trait:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/memory.rs
+
+</span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">FrameAllocator&lt;Size4KiB&gt; </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">BootInfoFrameAllocator {
+    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">allocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) -&gt; Option&lt;PhysFrame&gt; {
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> frame </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.usable_frames().nth(self.next);
+        self.next </span><span style="color:#569cd6;">+= </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">;
+        frame
+    }
+}
+</span></pre>
+<p>We first use an <code>usable_frames</code> method to get an iterator of usable frames from the memory map. Then, we use the <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.nth"><code>Iterator::nth</code></a> function to get the frame with index <code>self.next</code> (thereby skipping <code>(self.next - 1)</code> frames). Before returning that frame, we increase <code>self.next</code> by one so that we return the following frame on the next call.</p>
+<p>This implementation is not quite optimal since it recreates the <code>usable_frame</code> allocator on every allocation. It would be better to directly store the iterator as a struct field instead. Then we wouldn't need the <code>nth</code> method and could just call <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#tymethod.next"><code>next</code></a> on every allocation. The problem with this approach is that it's not possible to store an <code>impl Trait</code> type in a struct field currently. It might work someday when <a href="https://github.com/rust-lang/rfcs/pull/2071"><em>named existential types</em></a> are fully implemented.</p>
+<h4 id="using-the-bootinfoframeallocator"><a class="zola-anchor" href="#using-the-bootinfoframeallocator" aria-label="Anchor link for: using-the-bootinfoframeallocator">🔗</a>
+Using the <code>BootInfoFrameAllocator</code></h4>
 <p>We can now modify our <code>kernel_main</code> function to pass a <code>BootInfoFrameAllocator</code> instance instead of an <code>EmptyFrameAllocator</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::memory::BootInfoFrameAllocator;
     […]
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">memory::init_frame_allocator(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">boot_info.memory_map);
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">boot_info.memory_map);
     […]
 }
 </span></pre>
-<p>Now the mapping succeeds and we see the black-on-white <em>&quot;New!&quot;</em> on the screen again. Behind the scenes, the <code>map_to</code> method creates the missing page tables in the following way:</p>
+<p>With the boot info frame allocator, the mapping succeeds and we see the black-on-white <em>&quot;New!&quot;</em> on the screen again. Behind the scenes, the <code>map_to</code> method creates the missing page tables in the following way:</p>
 <ul>
 <li>Allocate an unused frame from the passed <code>frame_allocator</code>.</li>
 <li>Zero the frame to create a new, empty page table.</li>
