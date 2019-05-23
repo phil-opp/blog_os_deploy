@@ -887,26 +887,28 @@ Checking the Panic Message</h4>
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::fmt;
 
-</span><span style="color:#608b4e;">/// Compares a `fmt::Arguments` instance with the `MESSAGE` string.
+</span><span style="color:#608b4e;">/// Compares a `fmt::Arguments` instance with the `MESSAGE` string
 ///
 /// To use this type, write the `fmt::Arguments` instance to it using the
-/// `write` macro. If a message component matches `MESSAGE`, the equals
-/// field is set to true.
+/// `write` macro. If the message component matches `MESSAGE`, the `expected`
+/// field is the empty string.
 </span><span style="color:#569cd6;">struct </span><span style="color:#dcdcdc;">CompareMessage {
-    equals: </span><span style="color:#569cd6;">bool</span><span style="color:#dcdcdc;">,
+    expected: </span><span style="color:#569cd6;">&amp;&#39;static str</span><span style="color:#dcdcdc;">,
 }
 
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">fmt::Write </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">CompareMessage {
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">write_str(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self, s: </span><span style="color:#569cd6;">&amp;str</span><span style="color:#dcdcdc;">) -&gt; fmt::Result {
-        </span><span style="color:#569cd6;">if</span><span style="color:#dcdcdc;"> s </span><span style="color:#569cd6;">== </span><span style="color:#b4cea8;">MESSAGE </span><span style="color:#dcdcdc;">{
-            self.equals </span><span style="color:#569cd6;">= true</span><span style="color:#dcdcdc;">;
+        </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.expected.starts_with(s) {
+            self.expected </span><span style="color:#569cd6;">= &amp;</span><span style="color:#dcdcdc;">self.expected[s.len()</span><span style="color:#569cd6;">..</span><span style="color:#dcdcdc;">];
+        } </span><span style="color:#569cd6;">else </span><span style="color:#dcdcdc;">{
+            fail(</span><span style="color:#d69d85;">&quot;message not equal to expected message&quot;</span><span style="color:#dcdcdc;">);
         }
         Ok(())
     }
 }
 </span></pre>
-<p>The trick is to implement the <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> trait, which is called by the <a href="https://doc.rust-lang.org/core/macro.write.html"><code>write</code></a> macro with <code>&amp;str</code> arguments. This makes it possible to compare the panic arguments with <code>MESSAGE</code>. By the way, this is the same trait that we implemented for our VGA buffer writer in order to print to the screen.</p>
-<p>The above code only works for messages with a single component. This means that it works for <code>panic!(&quot;some message&quot;)</code>, but not for <code>panic!(&quot;some {}&quot;, message)</code>. This isn't ideal, but good enough for our test.</p>
+<p>The trick is to implement the <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> trait like we did for our <a href="https://os.phil-opp.com/vga-text-mode/#formatting-macros">VGA buffer writer</a>. The <a href="https://doc.rust-lang.org/core/fmt/trait.Write.html#tymethod.write_str"><code>write_str</code></a> method is called with a <code>&amp;str</code> parameter that we can compare with the expected message. An important detail is that the method is called <em>multiple times</em> with the individual string components. For example, when we do <code>print!(&quot;{}z&quot;, &quot;xy&quot;)</code> the method on our VGA buffer writer is invoked once with the string <code>&quot;xy&quot;</code> and once with the string <code>&quot;z&quot;</code>.</p>
+<p>This means that we can't directly compare the <code>s</code> argument with the expected message, since it might only be a substring. Instead, we use the <a href="https://doc.rust-lang.org/std/primitive.str.html#method.starts_with"><code>starts_with</code></a> method to verify that the given string component is a substring of the expected message. Then we use <a href="https://doc.rust-lang.org/book/ch04-03-slices.html#string-slices">string slicing</a> to remove the already printed characters from the <code>expected</code> string. If the <code>expected</code> field is an empty string after writing the panic message, it means that it matches the expected message.</p>
 <p>With the <code>CompareMessage</code> type, we can finally implement our <code>check_message</code> function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in tests/panic_handler.rs
@@ -917,16 +919,16 @@ Checking the Panic Message</h4>
 
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">check_message(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) {
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> message </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> info.message().unwrap_or_else(|| fail(</span><span style="color:#d69d85;">&quot;no message&quot;</span><span style="color:#dcdcdc;">));
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> compare_message </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> CompareMessage { equals: </span><span style="color:#569cd6;">false </span><span style="color:#dcdcdc;">};
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> compare_message </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> CompareMessage { expected: </span><span style="color:#b4cea8;">MESSAGE </span><span style="color:#dcdcdc;">};
     write!(&amp;mut compare_message, </span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, message)
         .unwrap_or_else(|_| fail(</span><span style="color:#d69d85;">&quot;write failed&quot;</span><span style="color:#dcdcdc;">));
-    </span><span style="color:#569cd6;">if !</span><span style="color:#dcdcdc;">compare_message.equals {
-        fail(</span><span style="color:#d69d85;">&quot;message not equal to expected message&quot;</span><span style="color:#dcdcdc;">);
+    </span><span style="color:#569cd6;">if !</span><span style="color:#dcdcdc;">compare_message.expected.is_empty() {
+        fail(</span><span style="color:#d69d85;">&quot;message shorter than expected message&quot;</span><span style="color:#dcdcdc;">);
     }
 }
 </span></pre>
 <p>The function uses the <a href="https://doc.rust-lang.org/core/macro.file.html"><code>PanicInfo::message</code></a> function to get the panic message. If no message is reported, it calls <code>fail</code> to fail the test. Since the function is unstable, we need to add the <code>#![feature(panic_info_message)]</code> attribute at the top of our test file. Note that you need to adjust the <code>PANIC_INFO</code> line number after adding the attribute and the imports on top.</p>
-<p>After querying the message, the function constructs a <code>CompareMessage</code> instance and writes the message to it using the <code>write!</code> macro. Afterwards it reads the <code>equals</code> field and fails the test if the panic message does not equal <code>MESSAGE</code>.</p>
+<p>After querying the message, the function constructs a <code>CompareMessage</code> instance with the <code>expected</code> field set to the <code>MESSAGE</code> string. Then it writes the message to it using the <a href="https://doc.rust-lang.org/core/macro.write.html"><code>write!</code></a> macro. After the write, it reads the <code>expected</code> field and fails the test if it is not the empty string.</p>
 <p>Now we can run the test using <code>cargo xtest --test panic_handler</code>. We see that it passes, which means that the reported panic info is correct. If we use a wrong line number in <code>PANIC_LINE</code> or panic with an additional character through <code>panic!(&quot;{}x&quot;, MESSAGE)</code>, we see that the test indeed fails.</p>
 <h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>
 Summary</h2>
