@@ -185,7 +185,7 @@ Overview</h2>
 <p>Unlike exceptions, hardware interrupts occur <em>asynchronously</em>. This means that they are completely independent from the executed code and can occur at any time. Thus we suddenly have a form of concurrency in our kernel with all the potential concurrency-related bugs. Rust's strict ownership model helps us here because it forbids mutable global state. However, deadlocks are still possible, as we will see later in this post.</p>
 <h2 id="the-8259-pic"><a class="zola-anchor" href="#the-8259-pic" aria-label="Anchor link for: the-8259-pic">🔗</a>
 The 8259 PIC</h2>
-<p>The <a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> is a programmable interrupt controller (PIC) introduced in 1976. It has long been replaced by the newer <a href="https://en.wikipedia.org/wiki/Intel_APIC_Architecture">APIC</a>, but its interface is still supported on current systems for backwards compatibiliy reasons. The 8259 PIC is significantly easier to set up than the APIC, so we will use it to introduce ourselves to interrupts before we switch to the APIC in a later post.</p>
+<p>The <a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> is a programmable interrupt controller (PIC) introduced in 1976. It has long been replaced by the newer <a href="https://en.wikipedia.org/wiki/Intel_APIC_Architecture">APIC</a>, but its interface is still supported on current systems for backwards compatibility reasons. The 8259 PIC is significantly easier to set up than the APIC, so we will use it to introduce ourselves to interrupts before we switch to the APIC in a later post.</p>
 <p>The 8259 has 8 interrupt lines and several lines for communicating with the CPU. The typical systems back then were equipped with two instances of the 8259 PIC, one primary and one secondary PIC connected to one of the interrupt lines of the primary:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">                     ____________                          ____________
@@ -325,13 +325,13 @@ End of Interrupt</h3>
 <p>The <code>notify_end_of_interrupt</code> figures out whether the primary or secondary PIC sent the interrupt and then uses the <code>command</code> and <code>data</code> ports to send an EOI signal to respective controllers. If the secondary PIC sent the interrupt both PICs need to be notified because the secondary PIC is connected to an input line of the primary PIC.</p>
 <p>We need to be careful to use the correct interrupt vector number, otherwise we could accidentally delete an important unsent interrupt or cause our system to hang. This is the reason that the function is unsafe.</p>
 <p>When we now execute <code>cargo xrun</code> we see dots periodically appearing on the screen:</p>
-<p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="QEMU printing consequtive dots showing the hardware timer" /></p>
+<p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
 <h3 id="configuring-the-timer"><a class="zola-anchor" href="#configuring-the-timer" aria-label="Anchor link for: configuring-the-timer">🔗</a>
 Configuring the Timer</h3>
 <p>The hardware timer that we use is called the <em>Progammable Interval Timer</em> or PIT for short. Like the name says, it is possible to configure the interval between two interrupts. We won't go into details here because we will switch to the <a href="https://wiki.osdev.org/APIC_timer">APIC timer</a> soon, but the OSDev wiki has an extensive article about the <a href="https://wiki.osdev.org/Programmable_Interval_Timer">configuring the PIT</a>.</p>
 <h2 id="deadlocks"><a class="zola-anchor" href="#deadlocks" aria-label="Anchor link for: deadlocks">🔗</a>
 Deadlocks</h2>
-<p>We now have a form of concurrency in our kernel: The timer interrupts occur asynchronously, so they can interrupt our <code>_start</code> function at any time. Fortunately Rust's ownership system prevents many types of concurrency related bugs at compile time. One notable exception are deadlocks. Deadlocks occur if a thread tries to aquire a lock that will never become free. Thus the thread hangs indefinitely.</p>
+<p>We now have a form of concurrency in our kernel: The timer interrupts occur asynchronously, so they can interrupt our <code>_start</code> function at any time. Fortunately Rust's ownership system prevents many types of concurrency related bugs at compile time. One notable exception are deadlocks. Deadlocks occur if a thread tries to acquire a lock that will never become free. Thus the thread hangs indefinitely.</p>
 <p>We can already provoke a deadlock in our kernel. Remember, our <code>println</code> macro calls the <code>vga_buffer::_print</code> function, which <a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">locks a global <code>WRITER</code></a> using a spinlock:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/vga_buffer.rs
@@ -591,7 +591,7 @@ lazy_static! {
     }
 }
 </span></pre>
-<p>As we see from the graphic <a href="https://os.phil-opp.com/hardware-interrupts/#the-8259-pic">above</a>, the keyboard uses line 1 of the primary PIC. This means that it arrives at the CPU as interrupt 33 (1 + offset 32). We add this index as a new <code>Keyboard</code> variant to the <code>InterruptIndex</code> enum. We don't need to specify the value explicitely, since it defaults to the previous value plus one, which is also 33. In the interrupt handler, we print a <code>k</code> and send the end of interrupt signal to the interrupt controller.</p>
+<p>As we see from the graphic <a href="https://os.phil-opp.com/hardware-interrupts/#the-8259-pic">above</a>, the keyboard uses line 1 of the primary PIC. This means that it arrives at the CPU as interrupt 33 (1 + offset 32). We add this index as a new <code>Keyboard</code> variant to the <code>InterruptIndex</code> enum. We don't need to specify the value explicitly, since it defaults to the previous value plus one, which is also 33. In the interrupt handler, we print a <code>k</code> and send the end of interrupt signal to the interrupt controller.</p>
 <p>We now see that a <code>k</code> appears on the screen when we press a key. However, this only works for the first key we press, even if we continue to press keys no more <code>k</code>s appear on the screen. This is because the keyboard controller won't send another interrupt until we have read the so-called <em>scancode</em> of the pressed key.</p>
 <h3 id="reading-the-scancodes"><a class="zola-anchor" href="#reading-the-scancodes" aria-label="Anchor link for: reading-the-scancodes">🔗</a>
 Reading the Scancodes</h3>
