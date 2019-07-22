@@ -322,17 +322,18 @@ Page Faults</h3>
 
 </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">page_fault_handler(
     stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> InterruptStackFrame,
-    _error_code: PageFaultErrorCode,
+    error_code: PageFaultErrorCode,
 ) {
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::registers::control::Cr2;
 
     println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: PAGE FAULT&quot;</span><span style="color:#dcdcdc;">);
     println!(</span><span style="color:#d69d85;">&quot;Accessed Address: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, Cr2::read());
+    println!(</span><span style="color:#d69d85;">&quot;Error Code: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, error_code);
     println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, stack_frame);
     hlt_loop();
 }
 </span></pre>
-<p>The <a href="https://en.wikipedia.org/wiki/Control_register#CR2"><code>CR2</code></a> register is automatically set by the CPU on a page fault and contains the accessed virtual address that caused the page fault. We use the <a href="https://docs.rs/x86_64/0.7.0/x86_64/registers/control/struct.Cr2.html#method.read"><code>Cr2::read</code></a> function of the <code>x86_64</code> crate to read and print it. Normally the <a href="https://docs.rs/x86_64/0.7.0/x86_64/structures/idt/struct.PageFaultErrorCode.html"><code>PageFaultErrorCode</code></a> type would provide more information about the type of memory access that caused the page fault, but there is currently an <a href="https://github.com/rust-lang/rust/issues/57270">LLVM bug</a> that passes an invalid error code, so we ignore it for now. We can't continue execution without resolving the page fault, so we enter a <a href="https://os.phil-opp.com/hardware-interrupts/#the"><code>hlt_loop</code></a> at the end.</p>
+<p>The <a href="https://en.wikipedia.org/wiki/Control_register#CR2"><code>CR2</code></a> register is automatically set by the CPU on a page fault and contains the accessed virtual address that caused the page fault. We use the <a href="https://docs.rs/x86_64/0.7.0/x86_64/registers/control/struct.Cr2.html#method.read"><code>Cr2::read</code></a> function of the <code>x86_64</code> crate to read and print it. The <a href="https://docs.rs/x86_64/0.7.0/x86_64/structures/idt/struct.PageFaultErrorCode.html"><code>PageFaultErrorCode</code></a> type provides more information about the type of memory access that caused the page fault, for example whether it was caused by a read or write operation. For this reason we print it too. We can't continue execution without resolving the page fault, so we enter a <a href="https://os.phil-opp.com/hardware-interrupts/#the"><code>hlt_loop</code></a> at the end.</p>
 <p>Now we can try to access some memory outside our kernel:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
@@ -356,22 +357,28 @@ Page Faults</h3>
 }
 </span></pre>
 <p>When we run it, we see that our page fault handler is called:</p>
-<p><img src="https://os.phil-opp.com/paging-introduction/qemu-page-fault.png" alt="EXCEPTION: Page Fault, Accessed Address: VirtAddr(0xdeadbeaf), InterruptStackFrame: {…}" /></p>
-<p>The <code>CR2</code> register indeed contains <code>0xdeadbeaf</code>, the address that we tried to access.</p>
-<p>We see that the current instruction pointer is <code>0x20430a</code>, so we know that this address points to a code page. Code pages are mapped read-only by the bootloader, so reading from this address works but writing causes a page fault. You can try this by changing the <code>0xdeadbeaf</code> pointer to <code>0x20430a</code>:</p>
+<p><img src="https://os.phil-opp.com/paging-introduction/qemu-page-fault.png" alt="EXCEPTION: Page Fault, Accessed Address: VirtAddr(0xdeadbeaf), Error Code: CAUSED_BY_WRITE, InterruptStackFrame: {…}" /></p>
+<p>The <code>CR2</code> register indeed contains <code>0xdeadbeaf</code>, the address that we tried to access. The error code tells us through the <a href="https://docs.rs/x86_64/0.7.0/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> that the fault occurred while trying to perform a write operation. It tells us even more through the <a href="https://docs.rs/x86_64/0.7.0/x86_64/structures/idt/struct.PageFaultErrorCode.html">bits that are <em>not</em> set</a>. For example, the fact that the <code>PROTECTION_VIOLATION</code> flag is not set means that the page fault occurred because the target page wasn't present.</p>
+<p>We see that the current instruction pointer is <code>0x2031b2</code>, so we know that this address points to a code page. Code pages are mapped read-only by the bootloader, so reading from this address works but writing causes a page fault. You can try this by changing the <code>0xdeadbeaf</code> pointer to <code>0x2031b2</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// Note: The actual address might be different for you. Use the address that
 // your page fault handler reports.
-</span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> ptr </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">0x20430a </span><span style="color:#569cd6;">as *mut u32</span><span style="color:#dcdcdc;">;
-</span><span style="color:#608b4e;">// read from a code page -&gt; works
+</span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> ptr </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">0x2031b2 </span><span style="color:#569cd6;">as *mut u32</span><span style="color:#dcdcdc;">;
+
+</span><span style="color:#608b4e;">// read from a code page
 </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x </span><span style="color:#569cd6;">= *</span><span style="color:#dcdcdc;">ptr; }
-</span><span style="color:#608b4e;">// write to a code page -&gt; page fault
+println!(</span><span style="color:#d69d85;">&quot;read worked&quot;</span><span style="color:#dcdcdc;">);
+
+</span><span style="color:#608b4e;">// write to a code page
 </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">ptr </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">42</span><span style="color:#dcdcdc;">; }
+println!(</span><span style="color:#d69d85;">&quot;write worked&quot;</span><span style="color:#dcdcdc;">);
 </span></pre>
-<p>By commenting out the last line, we see that the read access works, but the write access causes a page fault.</p>
+<p>By commenting out the last line, we see that the read access works, but the write access causes a page fault:</p>
+<p><img src="https://os.phil-opp.com/paging-introduction/qemu-page-fault-protection.png" alt="QEMU with output: &quot;read worked, EXCEPTION: Page Fault, Accessed Address: VirtAddr(0x2031b2), Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE, InterruptStackFrame: {…}&quot;" /></p>
+<p>We see that the <em>&quot;read worked&quot;</em> message is printed, which indicates that the read operation did not cause any errors. However, instead of the <em>&quot;write worked&quot;</em> message a page fault occurs. This time the <a href="https://docs.rs/x86_64/0.7.0/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.PROTECTION_VIOLATION"><code>PROTECTION_VIOLATION</code></a> flag is set in addition to the <a href="https://docs.rs/x86_64/0.7.0/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> flag, which indicates that the page was present, but the operation was not allowed on it. In this case, writes to the page are not allowed since code pages are mapped as read-only.</p>
 <h3 id="accessing-the-page-tables"><a class="zola-anchor" href="#accessing-the-page-tables" aria-label="Anchor link for: accessing-the-page-tables">🔗</a>
 Accessing the Page Tables</h3>
-<p>Let's try to take a look at the page tables that our kernel runs on:</p>
+<p>Let's try to take a look at the page tables that define how our kernel is mapped:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
