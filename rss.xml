@@ -1303,170 +1303,116 @@ Future Tests&lt;&#x2f;h3&gt;
 &lt;li&gt;&lt;strong&gt;Userspace Programs&lt;&#x2f;strong&gt;: Userspace programs are programs with limited access to the system&#x27;s resources. For example, they don&#x27;t have access to kernel data structures or to the memory of other programs. An integration test could launch userspace programs that perform forbidden operations and verify that the kernel prevents them all.&lt;&#x2f;li&gt;
 &lt;&#x2f;ul&gt;
 &lt;p&gt;As you can imagine, many more tests are possible. By adding such tests, we can ensure that we don&#x27;t break them accidentally when we add new features to our kernel or refactor our code. This is especially important when our kernel becomes larger and more complex.&lt;&#x2f;p&gt;
-&lt;h2 id=&quot;testing-our-panic-handler&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#testing-our-panic-handler&quot; aria-label=&quot;Anchor link for: testing-our-panic-handler&quot;&gt;🔗&lt;&#x2f;a&gt;
-Testing Our Panic Handler&lt;&#x2f;h2&gt;
-&lt;p&gt;Another thing that we can test with an integration test is that our panic handler is called correctly. The idea is to deliberately cause a panic in the test function and exit with a success exit code in the panic handler.&lt;&#x2f;p&gt;
-&lt;p&gt;Since we exit from our panic handler, the panicking test never returns to the test runner. For this reason, it does not make sense to add more than one test because subsequent tests are never executed. For cases like this, where only a single test function exists, we can disable the test runner completely and run our test directly in the &lt;code&gt;_start&lt;&#x2f;code&gt; function.&lt;&#x2f;p&gt;
-&lt;h3 id=&quot;no-harness&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#no-harness&quot; aria-label=&quot;Anchor link for: no-harness&quot;&gt;🔗&lt;&#x2f;a&gt;
-No Harness&lt;&#x2f;h3&gt;
-&lt;p&gt;The &lt;code&gt;harness&lt;&#x2f;code&gt; flag defines whether a test runner is used for an integration test. When it&#x27;s set to &lt;code&gt;false&lt;&#x2f;code&gt;, both the default test runner and the custom test runner feature are disabled, so that the test is treated like a normal executable.&lt;&#x2f;p&gt;
-&lt;p&gt;Let&#x27;s create a panic handler test with a disabled &lt;code&gt;harness&lt;&#x2f;code&gt; flag. First, we create a skeleton for the test at &lt;code&gt;tests&#x2f;panic_handler.rs&lt;&#x2f;code&gt;:&lt;&#x2f;p&gt;
+&lt;h3 id=&quot;tests-that-should-panic&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#tests-that-should-panic&quot; aria-label=&quot;Anchor link for: tests-that-should-panic&quot;&gt;🔗&lt;&#x2f;a&gt;
+Tests that Should Panic&lt;&#x2f;h3&gt;
+&lt;p&gt;The test framework of the standard library supports a &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;rust-by-example&#x2f;testing&#x2f;unit_testing.html#testing-panics&quot;&gt;&lt;code&gt;#[should_panic]&lt;&#x2f;code&gt; attribute&lt;&#x2f;a&gt; that allows to construct tests that should fail. This is useful for example to verify that a function fails when an invalid argument is passed. Unfortunately this attribute isn&#x27;t supported in &lt;code&gt;#[no_std]&lt;&#x2f;code&gt; crates since it requires support from the standard library.&lt;&#x2f;p&gt;
+&lt;p&gt;While we can&#x27;t use the &lt;code&gt;#[should_panic]&lt;&#x2f;code&gt; attribute in our kernel, we can get similar behavior by creating an integration test that exits with a success error code from the panic handler. Let&#x27;s start creating such a test with the name &lt;code&gt;should_panic&lt;&#x2f;code&gt;:&lt;&#x2f;p&gt;
 &lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;panic_handler.rs
+&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;should_panic.rs
 
 &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;#![no_std]
 #![no_main]
 
 &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;core::panic::PanicInfo;
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;blog_os::{QemuExitCode, exit_qemu};
-
-#[no_mangle]
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub extern &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;C&amp;quot; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;_start() -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
-    exit_qemu(QemuExitCode::Failed);
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;loop &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{}
-}
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;blog_os::{QemuExitCode, exit_qemu, serial_println};
 
 #[panic_handler]
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;panic(info: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;PanicInfo) -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
-    exit_qemu(QemuExitCode::Failed);
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;loop &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{}
-}
-&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
-&lt;p&gt;The code is similar to the &lt;code&gt;basic_boot&lt;&#x2f;code&gt; test with the difference that no test attributes are needed and no runner function is called. We immediately exit with an error from the &lt;code&gt;_start&lt;&#x2f;code&gt; entry point and the panic handler for now and first try to get it to compile.&lt;&#x2f;p&gt;
-&lt;p&gt;If you run &lt;code&gt;cargo xtest&lt;&#x2f;code&gt; now, you will get an error that the &lt;code&gt;test&lt;&#x2f;code&gt; crate is missing. This error occurs because we didn&#x27;t set a custom test framework, so that the compiler tries to use the default test framework, which is unavailable for our panic. By setting the &lt;code&gt;harness&lt;&#x2f;code&gt; flag to &lt;code&gt;false&lt;&#x2f;code&gt; for the test in our &lt;code&gt;Cargo.toml&lt;&#x2f;code&gt;, we can fix this error:&lt;&#x2f;p&gt;
-&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;# in Cargo.toml
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;[[&lt;&#x2f;span&gt;&lt;span style=&quot;color:#808080;&quot;&gt;test&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;]]
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;name &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;= &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;panic_handler&amp;quot;
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;harness &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;= &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;false
-&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
-&lt;p&gt;Now the test compiles fine, but fails of course since we always exit with an error exit code.&lt;&#x2f;p&gt;
-&lt;h3 id=&quot;implementing-the-test&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#implementing-the-test&quot; aria-label=&quot;Anchor link for: implementing-the-test&quot;&gt;🔗&lt;&#x2f;a&gt;
-Implementing the Test&lt;&#x2f;h3&gt;
-&lt;p&gt;Let&#x27;s complete the implementation of our panic handler test:&lt;&#x2f;p&gt;
-&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;panic_handler.rs
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;blog_os::{serial_print, serial_println, QemuExitCode, exit_qemu};
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;const &lt;&#x2f;span&gt;&lt;span style=&quot;color:#b4cea8;&quot;&gt;MESSAGE&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;str = &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;Example panic message from panic_handler test&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;;
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;const &lt;&#x2f;span&gt;&lt;span style=&quot;color:#b4cea8;&quot;&gt;PANIC_LINE&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;u32 = &lt;&#x2f;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;14&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; adjust this when moving the `panic!` call
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;#[no_mangle]
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub extern &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;C&amp;quot; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;_start() -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
-    serial_print!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;panic_handler... &amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
-    panic!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#b4cea8;&quot;&gt;MESSAGE&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;); &lt;&#x2f;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; must be in line `PANIC_LINE`
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;}
-
-#[panic_handler]
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;panic(info: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;PanicInfo) -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;panic(_info: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;PanicInfo) -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
     serial_println!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;[ok]&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
     exit_qemu(QemuExitCode::Success);
     &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;loop &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{}
 }
 &lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
-&lt;p&gt;We immediately &lt;code&gt;panic&lt;&#x2f;code&gt; in our &lt;code&gt;_start&lt;&#x2f;code&gt; function with a &lt;code&gt;MESSAGE&lt;&#x2f;code&gt;. In the panic handler, we exit with a success exit code. We don&#x27;t need a &lt;code&gt;qemu_exit&lt;&#x2f;code&gt; call at the end of our &lt;code&gt;_start&lt;&#x2f;code&gt; function, since the Rust compiler knows for sure that the code after the &lt;code&gt;panic&lt;&#x2f;code&gt; is unreachable. If we run the test with &lt;code&gt;cargo xtest --test panic_handler&lt;&#x2f;code&gt; now, we see that it succeeds as expected.&lt;&#x2f;p&gt;
-&lt;p&gt;We will need the &lt;code&gt;MESSAGE&lt;&#x2f;code&gt; and &lt;code&gt;PANIC_LINE&lt;&#x2f;code&gt; constants in the next section. The &lt;code&gt;PANIC_LINE&lt;&#x2f;code&gt; constant specifies the line number that contains the &lt;code&gt;panic!&lt;&#x2f;code&gt; invocation, which is &lt;code&gt;14&lt;&#x2f;code&gt; in our case (but it might be different for you).&lt;&#x2f;p&gt;
-&lt;h3 id=&quot;checking-the-panicinfo&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#checking-the-panicinfo&quot; aria-label=&quot;Anchor link for: checking-the-panicinfo&quot;&gt;🔗&lt;&#x2f;a&gt;
-Checking the &lt;code&gt;PanicInfo&lt;&#x2f;code&gt;&lt;&#x2f;h3&gt;
-&lt;p&gt;To ensure that the given &lt;code&gt;PanicInfo&lt;&#x2f;code&gt; is correct, we can extend the &lt;code&gt;panic&lt;&#x2f;code&gt; function to check that the reported message and file&#x2f;line information are correct:&lt;&#x2f;p&gt;
+&lt;p&gt;This test is still incomplete as it doesn&#x27;t define a &lt;code&gt;_start&lt;&#x2f;code&gt; function or any of the custom test runner attributes yet. Let&#x27;s add the missing parts:&lt;&#x2f;p&gt;
 &lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;panic_handler.rs
+&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;should_panic.rs
 
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;#[panic_handler]
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;panic(info: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;PanicInfo) -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
-    check_message(info);
-    check_location(info);
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;#![feature(custom_test_frameworks)]
+#![test_runner(test_runner)]
+#![reexport_test_harness_main &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;test_main&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;]
 
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; same as before
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;serial_println!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;[ok]&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+#[no_mangle]
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub extern &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;C&amp;quot; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;_start() -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
+    test_main();
+
+    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;loop &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{}
+}
+
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;test_runner(tests: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;[&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;dyn Fn()]) {
+    serial_println!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;Running {} tests&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;, tests.len());
+    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;for&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; test &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;in&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; tests {
+        test();
+        serial_println!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;[test did not panic]&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+        exit_qemu(QemuExitCode::Failed);
+    }
+    exit_qemu(QemuExitCode::Success);
+}
+&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
+&lt;p&gt;Instead of reusing the &lt;code&gt;test_runner&lt;&#x2f;code&gt; from our &lt;code&gt;lib.rs&lt;&#x2f;code&gt;, the test defines its own &lt;code&gt;test_runner&lt;&#x2f;code&gt; function that exits with a failure exit code when a test returns without panicking (we want our tests to panic). If no test function is defined, the runner exits with a success error code. Since the runner always exits after running a single test, it does not make sense to define more than one &lt;code&gt;#[test_case]&lt;&#x2f;code&gt; function.&lt;&#x2f;p&gt;
+&lt;p&gt;Now we can create a test that should fail:&lt;&#x2f;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
+&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;should_panic.rs
+
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;blog_os::serial_print;
+
+#[test_case]
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;should_fail() {
+    serial_print!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;should_fail... &amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+    assert_eq!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;, &lt;&#x2f;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+}
+&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
+&lt;p&gt;The test uses the &lt;code&gt;assert_eq&lt;&#x2f;code&gt; to assert that &lt;code&gt;0&lt;&#x2f;code&gt; and &lt;code&gt;1&lt;&#x2f;code&gt; are equal. This of course fails, so that our test panics as desired.&lt;&#x2f;p&gt;
+&lt;p&gt;When we run the test through &lt;code&gt;cargo xtest --test should_panic&lt;&#x2f;code&gt; we see that it is successful because the test panicked as expected. When we comment out the assertion and run the test again, we see that it indeed fails with the &lt;em&gt;&amp;quot;test did not panic&amp;quot;&lt;&#x2f;em&gt; message.&lt;&#x2f;p&gt;
+&lt;p&gt;A significant drawback of this approach is that it only works for a single test function. With multiple &lt;code&gt;#[test_case]&lt;&#x2f;code&gt; functions, only the first function is executed because the execution cannot continue after the panic handler has been called. I currently don&#x27;t know of a good way to solve this problem, so let me know if you have an idea!&lt;&#x2f;p&gt;
+&lt;h3 id=&quot;no-harness-tests&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#no-harness-tests&quot; aria-label=&quot;Anchor link for: no-harness-tests&quot;&gt;🔗&lt;&#x2f;a&gt;
+No Harness Tests&lt;&#x2f;h3&gt;
+&lt;p&gt;For integration tests that only have a single test function (like our &lt;code&gt;should_panic&lt;&#x2f;code&gt; test), the test runner isn&#x27;t really needed. For cases like this, we can disable the test runner completely and run our test directly in the &lt;code&gt;_start&lt;&#x2f;code&gt; function.&lt;&#x2f;p&gt;
+&lt;p&gt;The key to this is disable the &lt;code&gt;harness&lt;&#x2f;code&gt; flag for the test in the &lt;code&gt;Cargo.toml&lt;&#x2f;code&gt;, which defines whether a test runner is used for an integration test. When it&#x27;s set to &lt;code&gt;false&lt;&#x2f;code&gt;, both the default test runner and the custom test runner feature are disabled, so that the test is treated like a normal executable.&lt;&#x2f;p&gt;
+&lt;p&gt;Let&#x27;s disable the &lt;code&gt;harness&lt;&#x2f;code&gt; flag for our &lt;code&gt;should_panic&lt;&#x2f;code&gt; test:&lt;&#x2f;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
+&lt;span style=&quot;color:#608b4e;&quot;&gt;# in Cargo.toml
+
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;[[&lt;&#x2f;span&gt;&lt;span style=&quot;color:#808080;&quot;&gt;test&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;]]
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;name &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;= &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;should_panic&amp;quot;
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;harness &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;= &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;false
+&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
+&lt;p&gt;Now we vastly simplify our &lt;code&gt;should_panic&lt;&#x2f;code&gt; test by removing the test runner related code. The result looks like this:&lt;&#x2f;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
+&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;should_panic.rs
+
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;#![no_std]
+#![no_main]
+
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;core::panic::PanicInfo;
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;blog_os::{QemuExitCode, exit_qemu, serial_println};
+
+#[no_mangle]
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub extern &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;C&amp;quot; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;_start() -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
+    should_panic();
+    serial_println!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;[test did not panic]&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+    exit_qemu(QemuExitCode::Failed);
+    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;loop&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{}
+}
+
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;should_fail() {
+    serial_print!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;should_fail... &amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+    assert_eq!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;, &lt;&#x2f;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+}
+
+#[panic_handler]
+&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;panic(_info: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;PanicInfo) -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
+    serial_println!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;[ok]&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
     exit_qemu(QemuExitCode::Success);
     &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;loop &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{}
 }
 &lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
-&lt;p&gt;We will show the implementation of &lt;code&gt;check_message&lt;&#x2f;code&gt; and &lt;code&gt;check_location&lt;&#x2f;code&gt; in a moment. Before that, we create a &lt;code&gt;fail&lt;&#x2f;code&gt; helper function that can be used to print an error message and exit QEMU with an failure exit code:&lt;&#x2f;p&gt;
-&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;panic_handler.rs
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;fail(error: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;str&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;) -&amp;gt; &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;! &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
-    serial_println!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;[failed]&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
-    serial_println!(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;{}&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;, error);
-    exit_qemu(QemuExitCode::Failed);
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;loop &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{}
-}
-&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
-&lt;p&gt;Now we can implement our &lt;code&gt;check_location&lt;&#x2f;code&gt; function:&lt;&#x2f;p&gt;
-&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;panic_handler.rs
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;check_location(info: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;PanicInfo) {
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; location &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; info.location().unwrap_or_else(|| fail(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;no location&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;));
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; location.file() &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;!= &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;file!() {
-        fail(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;file name wrong&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
-    }
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; location.line() &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;!= &lt;&#x2f;span&gt;&lt;span style=&quot;color:#b4cea8;&quot;&gt;PANIC_LINE &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
-        fail(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;file line wrong&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
-    }
-}
-&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
-&lt;p&gt;The function takes queries the location information from the &lt;code&gt;PanicInfo&lt;&#x2f;code&gt; and fails if it does not exist. It then checks that the reported file name is correct by comparing it with the output of the compiler-provided &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;core&#x2f;macro.file.html&quot;&gt;&lt;code&gt;file!&lt;&#x2f;code&gt;&lt;&#x2f;a&gt; macro. To check the reported line number, it compares it with the &lt;code&gt;PANIC_LINE&lt;&#x2f;code&gt; constant that we manually defined above.&lt;&#x2f;p&gt;
-&lt;h4 id=&quot;checking-the-panic-message&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#checking-the-panic-message&quot; aria-label=&quot;Anchor link for: checking-the-panic-message&quot;&gt;🔗&lt;&#x2f;a&gt;
-Checking the Panic Message&lt;&#x2f;h4&gt;
-&lt;p&gt;Checking the reported panic message is a bit more complicated. The reason is that the &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;core&#x2f;macro.file.html&quot;&gt;&lt;code&gt;PanicInfo::message&lt;&#x2f;code&gt;&lt;&#x2f;a&gt; function returns a &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;core&#x2f;fmt&#x2f;struct.Arguments.html&quot;&gt;&lt;code&gt;fmt::Arguments&lt;&#x2f;code&gt;&lt;&#x2f;a&gt; instance that can&#x27;t be compared with our &lt;code&gt;MESSAGE&lt;&#x2f;code&gt; string directly. To work around this, we need to create a &lt;code&gt;CompareMessage&lt;&#x2f;code&gt; struct:&lt;&#x2f;p&gt;
-&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;panic_handler.rs
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;core::fmt;
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f;&#x2f; Compares a `fmt::Arguments` instance with the `MESSAGE` string
-&#x2f;&#x2f;&#x2f;
-&#x2f;&#x2f;&#x2f; To use this type, write the `fmt::Arguments` instance to it using the
-&#x2f;&#x2f;&#x2f; `write` macro. If the message component matches `MESSAGE`, the `expected`
-&#x2f;&#x2f;&#x2f; field is the empty string.
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;CompareMessage {
-    expected: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&amp;#39;static str&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;,
-}
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;fmt::Write &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;for &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;CompareMessage {
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;write_str(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;mut &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;self, s: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;str&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;) -&amp;gt; fmt::Result {
-        &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;self.expected.starts_with(s) {
-            self.expected &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;self.expected[s.len()&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;..&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;];
-        } &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;else &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
-            fail(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;message not equal to expected message&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
-        }
-        Ok(())
-    }
-}
-&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
-&lt;p&gt;The trick is to implement the &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;nightly&#x2f;core&#x2f;fmt&#x2f;trait.Write.html&quot;&gt;&lt;code&gt;fmt::Write&lt;&#x2f;code&gt;&lt;&#x2f;a&gt; trait like we did for our &lt;a href=&quot;https:&#x2f;&#x2f;os.phil-opp.com&#x2f;vga-text-mode&#x2f;#formatting-macros&quot;&gt;VGA buffer writer&lt;&#x2f;a&gt;. The &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;core&#x2f;fmt&#x2f;trait.Write.html#tymethod.write_str&quot;&gt;&lt;code&gt;write_str&lt;&#x2f;code&gt;&lt;&#x2f;a&gt; method is called with a &lt;code&gt;&amp;amp;str&lt;&#x2f;code&gt; parameter that we can compare with the expected message. An important detail is that the method is called &lt;em&gt;multiple times&lt;&#x2f;em&gt; with the individual string components. For example, when we do &lt;code&gt;print!(&amp;quot;{}z&amp;quot;, &amp;quot;xy&amp;quot;)&lt;&#x2f;code&gt; the method on our VGA buffer writer is invoked once with the string &lt;code&gt;&amp;quot;xy&amp;quot;&lt;&#x2f;code&gt; and once with the string &lt;code&gt;&amp;quot;z&amp;quot;&lt;&#x2f;code&gt;.&lt;&#x2f;p&gt;
-&lt;p&gt;This means that we can&#x27;t directly compare the &lt;code&gt;s&lt;&#x2f;code&gt; argument with the expected message, since it might only be a substring. Instead, we use the &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;std&#x2f;primitive.str.html#method.starts_with&quot;&gt;&lt;code&gt;starts_with&lt;&#x2f;code&gt;&lt;&#x2f;a&gt; method to verify that the given string component is a substring of the expected message. Then we use &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;book&#x2f;ch04-03-slices.html#string-slices&quot;&gt;string slicing&lt;&#x2f;a&gt; to remove the already printed characters from the &lt;code&gt;expected&lt;&#x2f;code&gt; string. If the &lt;code&gt;expected&lt;&#x2f;code&gt; field is an empty string after writing the panic message, it means that it matches the expected message.&lt;&#x2f;p&gt;
-&lt;p&gt;With the &lt;code&gt;CompareMessage&lt;&#x2f;code&gt; type, we can finally implement our &lt;code&gt;check_message&lt;&#x2f;code&gt; function:&lt;&#x2f;p&gt;
-&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; in tests&#x2f;panic_handler.rs
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;#![feature(panic_info_message)] &lt;&#x2f;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2f;&#x2f; at the top of the file
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;core::fmt::Write;
-
-&lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;check_message(info: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;PanicInfo) {
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; message &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; info.message().unwrap_or_else(|| fail(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;no message&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;));
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let mut&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; compare_message &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; CompareMessage { expected: &lt;&#x2f;span&gt;&lt;span style=&quot;color:#b4cea8;&quot;&gt;MESSAGE &lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;};
-    write!(&amp;amp;mut compare_message, &lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#b4cea8;&quot;&gt;{}&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;, message)
-        .unwrap_or_else(|_| fail(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;write failed&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;));
-    &lt;&#x2f;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if !&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;compare_message.expected.is_empty() {
-        fail(&lt;&#x2f;span&gt;&lt;span style=&quot;color:#d69d85;&quot;&gt;&amp;quot;message shorter than expected message&amp;quot;&lt;&#x2f;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
-    }
-}
-&lt;&#x2f;span&gt;&lt;&#x2f;pre&gt;
-&lt;p&gt;The function uses the &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;core&#x2f;macro.file.html&quot;&gt;&lt;code&gt;PanicInfo::message&lt;&#x2f;code&gt;&lt;&#x2f;a&gt; function to get the panic message. If no message is reported, it calls &lt;code&gt;fail&lt;&#x2f;code&gt; to fail the test. Since the function is unstable, we need to add the &lt;code&gt;#![feature(panic_info_message)]&lt;&#x2f;code&gt; attribute at the top of our test file. Note that you need to adjust the &lt;code&gt;PANIC_INFO&lt;&#x2f;code&gt; line number after adding the attribute and the imports on top.&lt;&#x2f;p&gt;
-&lt;p&gt;After querying the message, the function constructs a &lt;code&gt;CompareMessage&lt;&#x2f;code&gt; instance with the &lt;code&gt;expected&lt;&#x2f;code&gt; field set to the &lt;code&gt;MESSAGE&lt;&#x2f;code&gt; string. Then it writes the message to it using the &lt;a href=&quot;https:&#x2f;&#x2f;doc.rust-lang.org&#x2f;core&#x2f;macro.write.html&quot;&gt;&lt;code&gt;write!&lt;&#x2f;code&gt;&lt;&#x2f;a&gt; macro. After the write, it reads the &lt;code&gt;expected&lt;&#x2f;code&gt; field and fails the test if it is not the empty string.&lt;&#x2f;p&gt;
-&lt;p&gt;Now we can run the test using &lt;code&gt;cargo xtest --test panic_handler&lt;&#x2f;code&gt;. We see that it passes, which means that the reported panic info is correct. If we use a wrong line number in &lt;code&gt;PANIC_LINE&lt;&#x2f;code&gt; or panic with an additional character through &lt;code&gt;panic!(&amp;quot;{}x&amp;quot;, MESSAGE)&lt;&#x2f;code&gt;, we see that the test indeed fails.&lt;&#x2f;p&gt;
+&lt;p&gt;We now call the &lt;code&gt;should_panic&lt;&#x2f;code&gt; function directly from our &lt;code&gt;_start&lt;&#x2f;code&gt; function and exit with a failure exit code if it returns. When we run &lt;code&gt;cargo xtest --test should_panic&lt;&#x2f;code&gt; now, we see that the test behaves exactly as before.&lt;&#x2f;p&gt;
+&lt;p&gt;Apart from creating &lt;code&gt;should_panic&lt;&#x2f;code&gt; tests, disabling the &lt;code&gt;harness&lt;&#x2f;code&gt; attribute can also be useful for complex integration tests, for example when the individual test functions have side effects and need to be run in a specified order.&lt;&#x2f;p&gt;
 &lt;h2 id=&quot;summary&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#summary&quot; aria-label=&quot;Anchor link for: summary&quot;&gt;🔗&lt;&#x2f;a&gt;
 Summary&lt;&#x2f;h2&gt;
 &lt;p&gt;Testing is a very useful technique to ensure that certain components have a desired behavior. Even if they cannot show the absence of bugs, they&#x27;re still an useful tool for finding them and especially for avoiding regressions.&lt;&#x2f;p&gt;
 &lt;p&gt;This post explained how to set up a test framework for our Rust kernel. We used the custom test frameworks feature of Rust to implement support for a simple &lt;code&gt;#[test_case]&lt;&#x2f;code&gt; attribute in our bare-metal environment. By using the &lt;code&gt;isa-debug-exit&lt;&#x2f;code&gt; device of QEMU, our test runner can exit QEMU after running the tests and report the test status out. To print error messages to the console instead of the VGA buffer, we created a basic driver for the serial port.&lt;&#x2f;p&gt;
-&lt;p&gt;After creating some tests for our &lt;code&gt;println&lt;&#x2f;code&gt; macro, we explored integration tests in the second half of the post. We learned that they live in the &lt;code&gt;tests&lt;&#x2f;code&gt; directory and are treated as completely separate executables. To give them access to the &lt;code&gt;exit_qemu&lt;&#x2f;code&gt; function and the &lt;code&gt;serial_println&lt;&#x2f;code&gt; macro, we moved most of our code into a library that can be imported by all executables and integration tests. Since integration tests run in their own separate environment, they make it possible to test the interactions with the hardware or Rust&#x27;s panic system.&lt;&#x2f;p&gt;
+&lt;p&gt;After creating some tests for our &lt;code&gt;println&lt;&#x2f;code&gt; macro, we explored integration tests in the second half of the post. We learned that they live in the &lt;code&gt;tests&lt;&#x2f;code&gt; directory and are treated as completely separate executables. To give them access to the &lt;code&gt;exit_qemu&lt;&#x2f;code&gt; function and the &lt;code&gt;serial_println&lt;&#x2f;code&gt; macro, we moved most of our code into a library that can be imported by all executables and integration tests. Since integration tests run in their own separate environment, they make it possible to test interactions with the hardware or to create tests that should panic.&lt;&#x2f;p&gt;
 &lt;p&gt;We now have a test framework that runs in a realistic environment inside QEMU. By creating more tests in future posts, we can keep our kernel maintainable when it becomes more complex.&lt;&#x2f;p&gt;
 &lt;h2 id=&quot;what-s-next&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#what-s-next&quot; aria-label=&quot;Anchor link for: what-s-next&quot;&gt;🔗&lt;&#x2f;a&gt;
 What&#x27;s next?&lt;&#x2f;h2&gt;
