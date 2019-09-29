@@ -25,11 +25,11 @@
         <header class="masthead">
             <div style="position:relative">
                 <h1 class="masthead-title">
-                    <a href="https:&#x2f;&#x2f;os.phil-opp.com" title="Home">Writing an OS in Rust (Second Edition)</a>
+                    <a href="https:&#x2F;&#x2F;os.phil-opp.com" title="Home">Writing an OS in Rust (Second Edition)</a>
                 </h1>
-                <p><small>Philipp&nbsp;Oppermann&#x27;s&nbsp;blog</small></p>
+                <p><small>Philipp&amp;nbsp;Oppermann&#x27;s&amp;nbsp;blog</small></p>
                 
-    <aside id="all-posts-link"><a href="https:&#x2f;&#x2f;os.phil-opp.com" title="All Posts">« All Posts</a></aside>
+    <aside id="all-posts-link"><a href="https:&#x2F;&#x2F;os.phil-opp.com" title="All Posts">« All Posts</a></aside>
 
             </div>
         </header>
@@ -100,7 +100,7 @@
     
         <div class="warning">
              <b>Deprecated: </b> 
-            This post is deprecated in favor of the <a href="/testing"><em>Testing</em></a> post and will no longer receive updates.
+            This post is deprecated in favor of the &lt;a href=&quot;&#x2F;testing&quot;&gt;&lt;em&gt;Testing&lt;&#x2F;em&gt;&lt;&#x2F;a&gt; post and will no longer receive updates.
         </div>
     
 
@@ -164,27 +164,22 @@
         </ul>
     </details>
 
-<h2 id="requirements"><a class="zola-anchor" href="#requirements" aria-label="Anchor link for: requirements">🔗</a>
-Requirements</h2>
+<h2 id="requirements"><a class="zola-anchor" href="#requirements" aria-label="Anchor link for: requirements">🔗</a>Requirements</h2>
 <p>This post builds upon the <a href="https://os.phil-opp.com/unit-testing/"><em>Unit Testing</em></a> post, so you need to follow it first. Alternatively, consider reading the new <a href="https://os.phil-opp.com/testing/"><em>Testing</em></a> post instead, which replaces both <em>Unit Testing</em> and this post. The new posts implements similar functionality, but integrates it directly in <code>cargo xtest</code>, so that both unit and integration tests run in a realistic environment inside QEMU.</p>
-<h2 id="overview"><a class="zola-anchor" href="#overview" aria-label="Anchor link for: overview">🔗</a>
-Overview</h2>
+<h2 id="overview"><a class="zola-anchor" href="#overview" aria-label="Anchor link for: overview">🔗</a>Overview</h2>
 <p>In the previous post we added support for unit tests. The goal of unit tests is to test small components in isolation to ensure that each of them works as intended. The tests are run on the host machine and thus shouldn't rely on architecture specific functionality.</p>
 <p>To test the interaction of the components, both with each other and the system environment, we can write <em>integration tests</em>. Compared to unit tests, ìntegration tests are more complex, because they need to run in a realistic environment. What this means depends on the application type. For example, for webserver applications it often means to set up a database instance. For an operating system kernel like ours, it means that we run the tests on the target hardware without an underlying operating system.</p>
 <p>Running on the target architecture allows us to test all hardware specific code such as the VGA buffer or the effects of <a href="https://en.wikipedia.org/wiki/Page_table">page table</a> modifications. It also allows us to verify that our kernel boots without problems and that no <a href="https://wiki.osdev.org/Exceptions">CPU exception</a> occurs.</p>
 <p>In this post we will implement a very basic test framework that runs integration tests inside instances of the <a href="https://www.qemu.org/">QEMU</a> virtual machine. It is not as realistic as running them on real hardware, but it is much simpler and should be sufficient as long as we only use standard hardware that is well supported in QEMU.</p>
-<h2 id="the-serial-port"><a class="zola-anchor" href="#the-serial-port" aria-label="Anchor link for: the-serial-port">🔗</a>
-The Serial Port</h2>
+<h2 id="the-serial-port"><a class="zola-anchor" href="#the-serial-port" aria-label="Anchor link for: the-serial-port">🔗</a>The Serial Port</h2>
 <p>The naive way of doing an integration test would be to add some assertions in the code, launch QEMU, and manually check if a panic occurred or not. This is very cumbersome and not practical if we have hundreds of integration tests. So we want an automated solution that runs all tests and fails if not all of them pass.</p>
 <p>Such an automated test framework needs to know whether a test succeeded or failed. It can't look at the screen output of QEMU, so we need a different way of retrieving the test results on the host system. A simple way to achieve this is by using the <a href="https://en.wikipedia.org/wiki/Serial_port">serial port</a>, an old interface standard which is no longer found in modern computers. It is easy to program and QEMU can redirect the bytes sent over serial to the host's standard output or a file.</p>
 <p>The chips implementing a serial interface are called <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter">UARTs</a>. There are <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter#UART_models">lots of UART models</a> on x86, but fortunately the only differences between them are some advanced features we don't need. The common UARTs today are all compatible to the <a href="https://en.wikipedia.org/wiki/16550_UART">16550 UART</a>, so we will use that model for our testing framework.</p>
-<h3 id="port-i-o"><a class="zola-anchor" href="#port-i-o" aria-label="Anchor link for: port-i-o">🔗</a>
-Port I/O</h3>
+<h3 id="port-i-o"><a class="zola-anchor" href="#port-i-o" aria-label="Anchor link for: port-i-o">🔗</a>Port I/O</h3>
 <p>There are two different approaches for communicating between the CPU and peripheral hardware on x86, <strong>memory-mapped I/O</strong> and <strong>port-mapped I/O</strong>. We already used memory-mapped I/O for accessing the <a href="https://os.phil-opp.com/vga-text-mode/">VGA text buffer</a> through the memory address <code>0xb8000</code>. This address is not mapped to RAM, but to some memory on the GPU.</p>
 <p>In contrast, port-mapped I/O uses a separate I/O bus for communication. Each connected peripheral has one or more port numbers. To communicate with such an I/O port there are special CPU instructions called <code>in</code> and <code>out</code>, which take a port number and a data byte (there are also variations of these commands that allow sending an <code>u16</code> or <code>u32</code>).</p>
 <p>The UART uses port-mapped I/O. Fortunately there are already several crates that provide abstractions for I/O ports and even UARTs, so we don't need to invoke the <code>in</code> and <code>out</code> assembly instructions manually.</p>
-<h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>
-Implementation</h3>
+<h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h3>
 <p>We will use the <a href="https://docs.rs/uart_16550"><code>uart_16550</code></a> crate to initialize the UART and send data over the serial port. To add it as a dependency, we update our <code>Cargo.toml</code> and <code>main.rs</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;"># in Cargo.toml
@@ -255,8 +250,7 @@ macro_rules! serial_println {
 }
 </span></pre>
 <p>Note that the <code>serial_println</code> macro lives directly under the root namespace because we used the <code>#[macro_export]</code> attribute, so importing it through <code>use crate::serial::serial_println</code> will not work.</p>
-<h3 id="qemu-arguments"><a class="zola-anchor" href="#qemu-arguments" aria-label="Anchor link for: qemu-arguments">🔗</a>
-QEMU Arguments</h3>
+<h3 id="qemu-arguments"><a class="zola-anchor" href="#qemu-arguments" aria-label="Anchor link for: qemu-arguments">🔗</a>QEMU Arguments</h3>
 <p>To see the serial output in QEMU, we can use the <code>-serial</code> argument to redirect the output to stdout:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">&gt; qemu-system-x86_64 \
@@ -273,8 +267,7 @@ Hello Host!
 <p>Instead of standard output, QEMU supports <a href="https://qemu.weilnetz.de/doc/qemu-doc.html#Debug_002fExpert-options">many more target devices</a>. For redirecting the output to a file, the argument is:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">-serial file:output-file.txt
-</span></pre><h2 id="shutting-down-qemu"><a class="zola-anchor" href="#shutting-down-qemu" aria-label="Anchor link for: shutting-down-qemu">🔗</a>
-Shutting Down QEMU</h2>
+</span></pre><h2 id="shutting-down-qemu"><a class="zola-anchor" href="#shutting-down-qemu" aria-label="Anchor link for: shutting-down-qemu">🔗</a>Shutting Down QEMU</h2>
 <p>Right now we have an endless loop at the end of our <code>_start</code> function and need to close QEMU manually. This does not work for automated tests. We could try to kill QEMU automatically from the host, for example after some special output was sent over serial, but this would be a bit hacky and difficult to get right. The cleaner solution would be to implement a way to shutdown our OS. Unfortunately this is relatively complex, because it requires implementing support for either the <a href="https://wiki.osdev.org/APM">APM</a> or <a href="https://wiki.osdev.org/ACPI">ACPI</a> power management standard.</p>
 <p>Luckily, there is an escape hatch: QEMU supports a special <code>isa-debug-exit</code> device, which provides an easy way to exit QEMU from the guest system. To enable it, we add the following argument to our QEMU command:</p>
 <pre style="background-color:#1e1e1e;">
@@ -315,8 +308,7 @@ Shutting Down QEMU</h2>
 <p>You should see that QEMU immediately closes after booting when executing:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">bootimage run -- -serial mon:stdio -device isa-debug-exit,iobase=0xf4,iosize=0x04
-</span></pre><h2 id="hiding-qemu"><a class="zola-anchor" href="#hiding-qemu" aria-label="Anchor link for: hiding-qemu">🔗</a>
-Hiding QEMU</h2>
+</span></pre><h2 id="hiding-qemu"><a class="zola-anchor" href="#hiding-qemu" aria-label="Anchor link for: hiding-qemu">🔗</a>Hiding QEMU</h2>
 <p>We are now able to launch a QEMU instance that writes its output to the serial port and automatically exits itself when it's done. So we no longer need the VGA buffer output or the graphical representation that still pops up. We can disable it by passing the <code>-display none</code> parameter to QEMU. The full command looks like this:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">qemu-system-x86_64 \
@@ -333,8 +325,7 @@ Hiding QEMU</h2>
     -display none
 </span></pre>
 <p>Now QEMU runs completely in the background and no window is opened anymore. This is not only less annoying, but also allows our test framework to run in environments without a graphical user interface, such as <a href="https://travis-ci.com/">Travis CI</a>.</p>
-<h2 id="test-organization"><a class="zola-anchor" href="#test-organization" aria-label="Anchor link for: test-organization">🔗</a>
-Test Organization</h2>
+<h2 id="test-organization"><a class="zola-anchor" href="#test-organization" aria-label="Anchor link for: test-organization">🔗</a>Test Organization</h2>
 <p>Right now we're doing the serial output and the QEMU exit from the <code>_start</code> function in our <code>main.rs</code> and can no longer run our kernel in a normal way. We could try to fix this by adding an <code>integration-test</code> <a href="https://doc.rust-lang.org/cargo/reference/manifest.html#the-features-section">cargo feature</a> and using <a href="https://doc.rust-lang.org/reference/attributes.html#conditional-compilation">conditional compilation</a>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;"># in Cargo.toml
@@ -374,8 +365,7 @@ Test Organization</h2>
 <p>Instead, we want our test instances to be as independent as possible. If a test wants to destroy most of the system configuration to ensure that some property still holds in catastrophic situations, it should be able to do so without needing to restore a correct system state afterwards. This means that we need to launch a separate QEMU instance for each test.</p>
 <p>With the above conditional compilation we only have two modes: Run the kernel normally or execute <em>all</em> integration tests. To run each test in isolation we would need a separate cargo feature for each test with that approach, which would result in very complex conditional compilation bounds and confusing code.</p>
 <p>A better solution is to create an additional executable for each test.</p>
-<h3 id="additional-test-executables"><a class="zola-anchor" href="#additional-test-executables" aria-label="Anchor link for: additional-test-executables">🔗</a>
-Additional Test Executables</h3>
+<h3 id="additional-test-executables"><a class="zola-anchor" href="#additional-test-executables" aria-label="Anchor link for: additional-test-executables">🔗</a>Additional Test Executables</h3>
 <p>Cargo allows to add <a href="https://doc.rust-lang.org/cargo/reference/manifest.html#the-project-layout">additional executables</a> to a project by putting them inside <code>src/bin</code>. We can use that feature to create a separate executable for each integration test. For example, a <code>test-something</code> executable could be added like this:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// src/bin/test-something.rs
@@ -407,8 +397,7 @@ Additional Test Executables</h3>
 <p>It should build the <code>test-something.rs</code> executable instead of <code>main.rs</code> and launch an empty QEMU window (since we don't print anything). So this approach allows us to create completely independent executables without cargo features or conditional compilation, and without cluttering our <code>main.rs</code>.</p>
 <p>However, there is a problem: This is a completely separate executable, which means that we can't access any functions from our <code>main.rs</code>, including <code>serial_println</code> and <code>exit_qemu</code>. Duplicating the code would work, but we would also need to copy everything we want to test. This would mean that we no longer test the original function but only a possibly outdated copy.</p>
 <p>Fortunately there is a way to share most of the code between our <code>main.rs</code> and the testing binaries: We move most of the code from our <code>main.rs</code> to a library that we can include from all executables.</p>
-<h3 id="split-off-a-library"><a class="zola-anchor" href="#split-off-a-library" aria-label="Anchor link for: split-off-a-library">🔗</a>
-Split Off A Library</h3>
+<h3 id="split-off-a-library"><a class="zola-anchor" href="#split-off-a-library" aria-label="Anchor link for: split-off-a-library">🔗</a>Split Off A Library</h3>
 <p>Cargo supports hybrid projects that are both a library and a binary. We only need to create a <code>src/lib.rs</code> file and split the contents of our <code>main.rs</code> in the following way:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// src/lib.rs
@@ -454,8 +443,7 @@ Split Off A Library</h3>
 }
 </span></pre>
 <p>So we move everything except <code>_start</code> and <code>panic</code> to <code>lib.rs</code> and make the <code>vga_buffer</code> and <code>serial</code> modules public. Everything should work exactly as before, including <code>bootimage run</code> and <code>cargo test</code>. To run tests only for the library part of our crate and avoid the additional output we can execute <code>cargo test --lib</code>.</p>
-<h3 id="test-basic-boot"><a class="zola-anchor" href="#test-basic-boot" aria-label="Anchor link for: test-basic-boot">🔗</a>
-Test Basic Boot</h3>
+<h3 id="test-basic-boot"><a class="zola-anchor" href="#test-basic-boot" aria-label="Anchor link for: test-basic-boot">🔗</a>Test Basic Boot</h3>
 <p>We are finally able to create our first integration test executable. We start simple and only test that the basic boot sequence works and the <code>_start</code> function is called:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/bin/test-basic-boot.rs
@@ -508,8 +496,7 @@ ok
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">failed
 panicked at &#39;explicit panic&#39;, src/bin/test-basic-boot.rs:19:5
-</span></pre><h3 id="test-panic"><a class="zola-anchor" href="#test-panic" aria-label="Anchor link for: test-panic">🔗</a>
-Test Panic</h3>
+</span></pre><h3 id="test-panic"><a class="zola-anchor" href="#test-panic" aria-label="Anchor link for: test-panic">🔗</a>Test Panic</h3>
 <p>To test that our panic handler is really invoked on a panic, we create a <code>test-panic</code> test:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/bin/test-panic.rs
@@ -537,8 +524,7 @@ Test Panic</h3>
 }
 </span></pre>
 <p>This executable is almost identical to <code>test-basic-boot</code>, the only difference is that we print <code>ok</code> from our panic handler and invoke an explicit <code>panic()</code> in our <code>_start</code> function.</p>
-<h2 id="a-test-runner"><a class="zola-anchor" href="#a-test-runner" aria-label="Anchor link for: a-test-runner">🔗</a>
-A Test Runner</h2>
+<h2 id="a-test-runner"><a class="zola-anchor" href="#a-test-runner" aria-label="Anchor link for: a-test-runner">🔗</a>A Test Runner</h2>
 <p>The final step is to create a test runner, a program that executes all integration tests and checks their results. The basic steps that it should do are:</p>
 <ul>
 <li>Look for integration tests in the current project, maybe by some convention (e.g. executables starting with <code>test-</code>).</li>
@@ -550,8 +536,7 @@ A Test Runner</h2>
 <li>Report the test results to the user and set a successful or failing exit status.</li>
 </ul>
 <p>Such a test runner is useful to many projects, so we decided to add one to the <code>bootimage</code> tool.</p>
-<h3 id="bootimage-test"><a class="zola-anchor" href="#bootimage-test" aria-label="Anchor link for: bootimage-test">🔗</a>
-Bootimage Test</h3>
+<h3 id="bootimage-test"><a class="zola-anchor" href="#bootimage-test" aria-label="Anchor link for: bootimage-test">🔗</a>Bootimage Test</h3>
 <p>The test runner of the <code>bootimage</code> tool can be invoked via <code>bootimage test</code>. It uses the following conventions:</p>
 <ul>
 <li>All executables starting with <code>test-</code> are treated as integration tests.</li>
@@ -577,13 +562,11 @@ The following tests failed:
     test-something: TimedOut
 </span></pre>
 <p>We see that our <code>test-panic</code> and <code>test-basic-boot</code> succeeded and that the <code>test-something</code> test timed out after one minute. We no longer need <code>test-something</code>, so we delete it (if you haven't done already). Now <code>bootimage test</code> should execute successfully.</p>
-<h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>
-Summary</h2>
+<h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>Summary</h2>
 <p>In this post we learned about the serial port and port-mapped I/O and saw how to configure QEMU to print serial output to the command line. We also learned a trick how to exit QEMU without needing to implement a proper shutdown.</p>
 <p>We then split our crate into a library and binary part in order to create additional executables for integration tests. We added two example tests for testing that the <code>_start</code> function is correctly called and that a <code>panic</code> invokes our panic handler. Finally, we presented <code>bootimage test</code> as a basic test runner for our integration tests.</p>
 <p>We now have a working integration test framework and can finally start to implement functionality in our kernel. We will continue to use the test framework over the next posts to test new components we add.</p>
-<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
-What's next?</h2>
+<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What's next?</h2>
 <p>In the next post, we will explore <em>CPU exceptions</em>. These exceptions are thrown by the CPU when something illegal happens, such as a division by zero or an access to an unmapped memory page (a so-called “page fault”). Being able to catch and examine these exceptions is very important for debugging future errors. Exception handling is also very similar to the handling of hardware interrupts, which is required for keyboard support.</p>
 
 
@@ -624,7 +607,7 @@ What's next?</h2>
             <hr>
             <small>
                 &copy; <time datetime="2019">2019</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;.&#x2F;pages&#x2F;contact.md">Contact</a>
             </small>
         </footer>
     </div>

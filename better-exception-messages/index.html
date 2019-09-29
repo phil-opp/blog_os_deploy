@@ -100,7 +100,7 @@
     </aside>
 
     <div class="warning">
-        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;second-edition&#x2f;">here</a>.
+        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;second-edition&#x2F;">here</a>.
     </div>
 
     <p>In this post, we explore exceptions in more detail. Our goal is to print additional information when an exception occurs, for example the values of the instruction and stack pointer. In the course of this, we will explore inline assembly and naked functions. We will also add a handler function for page faults and read the associated error code.</p>
@@ -109,8 +109,7 @@
 <blockquote>
 <p><strong>Note</strong>: This post describes how to handle exceptions using naked functions (see <a href="https://os.phil-opp.com/first-edition/extra/naked-exceptions/">“Handling Exceptions with Naked Functions”</a> for an overview). Our new way of handling exceptions can be found in the <a href="https://os.phil-opp.com/handling-exceptions/">“Handling Exceptions”</a> post.</p>
 </blockquote>
-<h2 id="exceptions-in-detail"><a class="zola-anchor" href="#exceptions-in-detail" aria-label="Anchor link for: exceptions-in-detail">🔗</a>
-Exceptions in Detail</h2>
+<h2 id="exceptions-in-detail"><a class="zola-anchor" href="#exceptions-in-detail" aria-label="Anchor link for: exceptions-in-detail">🔗</a>Exceptions in Detail</h2>
 <p>An exception signals that something is wrong with the currently-executed instruction. Whenever an exception occurs, the CPU interrupts its current work and starts an internal exception routine.</p>
 <p>This routine involves reading the interrupt descriptor table and invoking the registered handler function. But first, the CPU pushes various information onto the stack, which describe the current state and provide information about the cause of the exception:</p>
 <p><img src="https://os.phil-opp.com/better-exception-messages/exception-stack-frame.svg" alt="exception stack frame" /></p>
@@ -122,8 +121,7 @@ Exceptions in Detail</h2>
 <li>Next the CPU pushes the instruction pointer and its code segment descriptor onto the stack. This tells us the address of the last executed instruction, which caused the exception.</li>
 <li>Finally, the CPU pushes an error code for some exceptions. This error code only exists for exceptions such as page faults or general protection faults and provides additional information. For example, it tells us whether a page fault was caused by a read or a write request.</li>
 </ul>
-<h2 id="printing-the-exception-stack-frame"><a class="zola-anchor" href="#printing-the-exception-stack-frame" aria-label="Anchor link for: printing-the-exception-stack-frame">🔗</a>
-Printing the Exception Stack Frame</h2>
+<h2 id="printing-the-exception-stack-frame"><a class="zola-anchor" href="#printing-the-exception-stack-frame" aria-label="Anchor link for: printing-the-exception-stack-frame">🔗</a>Printing the Exception Stack Frame</h2>
 <p>Let's create a struct that represents the exception stack frame:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/mod.rs
@@ -162,13 +160,11 @@ Printing the Exception Stack Frame</h2>
 <li>The last block (after the 4th colon) specifies options. The <code>intel</code> option tells the compiler that our code is in Intel assembly syntax (instead of the default AT&amp;T syntax).</li>
 </ul>
 <p>So the inline assembly loads the stack pointer value to <code>stack_frame</code> at the very beginning of our function. Thus we have a pointer to the exception stack frame and are able to pretty-print its <code>Debug</code> formatting through the <code>{:#?}</code> argument.</p>
-<h3 id="testing-it"><a class="zola-anchor" href="#testing-it" aria-label="Anchor link for: testing-it">🔗</a>
-Testing it</h3>
+<h3 id="testing-it"><a class="zola-anchor" href="#testing-it" aria-label="Anchor link for: testing-it">🔗</a>Testing it</h3>
 <p>Let's try it by executing <code>make run</code>:</p>
 <p><img src="https://os.phil-opp.com/better-exception-messages/qemu-print-stack-frame-try.png" alt="qemu printing an ExceptionStackFrame with strange values" /></p>
 <p>Those <code>ExceptionStackFrame</code> values look very wrong. The instruction pointer definitely shouldn't be 1 and the code segment should be <code>0x8</code> instead of some big number. So what's going on here?</p>
-<h3 id="debugging"><a class="zola-anchor" href="#debugging" aria-label="Anchor link for: debugging">🔗</a>
-Debugging</h3>
+<h3 id="debugging"><a class="zola-anchor" href="#debugging" aria-label="Anchor link for: debugging">🔗</a>Debugging</h3>
 <p>It seems like we somehow got the pointer wrong. The <code>ExceptionStackFrame</code> type and our inline assembly seem correct, so something must be modifying <code>rsp</code> before we load it into <code>stack_frame</code>.</p>
 <p>Let's see what's happening by looking at the disassembly of our function:</p>
 <pre style="background-color:#1e1e1e;">
@@ -197,8 +193,7 @@ Debugging</h3>
 <p>We can clearly see the problem here: The compiler inserted various other instructions before our inline assembly. These instructions modify the stack pointer so that we don't read the original <code>rsp</code> value and get a wrong pointer. But why is the compiler doing this?</p>
 <p>The reason is that we need some place on the stack to store things like variables. Therefore the compiler inserts a so-called <em><a href="https://en.wikipedia.org/wiki/Function_prologue">function prologue</a></em>, which prepares the stack and reserves space for all variables. In our case, the compiler subtracts from the stack pointer to make room for i.a. our <code>stack_frame</code> variable. This prologue is the first thing in every function and comes before every other code.</p>
 <p>So in order to correctly load the exception frame pointer, we need some way to circumvent the automatic prologue generation.</p>
-<h3 id="naked-functions"><a class="zola-anchor" href="#naked-functions" aria-label="Anchor link for: naked-functions">🔗</a>
-Naked Functions</h3>
+<h3 id="naked-functions"><a class="zola-anchor" href="#naked-functions" aria-label="Anchor link for: naked-functions">🔗</a>Naked Functions</h3>
 <p>Fortunately there is a way to disable the prologue: <a href="https://github.com/rust-lang/rfcs/blob/master/text/1201-naked-fns.md">naked functions</a>. A naked function has no prologue and immediately starts with the first instruction of its body. However, most Rust code requires the prologue. Therefore naked functions should only contain inline assembly.</p>
 <p>A naked function looks like this (note the <code>#[naked]</code> attribute):</p>
 <pre style="background-color:#1e1e1e;">
@@ -221,8 +216,7 @@ Naked Functions</h3>
   10df9f:	00
 </span></pre>
 <p>It contains just the specified inline assembly and a return instruction (you can ignore the junk values after the return statement). So let's try to use a naked function to retrieve the exception frame pointer.</p>
-<h3 id="a-naked-exception-handler"><a class="zola-anchor" href="#a-naked-exception-handler" aria-label="Anchor link for: a-naked-exception-handler">🔗</a>
-A Naked Exception Handler</h3>
+<h3 id="a-naked-exception-handler"><a class="zola-anchor" href="#a-naked-exception-handler" aria-label="Anchor link for: a-naked-exception-handler">🔗</a>A Naked Exception Handler</h3>
 <p>We can't use Rust code in naked functions, but we still want to use Rust in our exception handler. Therefore we split our handler function in two parts. A main exception handler in Rust and a small naked wrapper function, which just loads the exception frame pointer and then calls the main handler.</p>
 <p>Our new two-stage exception handler looks like this:</p>
 <pre style="background-color:#1e1e1e;">
@@ -264,8 +258,7 @@ A Naked Exception Handler</h3>
 }
 </span></pre>
 <p>Instead of <code>call divide_by_zero_handler</code>, we use a placeholder again. The reason is Rust's name mangling, which changes the name of the <code>divide_by_zero_handler</code> function. To circumvent this, we pass a function pointer as input parameter (after the second colon). The <code>&quot;i&quot;</code> tells the compiler that it is an immediate value, which can be directly inserted for the placeholder. We also specify a clobber after the third colon, which tells the compiler that we change the value of the <code>rdi</code> register.</p>
-<h3 id="intrinsics-unreachable"><a class="zola-anchor" href="#intrinsics-unreachable" aria-label="Anchor link for: intrinsics-unreachable">🔗</a>
-Intrinsics::Unreachable</h3>
+<h3 id="intrinsics-unreachable"><a class="zola-anchor" href="#intrinsics-unreachable" aria-label="Anchor link for: intrinsics-unreachable">🔗</a>Intrinsics::Unreachable</h3>
 <p>When we try to compile it, we get the following error:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">error: computation may converge in a function marked as diverging
@@ -287,8 +280,7 @@ Intrinsics::Unreachable</h3>
 }
 </span></pre>
 <p>The <a href="https://doc.rust-lang.org/nightly/core/intrinsics/fn.unreachable.html">intrinsics::unreachable</a> function is unstable, so we need to add <code>#![feature(core_intrinsics)]</code> to our <code>src/lib.rs</code>. It is just an annotation for the compiler and produces no real code. (Not to be confused with the <a href="https://doc.rust-lang.org/nightly/core/macro.unreachable!.html">unreachable!</a> macro, which is completely different!)</p>
-<h3 id="it-works"><a class="zola-anchor" href="#it-works" aria-label="Anchor link for: it-works">🔗</a>
-It works!</h3>
+<h3 id="it-works"><a class="zola-anchor" href="#it-works" aria-label="Anchor link for: it-works">🔗</a>It works!</h3>
 <p>The last step is to update the interrupt descriptor table (IDT) to use our new wrapper function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/mod.rs
@@ -303,8 +295,7 @@ It works!</h3>
 </span></pre>
 <p>Now we see a correct exception stack frame when we execute <code>make run</code>:</p>
 <p><img src="https://os.phil-opp.com/better-exception-messages/qemu-divide-by-zero-stack-frame.png" alt="QEMU showing correct divide by zero stack frame" /></p>
-<h2 id="testing-on-real-hardware"><a class="zola-anchor" href="#testing-on-real-hardware" aria-label="Anchor link for: testing-on-real-hardware">🔗</a>
-Testing on real Hardware</h2>
+<h2 id="testing-on-real-hardware"><a class="zola-anchor" href="#testing-on-real-hardware" aria-label="Anchor link for: testing-on-real-hardware">🔗</a>Testing on real Hardware</h2>
 <p>Virtual machines such as QEMU are very convenient to quickly test our kernel. However, they might behave a bit different than real hardware in some situations. So we should test our kernel on real hardware, too.</p>
 <p>Let's do it by burning it to an USB stick:</p>
 <pre style="background-color:#1e1e1e;">
@@ -327,15 +318,13 @@ Testing on real Hardware</h2>
 </span></pre>
 <p>This is just some garbage code that doesn't do anything useful. When we try it in QEMU using <code>make run</code>, it still works fine. However, when we burn it to an USB stick again and boot from it on real hardware, we see that our computer reboots just before printing the exception message.</p>
 <p>So our code, which worked well in QEMU, <em>causes a triple fault</em> on real hardware. What's happening?</p>
-<h3 id="reproducing-the-bug-in-qemu"><a class="zola-anchor" href="#reproducing-the-bug-in-qemu" aria-label="Anchor link for: reproducing-the-bug-in-qemu">🔗</a>
-Reproducing the Bug in QEMU</h3>
+<h3 id="reproducing-the-bug-in-qemu"><a class="zola-anchor" href="#reproducing-the-bug-in-qemu" aria-label="Anchor link for: reproducing-the-bug-in-qemu">🔗</a>Reproducing the Bug in QEMU</h3>
 <p>Debugging on a real machine is difficult. Fortunately there is a way to reproduce this bug in QEMU: We use Linux's <a href="https://en.wikipedia.org/wiki/Kernel-based_Virtual_Machine">Kernel-based Virtual Machine</a> (KVM) by passing the <code>‑enable-kvm</code> flag:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">&gt; qemu-system-x86_64 -cdrom build/os-x86_64.iso -enable-kvm
 </span></pre>
 <p>Now QEMU triple faults as well. This should make debugging much easier.</p>
-<h3 id="debugging-1"><a class="zola-anchor" href="#debugging-1" aria-label="Anchor link for: debugging-1">🔗</a>
-Debugging</h3>
+<h3 id="debugging-1"><a class="zola-anchor" href="#debugging-1" aria-label="Anchor link for: debugging-1">🔗</a>Debugging</h3>
 <p>QEMU's <code>-d int</code>, which prints every exception, doesn't seem to work in KVM mode. However <code>-d cpu_reset</code> still works. It prints the complete CPU state whenever the CPU resets. Let's try it:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">&gt; qemu-system-x86_64 -cdrom build/os-x86_64.iso -enable-kvm -d cpu_reset
@@ -372,8 +361,7 @@ RIP=000000000010cf08 RFL=00210002 [-------] CPL=0 II=0 A20=1 SMM=0 HLT=0
 <li>If TS in CR0 is set.</li>
 </ol>
 <p>The segment registers contain no meaningful values in long mode, so they can't contain illegal addresses. We did not change the TS bit in <a href="https://en.wikipedia.org/wiki/Control_register#CR0">CR0</a> and there is no reason for a page fault either. So it has to be option 3.</p>
-<h3 id="16-byte-alignment"><a class="zola-anchor" href="#16-byte-alignment" aria-label="Anchor link for: 16-byte-alignment">🔗</a>
-16-byte Alignment</h3>
+<h3 id="16-byte-alignment"><a class="zola-anchor" href="#16-byte-alignment" aria-label="Anchor link for: 16-byte-alignment">🔗</a>16-byte Alignment</h3>
 <p>Some SSE instructions such as <code>movaps</code> require that memory operands are 16-byte aligned. In our case, the instruction is <code>movaps %xmm0,-0x50(%rbp)</code>, which writes to address <code>rbp - 0x50</code>. Therefore <code>rbp</code> needs to be 16-byte aligned.</p>
 <p>Let's look at the above <code>-d cpu_reset</code> dump again and check the value of <code>rbp</code>:</p>
 <pre style="background-color:#1e1e1e;">
@@ -384,8 +372,7 @@ RSI=[...] RDI=[...] RBP=0000000000118d28 RSP=[...]
 </span></pre>
 <p><code>RBP</code> is <code>0x118d28</code>, which is <em>not</em> 16-byte aligned. So this is the reason for the triple fault. (It seems like QEMU doesn't check the alignment for <code>movaps</code>, but real hardware of course does.)</p>
 <p>But how did we end up with a misaligned <code>rbp</code> register?</p>
-<h3 id="the-base-pointer"><a class="zola-anchor" href="#the-base-pointer" aria-label="Anchor link for: the-base-pointer">🔗</a>
-The Base Pointer</h3>
+<h3 id="the-base-pointer"><a class="zola-anchor" href="#the-base-pointer" aria-label="Anchor link for: the-base-pointer">🔗</a>The Base Pointer</h3>
 <p>In order to solve this mystery, we need to look at the disassembly of the preceding code:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">&gt; objdump -d build/kernel-x86_64.bin | grep -B10 &quot;10cf08:&quot;
@@ -406,16 +393,14 @@ The Base Pointer</h3>
 <div class="footnote-definition" id="fn-rsp-8"><sup class="footnote-definition-label">1</sup>
 <p>By pushing the old base pointer, <code>rsp</code> is updated to <code>rsp-8</code>.</p>
 </div>
-<h3 id="calling-conventions"><a class="zola-anchor" href="#calling-conventions" aria-label="Anchor link for: calling-conventions">🔗</a>
-Calling Conventions</h3>
+<h3 id="calling-conventions"><a class="zola-anchor" href="#calling-conventions" aria-label="Anchor link for: calling-conventions">🔗</a>Calling Conventions</h3>
 <p>The reason is that our exception handler is defined as <code>extern &quot;C&quot; function</code>, which specifies that it's using the C <a href="https://en.wikipedia.org/wiki/X86_calling_conventions">calling convention</a>. On x86_64 Linux, the C calling convention is specified by the System V AMD64 ABI (<a href="http://web.archive.org/web/20160801075139/http://www.x86-64.org/documentation/abi.pdf">PDF</a>). Section 3.2.2 defines the following:</p>
 <blockquote>
 <p>The end of the input argument area shall be aligned on a 16 byte boundary. In other words, the value (%rsp + 8) is always a multiple of 16 when control is transferred to the function entry point.</p>
 </blockquote>
 <p>The “end of the input argument area” refers to the last stack-passed argument (in our case there aren't any). So the stack pointer must be 16 byte aligned whenever we <code>call</code> a C-compatible function. The <code>call</code> instruction then pushes the return value on the stack so that “the value (%rsp + 8) is a multiple of 16 when control is transferred to the function entry point”.</p>
 <p><em>Summary</em>: The calling convention requires a 16 byte aligned stack pointer before <code>call</code> instructions. The compiler relies on this requirement, but we broke it somehow. Thus the generated code triple faults due to a misaligned memory address in the <code>movaps</code> instruction.</p>
-<h3 id="fixing-the-alignment"><a class="zola-anchor" href="#fixing-the-alignment" aria-label="Anchor link for: fixing-the-alignment">🔗</a>
-Fixing the Alignment</h3>
+<h3 id="fixing-the-alignment"><a class="zola-anchor" href="#fixing-the-alignment" aria-label="Anchor link for: fixing-the-alignment">🔗</a>Fixing the Alignment</h3>
 <p>In order to fix this bug, we need to make sure that the stack pointer is correctly aligned before calling <code>extern &quot;C&quot;</code> functions. Let's summarize the stack pointer modifications that occur before the exception handler is called:</p>
 <ol>
 <li>The CPU aligns the stack pointer to a 16 byte boundary.</li>
@@ -437,8 +422,7 @@ Fixing the Alignment</h3>
 }
 </span></pre>
 <p>The additional <code>sub rsp, 8</code> instruction aligns the stack pointer to a 16 byte boundary. Now it should work on real hardware (and in QEMU KVM mode) again.</p>
-<h2 id="a-handler-macro"><a class="zola-anchor" href="#a-handler-macro" aria-label="Anchor link for: a-handler-macro">🔗</a>
-A Handler Macro</h2>
+<h2 id="a-handler-macro"><a class="zola-anchor" href="#a-handler-macro" aria-label="Anchor link for: a-handler-macro">🔗</a>A Handler Macro</h2>
 <p>The next step is to add handlers for other exceptions. However, we would need wrapper functions for them too. To avoid this code duplication, we create a <code>handler</code> macro that creates the wrapper functions for us:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/mod.rs
@@ -475,8 +459,7 @@ A Handler Macro</h2>
 }
 </span></pre>
 <p>Note that the <code>handler!</code> macro needs to be defined above the static <code>IDT</code>, because macros are only available after their definition.</p>
-<h3 id="invalid-opcode-exception"><a class="zola-anchor" href="#invalid-opcode-exception" aria-label="Anchor link for: invalid-opcode-exception">🔗</a>
-Invalid Opcode Exception</h3>
+<h3 id="invalid-opcode-exception"><a class="zola-anchor" href="#invalid-opcode-exception" aria-label="Anchor link for: invalid-opcode-exception">🔗</a>Invalid Opcode Exception</h3>
 <p>With the <code>handler!</code> macro we can create new handler functions easily. For example, we can add a handler for the invalid opcode exception as follows:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/mod.rs
@@ -517,11 +500,9 @@ Invalid Opcode Exception</h3>
     println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre><h2 id="exceptions-with-error-codes"><a class="zola-anchor" href="#exceptions-with-error-codes" aria-label="Anchor link for: exceptions-with-error-codes">🔗</a>
-Exceptions with Error Codes</h2>
+</span></pre><h2 id="exceptions-with-error-codes"><a class="zola-anchor" href="#exceptions-with-error-codes" aria-label="Anchor link for: exceptions-with-error-codes">🔗</a>Exceptions with Error Codes</h2>
 <p>When a divide-by-zero exception occurs, we immediately know the reason: Someone tried to divide by zero. In contrast, there are faults with many possible causes. For example, a page fault occurs in many occasions: When accessing a non-present page, when writing to a read-only page, when the page table is malformed, etc. In order to differentiate these causes, the CPU pushes an additional error code onto the stack for such exceptions, which gives additional information.</p>
-<h3 id="a-new-macro"><a class="zola-anchor" href="#a-new-macro" aria-label="Anchor link for: a-new-macro">🔗</a>
-A new Macro</h3>
+<h3 id="a-new-macro"><a class="zola-anchor" href="#a-new-macro" aria-label="Anchor link for: a-new-macro">🔗</a>A new Macro</h3>
 <p>Since the CPU pushes an additional error code, the stack frame is different and our <code>handler!</code> macro is not applicable. Therefore we create a new <code>handler_with_error_code!</code> macro for them:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/mod.rs
@@ -546,8 +527,7 @@ A new Macro</h3>
 }
 </span></pre>
 <p>The difference to the <code>handler!</code> macro is the additional error code argument. The CPU pushes the error code last, so we pop it right at the beginning of the wrapper function. We pop it into <code>rsi</code> because the C calling convention expects the second argument in it.</p>
-<h3 id="a-page-fault-handler"><a class="zola-anchor" href="#a-page-fault-handler" aria-label="Anchor link for: a-page-fault-handler">🔗</a>
-A Page Fault Handler</h3>
+<h3 id="a-page-fault-handler"><a class="zola-anchor" href="#a-page-fault-handler" aria-label="Anchor link for: a-page-fault-handler">🔗</a>A Page Fault Handler</h3>
 <p>Let's write a page fault handler which analyzes and prints the error code:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/mod.rs
@@ -579,8 +559,7 @@ A Page Fault Handler</h3>
 }
 </span></pre>
 <p>Page faults have the vector number 14, so we set the 14th IDT entry.</p>
-<h4 id="testing-it-1"><a class="zola-anchor" href="#testing-it-1" aria-label="Anchor link for: testing-it-1">🔗</a>
-Testing it</h4>
+<h4 id="testing-it-1"><a class="zola-anchor" href="#testing-it-1" aria-label="Anchor link for: testing-it-1">🔗</a>Testing it</h4>
 <p>Let's test our new page fault handler by provoking a page fault in our main function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
@@ -601,8 +580,7 @@ Testing it</h4>
 </span></pre>
 <p>We get the following output:</p>
 <p><img src="https://os.phil-opp.com/better-exception-messages/qemu-page-fault-handler.png" alt="QEMU: page fault with error code 2 and stack frame dump" /></p>
-<h3 id="the-page-fault-error-code"><a class="zola-anchor" href="#the-page-fault-error-code" aria-label="Anchor link for: the-page-fault-error-code">🔗</a>
-The Page Fault Error Code</h3>
+<h3 id="the-page-fault-error-code"><a class="zola-anchor" href="#the-page-fault-error-code" aria-label="Anchor link for: the-page-fault-error-code">🔗</a>The Page Fault Error Code</h3>
 <p>“Error code 2” is not really an useful error message. Let's improve this by creating a <code>PageFaultErrorCode</code> type:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/mod.rs
@@ -643,8 +621,7 @@ The Page Fault Error Code</h3>
 <p>Now we get a useful error message when a page fault occurs, which allows us to debug it more easily:</p>
 <p><img src="https://os.phil-opp.com/better-exception-messages/qemu-page-fault-error-code.png" alt="QEMU: output is now PAGE FAULT with error code CAUSED_BY_WRITE" /></p>
 <p>As expected, the page fault was caused by write to <code>0xdeadbeaf</code>. The <code>PROTECTION_VIOLATION</code> flag is not set, so the accessed page was not present.</p>
-<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
-What's next?</h2>
+<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What's next?</h2>
 <p>Now we're able to catch and analyze various exceptions. The next step is to <em>resolve</em> exceptions, if possible. An example is <a href="https://en.wikipedia.org/wiki/Demand_paging">demand paging</a>: The OS swaps out memory pages to disk so that a page fault occurs when the page is accessed the next time. In that case, the OS can resolve the exception by bringing the page back into memory. Afterwards, the OS resumes the interrupted program as if nothing had happened.</p>
 <p>The next post will implement the first portion of demand paging: saving and restoring the complete state of an program. This will allow us to transparently interrupt and resume programs in the future.</p>
 
@@ -834,7 +811,7 @@ What's next?</h2>
             <hr>
             <small>
                 &copy; <time datetime="2017">2017</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;.&#x2F;pages&#x2F;contact.md">Contact</a>
             </small>
         </footer>
     </div>

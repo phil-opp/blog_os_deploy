@@ -25,11 +25,11 @@
         <header class="masthead">
             <div style="position:relative">
                 <h1 class="masthead-title">
-                    <a href="https:&#x2f;&#x2f;os.phil-opp.com" title="Home">Writing an OS in Rust (Second Edition)</a>
+                    <a href="https:&#x2F;&#x2F;os.phil-opp.com" title="Home">Writing an OS in Rust (Second Edition)</a>
                 </h1>
-                <p><small>Philipp&nbsp;Oppermann&#x27;s&nbsp;blog</small></p>
+                <p><small>Philipp&amp;nbsp;Oppermann&#x27;s&amp;nbsp;blog</small></p>
                 
-    <aside id="all-posts-link"><a href="https:&#x2f;&#x2f;os.phil-opp.com" title="All Posts">« All Posts</a></aside>
+    <aside id="all-posts-link"><a href="https:&#x2F;&#x2F;os.phil-opp.com" title="All Posts">« All Posts</a></aside>
 
             </div>
         </header>
@@ -84,27 +84,24 @@
     
         <div class="warning">
              <b>Deprecated: </b> 
-            This post is deprecated in favor of the <a href="/paging-implementation"><em>Paging Implementation</em></a> post and will no longer receive updates. See issue <a href="https://github.com/phil-opp/blog_os/issues/545">#545</a> for reasons for this deprecation.
+            This post is deprecated in favor of the &lt;a href=&quot;&#x2F;paging-implementation&quot;&gt;&lt;em&gt;Paging Implementation&lt;&#x2F;em&gt;&lt;&#x2F;a&gt; post and will no longer receive updates. See issue &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;phil-opp&#x2F;blog_os&#x2F;issues&#x2F;545&quot;&gt;#545&lt;&#x2F;a&gt; for reasons for this deprecation.
         </div>
     
 
     <p>This post explains techniques to make the physical page table frames accessible to our kernel. It then uses such a technique to implement a function that translates virtual to physical addresses. It also explains how to create new mappings in the page tables.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
 <p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/advanced-paging/#comments">at the bottom</a>. The complete source code for this post can be found <a href="https://github.com/phil-opp/blog_os/tree/5c0fb63f33380fc8596d7166c2ebde03ef3d6726">here</a>.</p>
-<h2 id="introduction"><a class="zola-anchor" href="#introduction" aria-label="Anchor link for: introduction">🔗</a>
-Introduction</h2>
+<h2 id="introduction"><a class="zola-anchor" href="#introduction" aria-label="Anchor link for: introduction">🔗</a>Introduction</h2>
 <p>In the <a href="https://os.phil-opp.com/paging-introduction/">previous post</a> we learned about the principles of paging and how the 4-level page tables on x86_64 work. We also found out that the bootloader already set up a page table hierarchy for our kernel, which means that our kernel already runs on virtual addresses. This improves safety since illegal memory accesses cause page fault exceptions instead of modifying arbitrary physical memory.</p>
 <p>However, it also causes a problem when we try to access the page tables from our kernel because we can't directly access the physical addresses that are stored in page table entries or the <code>CR3</code> register. We experienced that problem already <a href="https://os.phil-opp.com/paging-introduction/#accessing-the-page-tables">at the end of the previous post</a> when we tried to inspect the active page tables.</p>
 <p>The next section discusses the problem in detail and provides different approaches to a solution. Afterward, we implement a function that traverses the page table hierarchy in order to translate virtual to physical addresses. Finally, we learn how to create new mappings in the page tables and how to find unused memory frames for creating new page tables.</p>
-<h3 id="dependency-versions"><a class="zola-anchor" href="#dependency-versions" aria-label="Anchor link for: dependency-versions">🔗</a>
-Dependency Versions</h3>
+<h3 id="dependency-versions"><a class="zola-anchor" href="#dependency-versions" aria-label="Anchor link for: dependency-versions">🔗</a>Dependency Versions</h3>
 <p>This post requires version 0.3.12 of the <code>bootloader</code> dependency and version 0.5.0 of the <code>x86_64</code> dependency. You can set the dependency versions in your <code>Cargo.toml</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">bootloader </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.3.12&quot;
 </span><span style="color:#569cd6;">x86_64 </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.5.0&quot;
-</span></pre><h2 id="accessing-page-tables"><a class="zola-anchor" href="#accessing-page-tables" aria-label="Anchor link for: accessing-page-tables">🔗</a>
-Accessing Page Tables</h2>
+</span></pre><h2 id="accessing-page-tables"><a class="zola-anchor" href="#accessing-page-tables" aria-label="Anchor link for: accessing-page-tables">🔗</a>Accessing Page Tables</h2>
 <p>Accessing the page tables from our kernel is not as easy as it may seem. To understand the problem let's take a look at the example 4-level page table hierarchy of the previous post again:</p>
 <p><img src="../paging-introduction/x86_64-page-table-translation.svg" alt="An example 4-level page hierarchy with each page table shown in physical memory" /></p>
 <p>The important thing here is that each page entry stores the <em>physical</em> address of the next table. This avoids the need to run a translation for these addresses too, which would be bad for performance and could easily cause endless translation loops.</p>
@@ -136,8 +133,7 @@ Accessing Page Tables</h2>
 <p>While both of the above approaches work, there is a third technique called <strong>recursive page tables</strong> that combines their advantages: It keeps all page table frames mapped at all times so that no temporary mappings are needed, and also keeps the mapped pages together to avoid fragmentation of the virtual address space. This is the technique that we will use for our implementation, therefore it is described in detail in the following section.</p>
 </li>
 </ul>
-<h3 id="recursive-page-tables"><a class="zola-anchor" href="#recursive-page-tables" aria-label="Anchor link for: recursive-page-tables">🔗</a>
-Recursive Page Tables</h3>
+<h3 id="recursive-page-tables"><a class="zola-anchor" href="#recursive-page-tables" aria-label="Anchor link for: recursive-page-tables">🔗</a>Recursive Page Tables</h3>
 <p>The idea behind this approach is to map some entry of the level 4 page table to the level 4 table itself. By doing this, we effectively reserve a part of the virtual address space and map all current and future page table frames to that space.</p>
 <p>Let's go through an example to understand how this all works:</p>
 <p><img src="https://os.phil-opp.com/advanced-paging/recursive-page-table.png" alt="An example 4-level page hierarchy with each page table shown in physical memory. Entry 511 of the level 4 page is mapped to frame 4KiB, the frame of the level 4 table itself." /></p>
@@ -151,8 +147,7 @@ Recursive Page Tables</h3>
 <p>Accessing the tables of levels 3 and 4 works in the same way. For accessing the level 3 table, we follow the recursive entry three times, tricking the CPU into thinking it is already on a level 1 table. Then we follow another entry and reach a level 3 table, which the CPU treats as a mapped frame. For accessing the level 4 table itself, we just follow the recursive entry four times until the CPU treats the level 4 table itself as mapped frame (in blue in the graphic below).</p>
 <p><img src="https://os.phil-opp.com/advanced-paging/recursive-page-table-access-level-3.png" alt="The same 4-level page hierarchy with the following 3 arrows: &quot;Step 0&quot; from CR4 to level 4 table, &quot;Steps 1,2,3&quot; from level 4 table to level 4 table, and &quot;Step 4&quot; from level 4 table to level 3 table. In blue the alternative &quot;Steps 1,2,3,4&quot; arrow from level 4 table to level 4 table." /></p>
 <p>It might take some time to wrap your head around the concept, but it works quite well in practice.</p>
-<h4 id="address-calculation"><a class="zola-anchor" href="#address-calculation" aria-label="Anchor link for: address-calculation">🔗</a>
-Address Calculation</h4>
+<h4 id="address-calculation"><a class="zola-anchor" href="#address-calculation" aria-label="Anchor link for: address-calculation">🔗</a>Address Calculation</h4>
 <p>We saw that we can access tables of all levels by following the recursive entry once or multiple times before the actual translation. Since the indexes into the tables of the four levels are derived directly from the virtual address, we need to construct special virtual addresses for this technique. Remember, the page table indexes are derived from the address in the following way:</p>
 <p><img src="../paging-introduction/x86_64-table-indices-from-address.svg" alt="Bits 0–12 are the page offset, bits 12–21 the level 1 index, bits 21–30 the level 2 index, bits 30–39 the level 3 index, and bits 39–48 the level 4 index" /></p>
 <p>Let's assume that we want to access the level 1 page table that maps a specific page. As we learned above, this means that we have to follow the recursive entry one time before continuing with the level 4, level 3, and level 2 indexes. To do that we move each block of the address one block to the right and set the original level 4 index to the index of the recursive entry:</p>
@@ -165,18 +160,17 @@ Address Calculation</h4>
 <p><img src="https://os.phil-opp.com/advanced-paging/table-indices-from-address-recursive-level-4.svg" alt="Bits 0–12 are the offset into the level l table frame and bits 12–21, bits 21–30, bits 30–39 and bits 39–48 are the index of the recursive entry" /></p>
 <p>We can now calculate virtual addresses for the page tables of all four levels. We can even calculate an address that points exactly to a specific page table entry by multiplying its index by 8, the size of a page table entry.</p>
 <p>The table below summarizes the address structure for accessing the different kinds of frames:</p>
-<table><thead><tr><th>Virtual Address for </th><th>Address Structure (<a href="https://en.wikipedia.org/wiki/Octal">octal</a>)</th></tr></thead><tbody>
-<tr><td>Page                </td><td><code>0o_SSSSSS_AAA_BBB_CCC_DDD_EEEE</code></td></tr>
-<tr><td>Level 1 Table Entry </td><td><code>0o_SSSSSS_RRR_AAA_BBB_CCC_DDDD</code></td></tr>
-<tr><td>Level 2 Table Entry </td><td><code>0o_SSSSSS_RRR_RRR_AAA_BBB_CCCC</code></td></tr>
-<tr><td>Level 3 Table Entry </td><td><code>0o_SSSSSS_RRR_RRR_RRR_AAA_BBBB</code></td></tr>
-<tr><td>Level 4 Table Entry </td><td><code>0o_SSSSSS_RRR_RRR_RRR_RRR_AAAA</code></td></tr>
+<table><thead><tr><th>Virtual Address for</th><th>Address Structure (<a href="https://en.wikipedia.org/wiki/Octal">octal</a>)</th></tr></thead><tbody>
+<tr><td>Page</td><td><code>0o_SSSSSS_AAA_BBB_CCC_DDD_EEEE</code></td></tr>
+<tr><td>Level 1 Table Entry</td><td><code>0o_SSSSSS_RRR_AAA_BBB_CCC_DDDD</code></td></tr>
+<tr><td>Level 2 Table Entry</td><td><code>0o_SSSSSS_RRR_RRR_AAA_BBB_CCCC</code></td></tr>
+<tr><td>Level 3 Table Entry</td><td><code>0o_SSSSSS_RRR_RRR_RRR_AAA_BBBB</code></td></tr>
+<tr><td>Level 4 Table Entry</td><td><code>0o_SSSSSS_RRR_RRR_RRR_RRR_AAAA</code></td></tr>
 </tbody></table>
 <p>Whereas <code>AAA</code> is the level 4 index, <code>BBB</code> the level 3 index, <code>CCC</code> the level 2 index, and <code>DDD</code> the level 1 index of the mapped frame, and <code>EEEE</code> the offset into it. <code>RRR</code> is the index of the recursive entry. When an index (three digits) is transformed to an offset (four digits), it is done by multiplying it by 8 (the size of a page table entry). With this offset, the resulting address directly points to the respective page table entry.</p>
-<p><code>SSSSSS</code> are sign extension bits, which means that they are all copies of bit 47. This is a special requirement for valid addresses on the x86_64 architecture. We explained it in the <a href="https://os.phil-opp.com/paging-introduction/#paging-on-x86">previous post</a>.</p>
+<p><code>SSSSSS</code> are sign extension bits, which means that they are all copies of bit 47. This is a special requirement for valid addresses on the x86_64 architecture. We explained it in the <a href="https://os.phil-opp.com/paging-introduction/#paging-on-x86-64">previous post</a>.</p>
 <p>We use <a href="https://en.wikipedia.org/wiki/Octal">octal</a> numbers for representing the addresses since each octal character represents three bits, which allows us to clearly separate the 9-bit indexes of the different page table levels. This isn't possible with the hexadecimal system where each character represents four bits.</p>
-<h2 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>
-Implementation</h2>
+<h2 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h2>
 <p>After all this theory we can finally start our implementation. Conveniently, the bootloader not only created page tables for our kernel, but it also created a recursive mapping in the last entry of the level 4 table. The bootloader did this because otherwise there would be a <a href="https://en.wikipedia.org/wiki/Chicken_or_the_egg">chicken or egg problem</a>: We need to access the level 4 table to create a recursive mapping, but we can't access it without some kind of mapping.</p>
 <p>We already used this recursive mapping <a href="https://os.phil-opp.com/paging-introduction/#accessing-the-page-tables">at the end of the previous post</a> to access the level 4 table. We did this through the hardcoded address <code>0xffff_ffff_ffff_f000</code>. When we convert this address to <a href="https://en.wikipedia.org/wiki/Octal">octal</a> and compare it with the above table, we can see that it exactly follows the structure of a level 4 table entry with <code>RRR</code> = <code>0o777</code>, <code>AAAA</code> = 0, and the sign extension bits set to <code>1</code> each:</p>
 <pre style="background-color:#1e1e1e;">
@@ -184,8 +178,7 @@ Implementation</h2>
 address:   0o_177777_777_777_777_777_0000
 </span></pre>
 <p>With our knowledge about recursive page tables we can now create virtual addresses to access all active page tables. This allows us to create a translation function in software.</p>
-<h3 id="translating-addresses"><a class="zola-anchor" href="#translating-addresses" aria-label="Anchor link for: translating-addresses">🔗</a>
-Translating Addresses</h3>
+<h3 id="translating-addresses"><a class="zola-anchor" href="#translating-addresses" aria-label="Anchor link for: translating-addresses">🔗</a>Translating Addresses</h3>
 <p>As a first step, let's create a function that translates a virtual address to a physical address by walking the page table hierarchy:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
@@ -256,8 +249,7 @@ Translating Addresses</h3>
 <p>After the address calculation, we use the indexing operator to look at the entry in the level 4 table. If that entry is null, there is no level 3 table for this level 4 entry, which means that the <code>addr</code> is not mapped to any physical memory, so we return <code>None</code>. If the entry is not <code>None</code>, we know that a level 3 table exists. We then do the same cast and entry-checking as with the level 4 table.</p>
 <p>After we checked the three higher level pages, we can finally read the entry of the level 1 table that tells us the physical frame that the address is mapped to. As the last step, we add the page offset to that address and return it.</p>
 <p>If we knew that the address is mapped, we could directly access the level 1 table without looking at the higher level pages first. But since we don't know this, we have to check whether the level 1 table exists first, otherwise our function would cause a page fault for unmapped addresses.</p>
-<h4 id="try-it-out"><a class="zola-anchor" href="#try-it-out" aria-label="Anchor link for: try-it-out">🔗</a>
-Try it out</h4>
+<h4 id="try-it-out"><a class="zola-anchor" href="#try-it-out" aria-label="Anchor link for: try-it-out">🔗</a>Try it out</h4>
 <p>We can use our new translation function to translate some virtual addresses in our <code>_start</code> function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
@@ -289,8 +281,7 @@ Try it out</h4>
 <p>When we run it, we see the following output:</p>
 <p><img src="https://os.phil-opp.com/advanced-paging/qemu-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x20010a -&gt; 0x40010a, 0x57ac001ffe48 -&gt; 0x27be48" /></p>
 <p>As expected, the identity-mapped address <code>0xb8000</code> translates to the same physical address. The code page and the stack page translate to some arbitrary physical addresses, which depend on how the bootloader created the initial mapping for our kernel.</p>
-<h4 id="the-recursivepagetable-type"><a class="zola-anchor" href="#the-recursivepagetable-type" aria-label="Anchor link for: the-recursivepagetable-type">🔗</a>
-The <code>RecursivePageTable</code> Type</h4>
+<h4 id="the-recursivepagetable-type"><a class="zola-anchor" href="#the-recursivepagetable-type" aria-label="Anchor link for: the-recursivepagetable-type">🔗</a>The <code>RecursivePageTable</code> Type</h4>
 <p>The <code>x86_64</code> provides a <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a> type that implements safe abstractions for various page table operations. The type implements the <a href="https://docs.rs/x86_64/0.5.2/x86_64/structures/paging/mapper/trait.MapperAllSizes.html"><code>MapperAllSizes</code></a> trait, which already contains a <code>translate_addr</code> function that we can use instead of hand-rolling our own. To create a new <code>RecursivePageTable</code>, we create a <code>memory::init</code> function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/memory.rs
@@ -341,8 +332,7 @@ The <code>RecursivePageTable</code> Type</h4>
 <p>Instead of using <code>u64</code> for all addresses we now use the <a href="https://docs.rs/x86_64/0.5.2/x86_64/struct.VirtAddr.html"><code>VirtAddr</code></a> and <a href="https://docs.rs/x86_64/0.5.2/x86_64/struct.PhysAddr.html"><code>PhysAddr</code></a> wrapper types to differentiate the two kinds of addresses. In order to be able to call the <code>translate_addr</code> method, we need to import the <code>MapperAllSizes</code> trait.</p>
 <p>By using the <code>RecursivePageTable</code> type, we now have a safe abstraction and clear ownership semantics. This ensures that we can't accidentally modify the page table concurrently, because an exclusive borrow of the <code>RecursivePageTable</code> is needed in order to modify it.</p>
 <p>When we run it, we see the same result as with our handcrafted translation function.</p>
-<h4 id="making-unsafe-functions-safer"><a class="zola-anchor" href="#making-unsafe-functions-safer" aria-label="Anchor link for: making-unsafe-functions-safer">🔗</a>
-Making Unsafe Functions Safer</h4>
+<h4 id="making-unsafe-functions-safer"><a class="zola-anchor" href="#making-unsafe-functions-safer" aria-label="Anchor link for: making-unsafe-functions-safer">🔗</a>Making Unsafe Functions Safer</h4>
 <p>Our <code>memory::init</code> function is an <a href="https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html#calling-an-unsafe-function-or-method">unsafe function</a>, which means that an <code>unsafe</code> block is required for calling it because the caller has to guarantee that certain requirements are met. In our case, the requirement is that the passed address is mapped to the physical frame of the level 4 page table.</p>
 <p>The second property of unsafe functions is that their complete body is treated as an <code>unsafe</code> block, which means that it can perform all kinds of unsafe operations without additional unsafe blocks. This is the reason that we didn't need an <code>unsafe</code> block for dereferencing the raw <code>level_4_table_ptr</code>:</p>
 <pre style="background-color:#1e1e1e;">
@@ -371,8 +361,7 @@ Making Unsafe Functions Safer</h4>
 }
 </span></pre>
 <p>Now an <code>unsafe</code> block is required again for dereferencing the <code>level_4_table_ptr</code> and we immediately see that this is the only unsafe operations in the function. There is currently an open <a href="https://github.com/rust-lang/rfcs/pull/2585">RFC</a> to change this unfortunate property of unsafe functions that would allow us to avoid the above boilerplate.</p>
-<h3 id="creating-a-new-mapping"><a class="zola-anchor" href="#creating-a-new-mapping" aria-label="Anchor link for: creating-a-new-mapping">🔗</a>
-Creating a new Mapping</h3>
+<h3 id="creating-a-new-mapping"><a class="zola-anchor" href="#creating-a-new-mapping" aria-label="Anchor link for: creating-a-new-mapping">🔗</a>Creating a new Mapping</h3>
 <p>After reading the page tables and creating a translation function, the next step is to create a new mapping in the page table hierarchy.</p>
 <p>The difficulty of creating a new mapping depends on the virtual page that we want to map. In the easiest case, the level 1 page table for the page already exists and we just need to write a single entry. In the most difficult case, the page is in a memory region for that no level 3 exists yet so that we need to create new level 3, level 2 and level 1 page tables first.</p>
 <p>Let's start with the simple case and assume that we don't need to create new page tables. The bootloader loads itself in the first megabyte of the virtual address space, so we know that a valid level 1 table exists for this region. We can choose any unused page in this memory region for our example mapping, for example, the page at address <code>0x1000</code>. As the target frame we use <code>0xb8000</code>, the frame of the VGA text buffer. This way we can easily test whether our mapping worked.</p>
@@ -467,8 +456,7 @@ Creating a new Mapping</h3>
 <span style="color:#dcdcdc;">panicked at &#39;map_to failed: FrameAllocationFailed&#39;, /…/result.rs:999:5
 </span></pre>
 <p>To map pages that don't have a level 1 page table yet we need to create a proper <code>FrameAllocator</code>. But how do we know which frames are unused and how much physical memory is available?</p>
-<h3 id="boot-information"><a class="zola-anchor" href="#boot-information" aria-label="Anchor link for: boot-information">🔗</a>
-Boot Information</h3>
+<h3 id="boot-information"><a class="zola-anchor" href="#boot-information" aria-label="Anchor link for: boot-information">🔗</a>Boot Information</h3>
 <p>The amount of physical memory and the memory regions reserved by devices like the VGA hardware vary between different machines. Only the BIOS or UEFI firmware knows exactly which memory regions can be used by the operating system and which regions are reserved. Both firmware standards provide functions to retrieve the memory map, but they can only be called very early in the boot process. For this reason, the bootloader already queries this and other information from the firmware.</p>
 <p>To communicate this information to our kernel, the bootloader passes a reference to a boot information structure as an argument when calling our <code>_start</code> function. Right now we don't have this argument declared in our function, so it is ignored. Let's add it:</p>
 <pre style="background-color:#1e1e1e;">
@@ -489,8 +477,7 @@ Boot Information</h3>
 <li>The <code>package</code> field is an in-progress feature to bundle additional data with the bootloader. The implementation is not finished, so we can ignore this field for now.</li>
 </ul>
 <p>Before we use the <code>memory_map</code> field to create a proper <code>FrameAllocator</code>, we want to ensure that we can't use a <code>boot_info</code> argument of the wrong type.</p>
-<h4 id="the-entry-point-macro"><a class="zola-anchor" href="#the-entry-point-macro" aria-label="Anchor link for: the-entry-point-macro">🔗</a>
-The <code>entry_point</code> Macro</h4>
+<h4 id="the-entry-point-macro"><a class="zola-anchor" href="#the-entry-point-macro" aria-label="Anchor link for: the-entry-point-macro">🔗</a>The <code>entry_point</code> Macro</h4>
 <p>Since our <code>_start</code> function is called externally from the bootloader, no checking of our function signature occurs. This means that we could let it take arbitrary arguments without any compilation errors, but it would fail or cause undefined behavior at runtime.</p>
 <p>To make sure that the entry point function has always the correct signature that the bootloader expects, the <code>bootloader</code> crate provides an <a href="https://docs.rs/bootloader/0.3.12/bootloader/macro.entry_point.html"><code>entry_point</code></a> macro that provides a type-checked way to define a Rust function as the entry point. Let's rewrite our entry point function to use this macro:</p>
 <pre style="background-color:#1e1e1e;">
@@ -516,8 +503,7 @@ entry_point!(kernel_main);
 </span></pre>
 <p>We no longer need to use <code>extern &quot;C&quot;</code> or <code>no_mangle</code> for our entry point, as the macro defines the real lower level <code>_start</code> entry point for us. The <code>kernel_main</code> function is now a completely normal Rust function, so we can choose an arbitrary name for it. The important thing is that it is type-checked so that a compilation error occurs when we now try to modify the function signature in any way, for example adding an argument or changing the argument type.</p>
 <p>Note that we now pass <code>boot_info.p4_table_addr</code> instead of a hardcoded address to our <code>memory::init</code>. Thus our code continues to work even if a future version of the bootloader chooses a different entry of the level 4 page table for the recursive mapping.</p>
-<h3 id="allocating-frames"><a class="zola-anchor" href="#allocating-frames" aria-label="Anchor link for: allocating-frames">🔗</a>
-Allocating Frames</h3>
+<h3 id="allocating-frames"><a class="zola-anchor" href="#allocating-frames" aria-label="Anchor link for: allocating-frames">🔗</a>Allocating Frames</h3>
 <p>Now that we have access to the memory map through the boot information we can create a proper frame allocator on top. We start with a generic skeleton:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/memory.rs
@@ -599,12 +585,10 @@ Allocating Frames</h3>
 <li>Continue with the next table level.</li>
 </ul>
 <p>While our <code>create_example_mapping</code> function is just some example code, we are now able to create new mappings for arbitrary pages. This will be essential for allocating memory or implementing multithreading in future posts.</p>
-<h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>
-Summary</h2>
+<h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>Summary</h2>
 <p>In this post we learned how a recursive level 4 table entry can be used to map all page table frames to calculatable virtual addresses. We used this technique to implement an address translation function and to create a new mapping in the page tables.</p>
 <p>We saw that the creation of new mappings requires unused frames for creating new page tables. Such a frame allocator can be implemented on top of the boot information structure that the bootloader passes to our kernel.</p>
-<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
-What's next?</h2>
+<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What's next?</h2>
 <p>The next post will create a heap memory region for our kernel, which will allow us to <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html">allocate memory</a> and use various <a href="https://doc.rust-lang.org/alloc/collections/index.html">collection types</a>.</p>
 
 
@@ -643,7 +627,7 @@ What's next?</h2>
             <hr>
             <small>
                 &copy; <time datetime="2019">2019</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;.&#x2F;pages&#x2F;contact.md">Contact</a>
             </small>
         </footer>
     </div>

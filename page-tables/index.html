@@ -108,14 +108,13 @@
     </aside>
 
     <div class="warning">
-        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;second-edition&#x2f;">here</a>.
+        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;second-edition&#x2F;">here</a>.
     </div>
 
     <p>In this post we will create a paging module, which allows us to access and modify the 4-level page table. We will explore recursive page table mapping and use some Rust features to make it safe. Finally we will create functions to translate virtual addresses and to map and unmap pages.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
 <p>You can find the source code and this post itself on <a href="https://github.com/phil-opp/blog_os/tree/first_edition_post_6">GitHub</a>. Please file an issue there if you have any problems or improvement suggestions. There is also a comment section at the end of this page. Note that this post requires a current Rust nightly.</p>
-<h2 id="paging"><a class="zola-anchor" href="#paging" aria-label="Anchor link for: paging">🔗</a>
-Paging</h2>
+<h2 id="paging"><a class="zola-anchor" href="#paging" aria-label="Anchor link for: paging">🔗</a>Paging</h2>
 <p><em>Paging</em> is a memory management scheme that separates virtual and physical memory. The address space is split into equal sized <em>pages</em> and <em>page tables</em> specify which virtual page points to which physical frame. For an extensive paging introduction take a look at the paging chapter (<a href="http://pages.cs.wisc.edu/%7Eremzi/OSTEP/vm-paging.pdf">PDF</a>) of the <a href="http://pages.cs.wisc.edu/%7Eremzi/OSTEP/">Three Easy Pieces</a> OS book.</p>
 <p>The x86 architecture uses a 4-level page table in 64-bit mode. A virtual address has the following structure:</p>
 <p><img src="https://os.phil-opp.com/page-tables/x86_address_structure.svg" alt="structure of a virtual address on x86" /></p>
@@ -124,8 +123,7 @@ Paging</h2>
 <p>To translate an address, the CPU reads the P4 address from the CR3 register. Then it uses the indexes to walk the tables:</p>
 <p><img src="https://os.phil-opp.com/page-tables/X86_Paging_64bit.svg" alt="translation of virtual to physical addresses in 64 bit mode" /></p>
 <p>The P4 entry points to a P3 table, where the next 9 bits of the address are used to select an entry. The P3 entry then points to a P2 table and the P2 entry points to a P1 table. The P1 entry, which is specified through bits 12–20, finally points to the physical frame.</p>
-<h2 id="a-basic-paging-module"><a class="zola-anchor" href="#a-basic-paging-module" aria-label="Anchor link for: a-basic-paging-module">🔗</a>
-A Basic Paging Module</h2>
+<h2 id="a-basic-paging-module"><a class="zola-anchor" href="#a-basic-paging-module" aria-label="Anchor link for: a-basic-paging-module">🔗</a>A Basic Paging Module</h2>
 <p>Let's create a basic paging module in <code>memory/paging/mod.rs</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">memory::</span><span style="color:#b4cea8;">PAGE_SIZE</span><span style="color:#dcdcdc;">; </span><span style="color:#608b4e;">// needed later
@@ -140,8 +138,7 @@ A Basic Paging Module</h2>
 }
 </span></pre>
 <p>We import the <code>PAGE_SIZE</code> and define a constant for the number of entries per table. To make future function signatures more expressive, we can use the type aliases <code>PhysicalAddress</code> and <code>VirtualAddress</code>. The <code>Page</code> struct is similar to the <code>Frame</code> struct in the <a href="https://os.phil-opp.com/allocating-frames/#a-memory-module">previous post</a>, but represents a virtual page instead of a physical frame.</p>
-<h3 id="page-table-entries"><a class="zola-anchor" href="#page-table-entries" aria-label="Anchor link for: page-table-entries">🔗</a>
-Page Table Entries</h3>
+<h3 id="page-table-entries"><a class="zola-anchor" href="#page-table-entries" aria-label="Anchor link for: page-table-entries">🔗</a>Page Table Entries</h3>
 <p>To model page table entries, we create a new <code>entry</code> submodule:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">memory::Frame; </span><span style="color:#608b4e;">// needed later
@@ -160,20 +157,20 @@ Page Table Entries</h3>
 </span></pre>
 <p>We define that an unused entry is completely 0. That allows us to distinguish unused entries from other non-present entries in the future. For example, we could define one of the available bits as the <code>swapped_out</code> bit for pages that are swapped to disk.</p>
 <p>Next we will model the contained physical address and the various flags. Remember, entries have the following format:</p>
-<table><thead><tr><th>Bit(s)                </th><th>Name </th><th>Meaning</th></tr></thead><tbody>
-<tr><td>0 </td><td>present </td><td>the page is currently in memory</td></tr>
-<tr><td>1 </td><td>writable </td><td>it's allowed to write to this page</td></tr>
-<tr><td>2 </td><td>user accessible </td><td>if not set, only kernel mode code can access this page</td></tr>
-<tr><td>3 </td><td>write through caching </td><td>writes go directly to memory</td></tr>
-<tr><td>4 </td><td>disable cache </td><td>no cache is used for this page</td></tr>
-<tr><td>5 </td><td>accessed </td><td>the CPU sets this bit when this page is used</td></tr>
-<tr><td>6 </td><td>dirty </td><td>the CPU sets this bit when a write to this page occurs</td></tr>
-<tr><td>7 </td><td>huge page/null </td><td>must be 0 in P1 and P4, creates a 1GiB page in P3, creates a 2MiB page in P2</td></tr>
-<tr><td>8 </td><td>global </td><td>page isn't flushed from caches on address space switch (PGE bit of CR4 register must be set)</td></tr>
-<tr><td>9-11 </td><td>available </td><td>can be used freely by the OS</td></tr>
-<tr><td>12-51 </td><td>physical address </td><td>the page aligned 52bit physical address of the frame or the next page table</td></tr>
-<tr><td>52-62 </td><td>available </td><td>can be used freely by the OS</td></tr>
-<tr><td>63 </td><td>no execute </td><td>forbid executing code on this page (the NXE bit in the EFER register must be set)</td></tr>
+<table><thead><tr><th>Bit(s)</th><th>Name</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>0</td><td>present</td><td>the page is currently in memory</td></tr>
+<tr><td>1</td><td>writable</td><td>it's allowed to write to this page</td></tr>
+<tr><td>2</td><td>user accessible</td><td>if not set, only kernel mode code can access this page</td></tr>
+<tr><td>3</td><td>write through caching</td><td>writes go directly to memory</td></tr>
+<tr><td>4</td><td>disable cache</td><td>no cache is used for this page</td></tr>
+<tr><td>5</td><td>accessed</td><td>the CPU sets this bit when this page is used</td></tr>
+<tr><td>6</td><td>dirty</td><td>the CPU sets this bit when a write to this page occurs</td></tr>
+<tr><td>7</td><td>huge page/null</td><td>must be 0 in P1 and P4, creates a 1GiB page in P3, creates a 2MiB page in P2</td></tr>
+<tr><td>8</td><td>global</td><td>page isn't flushed from caches on address space switch (PGE bit of CR4 register must be set)</td></tr>
+<tr><td>9-11</td><td>available</td><td>can be used freely by the OS</td></tr>
+<tr><td>12-51</td><td>physical address</td><td>the page aligned 52bit physical address of the frame or the next page table</td></tr>
+<tr><td>52-62</td><td>available</td><td>can be used freely by the OS</td></tr>
+<tr><td>63</td><td>no execute</td><td>forbid executing code on this page (the NXE bit in the EFER register must be set)</td></tr>
 </tbody></table>
 <p>To model the various flags, we will use the <a href="https://github.com/rust-lang-nursery/bitflags">bitflags</a> crate. To add it as a dependency, add the following to your <code>Cargo.toml</code>:</p>
 <pre style="background-color:#1e1e1e;">
@@ -241,8 +238,7 @@ Page Table Entries</h3>
 </span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>We add it to the <code>impl Frame</code> block in <code>memory/mod.rs</code>.</p>
-<h3 id="page-tables"><a class="zola-anchor" href="#page-tables" aria-label="Anchor link for: page-tables">🔗</a>
-Page Tables</h3>
+<h3 id="page-tables"><a class="zola-anchor" href="#page-tables" aria-label="Anchor link for: page-tables">🔗</a>Page Tables</h3>
 <p>To model page tables, we create a basic <code>Table</code> struct in a new <code>table</code> submodule:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">memory::paging::entry::</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">;
@@ -282,14 +278,12 @@ Page Tables</h3>
 </span></pre>
 <p>Now we can read page tables and retrieve the mapping information. We can also update them through the <code>IndexMut</code> trait and the <code>Entry::set</code> method. But how do we get references to the various page tables?</p>
 <p>We could read the <code>CR3</code> register to get the physical address of the P4 table and read its entries to get the P3 addresses. The P3 entries then point to the P2 tables and so on. But this method only works for identity-mapped pages. In the future we will create new page tables, which aren't in the identity-mapped area anymore. Since we can't access them through their physical address, we need a way to map them to virtual addresses.</p>
-<h2 id="mapping-page-tables"><a class="zola-anchor" href="#mapping-page-tables" aria-label="Anchor link for: mapping-page-tables">🔗</a>
-Mapping Page Tables</h2>
+<h2 id="mapping-page-tables"><a class="zola-anchor" href="#mapping-page-tables" aria-label="Anchor link for: mapping-page-tables">🔗</a>Mapping Page Tables</h2>
 <p>So how do we map the page tables itself? We don't have that problem for the current P4, P3, and P2 table since they are part of the identity-mapped area, but we need a way to access future tables, too.</p>
 <p>One solution is to identity map all page tables. That way we would not need to differentiate virtual and physical addresses and could easily access the tables. But it clutters the virtual address space and increases fragmentation. And it makes creating page tables much more complicated since we need a physical frame whose corresponding page isn't already used for something else.</p>
 <p>An alternative solution is to map the page tables only temporary. To read/write a page table, we would map it to some free virtual address until we're done. We could use a small pool of such virtual addresses and reuse them for various tables. This method occupies only few virtual addresses and thus is a good solution for 32-bit systems, which have small address spaces. But it makes things much more complicated since we need to temporary map up to 4 tables to access a single page. And the temporary mapping requires modification of other page tables, which need to be mapped, too.</p>
 <p>We will solve the problem in another way using a trick called <em>recursive mapping</em>.</p>
-<h3 id="recursive-mapping"><a class="zola-anchor" href="#recursive-mapping" aria-label="Anchor link for: recursive-mapping">🔗</a>
-Recursive Mapping</h3>
+<h3 id="recursive-mapping"><a class="zola-anchor" href="#recursive-mapping" aria-label="Anchor link for: recursive-mapping">🔗</a>Recursive Mapping</h3>
 <p>The trick is to map the P4 table recursively: The last entry doesn't point to a P3 table, but to the P4 table itself. We can use this entry to remove a translation level so that we land on a page table instead. For example, we can “loop” once to access a P1 table:</p>
 <p><img src="https://os.phil-opp.com/page-tables/recursive_mapping_access_p1.svg" alt="access P1 table through recursive paging" /></p>
 <p>By selecting the 511th P4 entry, which points points to the P4 table itself, the P4 table is used as the P3 table. Similarly, the P3 table is used as a P2 table and the P2 table is treated like a P1 table. Thus the P1 table becomes the target page and can be accessed through the offset.</p>
@@ -301,8 +295,7 @@ Recursive Mapping</h3>
 <p>So we can access and modify page tables of all levels by just setting one P4 entry once. Most work is done by the CPU, we just the recursive entry to remove one or more translation levels. It may seem a bit strange at first, but it's a clean and simple solution once you wrapped your head around it.</p>
 <p>By using recursive mapping, each page table is accessible through an unique virtual address. The math checks out, too: If all page tables are used, there is 1 P4 table, 511 P3 tables (the last entry is used for the recursive mapping), <code>511*512</code> P2 tables, and <code>511*512*512</code> P1 tables. So there are <code>134217728</code> page tables altogether. Each page table occupies 4KiB, so we need <code>134217728 * 4KiB = 512GiB</code> to store them. That's exactly the amount of memory that can be accessed through one P4 entry since <code>4KiB per page * 512 P1 entries * 512 P2 entries * 512 P3 entries = 512GiB</code>.</p>
 <p>Of course recursive mapping has some disadvantages, too. It occupies a P4 entry and thus 512GiB of the virtual address space. But since we're in long mode and have a 48-bit address space, there are still 225.5TiB left. The bigger problem is that only the active table can be modified by default. To access another table, the recursive entry needs to be replaced temporary. We will tackle this problem in the next post when we switch to a new page table.</p>
-<h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>
-Implementation</h3>
+<h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h3>
 <p>To map the P4 table recursively, we just need to point the 511th entry to the table itself. Of course we could do it in Rust, but it would require some fiddling with unsafe pointers. It's easier to just add some lines to our boot assembly:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">mov </span><span style="color:#dcdcdc;">eax, p4_table
@@ -316,17 +309,16 @@ Implementation</h3>
 </span></pre>
 <p>Let's switch to the octal system, since it makes more sense for the other special addresses. The P4 address from above is equivalent to <code>0o177777_777_777_777_777_0000</code> in octal. You can see that is has index <code>777</code> in all tables and offset <code>0000</code>. The <code>177777</code> bits on the left are the sign extension bits, which are copies of the 47th bit. They are required because x86 only uses 48bit virtual addresses.</p>
 <p>The other tables can be accessed through the following addresses:</p>
-<table><thead><tr><th>Table </th><th>Address                         </th><th>Indexes</th></tr></thead><tbody>
-<tr><td>P4    </td><td><code>0o177777_777_777_777_777_0000</code> </td><td>–</td></tr>
-<tr><td>P3    </td><td><code>0o177777_777_777_777_XXX_0000</code> </td><td><code>XXX</code> is the P4 index</td></tr>
-<tr><td>P2    </td><td><code>0o177777_777_777_XXX_YYY_0000</code> </td><td>like above, and <code>YYY</code> is the P3 index</td></tr>
-<tr><td>P1    </td><td><code>0o177777_777_XXX_YYY_ZZZ_0000</code> </td><td>like above, and <code>ZZZ</code> is the P2 index</td></tr>
+<table><thead><tr><th>Table</th><th>Address</th><th>Indexes</th></tr></thead><tbody>
+<tr><td>P4</td><td><code>0o177777_777_777_777_777_0000</code></td><td>–</td></tr>
+<tr><td>P3</td><td><code>0o177777_777_777_777_XXX_0000</code></td><td><code>XXX</code> is the P4 index</td></tr>
+<tr><td>P2</td><td><code>0o177777_777_777_XXX_YYY_0000</code></td><td>like above, and <code>YYY</code> is the P3 index</td></tr>
+<tr><td>P1</td><td><code>0o177777_777_XXX_YYY_ZZZ_0000</code></td><td>like above, and <code>ZZZ</code> is the P2 index</td></tr>
 </tbody></table>
 <p>If we look closely, we can see that the P3 address is equal to <code>(P4 &lt;&lt; 9) | XXX_0000</code>. And the P2 address is calculated through <code>(P3 &lt;&lt; 9) | YYY_0000</code>. So to get the next address, we need to shift it 9 bits to the left and add the table index. As a formula:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">next_table_address = (table_address &lt;&lt; 9) | (index &lt;&lt; 12)
-</span></pre><h3 id="the-next-table-methods"><a class="zola-anchor" href="#the-next-table-methods" aria-label="Anchor link for: the-next-table-methods">🔗</a>
-The <code>next_table</code> Methods</h3>
+</span></pre><h3 id="the-next-table-methods"><a class="zola-anchor" href="#the-next-table-methods" aria-label="Anchor link for: the-next-table-methods">🔗</a>The <code>next_table</code> Methods</h3>
 <p>Let's add the above formula as a <code>Table</code> method:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">next_table_address(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self, index: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">) -&gt; Option&lt;</span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">&gt; {
@@ -363,8 +355,7 @@ The <code>next_table</code> Methods</h3>
 {</span><span style="color:#569cd6;">...</span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>Note the additional lifetime parameters, which are identical for input and output references. That's exactly what we want. It ensures that we can't modify tables as long as we have references to lower tables. For example, it would be very bad if we could unmap a P3 table if we still write to one of its P2 tables.</p>
-<h4 id="safety"><a class="zola-anchor" href="#safety" aria-label="Anchor link for: safety">🔗</a>
-Safety</h4>
+<h4 id="safety"><a class="zola-anchor" href="#safety" aria-label="Anchor link for: safety">🔗</a>Safety</h4>
 <p>Now we can start at the <code>P4</code> constant and use the <code>next_table</code> functions to access the lower tables. And we don't even need <code>unsafe</code> blocks to do it! Right now, your alarm bells should be ringing. Thanks to Rust, everything we've done before in this post was completely safe. But we just introduced two unsafe blocks to convince Rust that there are valid tables at the specified addresses. Can we really be sure?</p>
 <p>First, these addresses are only valid if the P4 table is mapped recursively. Since the paging module will be the only module that modifies page tables, we can introduce an invariant for the module:</p>
 <blockquote>
@@ -373,8 +364,7 @@ Safety</h4>
 <p>So if we switch to another P4 table at some time, it needs to be identity mapped <em>before</em> it becomes active. As long as we obey this invariant, we can safely use the special addresses. But even with this invariant, there is a big problem with the two methods:</p>
 <p><em>What happens if we call them on a P1 table?</em></p>
 <p>Well, they would calculate the address of the next table (which does not exist) and treat it as a page table. Either they construct an invalid address (if <code>XXX &lt; 400</code>)<sup class="footnote-reference"><a href="#fn-invalid-address">1</a></sup> or access the mapped page itself. That way, we could easily corrupt memory or cause CPU exceptions by accident. So these two functions are not <em>safe</em> in Rust terms. Thus we need to make them <code>unsafe</code> functions unless we find some clever solution.</p>
-<h2 id="some-clever-solution"><a class="zola-anchor" href="#some-clever-solution" aria-label="Anchor link for: some-clever-solution">🔗</a>
-Some Clever Solution</h2>
+<h2 id="some-clever-solution"><a class="zola-anchor" href="#some-clever-solution" aria-label="Anchor link for: some-clever-solution">🔗</a>Some Clever Solution</h2>
 <p>We can use Rust's type system to statically guarantee that the <code>next_table</code> methods can only be called on P4, P3, and P2 tables, but not on a P1 table. The idea is to add a <code>Level</code> parameter to the <code>Table</code> type and implement the <code>next_table</code> methods only for level 4, 3, and 2.</p>
 <p>To model the levels we use a trait and empty enums:</p>
 <pre style="background-color:#1e1e1e;">
@@ -469,8 +459,7 @@ impl</span><span style="color:#dcdcdc;">&lt;L&gt; Table&lt;L&gt; </span><span st
   in the current scope
 </span></pre>
 <p>Remember that this is bare metal kernel code. We just used type system magic to make low-level page table manipulations safer. Rust is just awesome!</p>
-<h2 id="translating-addresses"><a class="zola-anchor" href="#translating-addresses" aria-label="Anchor link for: translating-addresses">🔗</a>
-Translating Addresses</h2>
+<h2 id="translating-addresses"><a class="zola-anchor" href="#translating-addresses" aria-label="Anchor link for: translating-addresses">🔗</a>Translating Addresses</h2>
 <p>Now let's do something useful with our new module. We will create a function that translates a virtual address to the corresponding physical address. We add it to the <code>paging/mod.rs</code> module:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">translate(virtual_address: VirtualAddress)
@@ -537,11 +526,9 @@ valid address:   0xffff_8000_0000_0000
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">p1_index(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) -&gt; </span><span style="color:#569cd6;">usize </span><span style="color:#dcdcdc;">{
     (self.number </span><span style="color:#569cd6;">&gt;&gt; </span><span style="color:#b5cea8;">0</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777
 </span><span style="color:#dcdcdc;">}
-</span></pre><h3 id="safety-1"><a class="zola-anchor" href="#safety-1" aria-label="Anchor link for: safety-1">🔗</a>
-Safety</h3>
+</span></pre><h3 id="safety-1"><a class="zola-anchor" href="#safety-1" aria-label="Anchor link for: safety-1">🔗</a>Safety</h3>
 <p>We use an <code>unsafe</code> block to convert the raw <code>P4</code> pointer into a shared reference. It's safe because we don't create any <code>&amp;mut</code> references to the table right now and don't switch the P4 table either. But as soon as we do something like that, we have to revisit this method.</p>
-<h3 id="huge-pages"><a class="zola-anchor" href="#huge-pages" aria-label="Anchor link for: huge-pages">🔗</a>
-Huge Pages</h3>
+<h3 id="huge-pages"><a class="zola-anchor" href="#huge-pages" aria-label="Anchor link for: huge-pages">🔗</a>Huge Pages</h3>
 <p>The <code>huge_page</code> closure calculates the corresponding frame if huge pages are used. Its content looks like this:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">p3.and_then(|p3| {
@@ -574,8 +561,7 @@ Huge Pages</h3>
   })
 </span></pre>
 <p>This function is much longer and more complex than the <code>translate_page</code> function itself. To avoid this complexity in the future, we will only work with standard 4KiB pages from now on.</p>
-<h2 id="mapping-pages"><a class="zola-anchor" href="#mapping-pages" aria-label="Anchor link for: mapping-pages">🔗</a>
-Mapping Pages</h2>
+<h2 id="mapping-pages"><a class="zola-anchor" href="#mapping-pages" aria-label="Anchor link for: mapping-pages">🔗</a>Mapping Pages</h2>
 <p>Let's add a function that modifies the page tables to map a <code>Page</code> to a <code>Frame</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">pub use </span><span style="color:#dcdcdc;">self::entry::</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">;
@@ -616,12 +602,10 @@ Mapping Pages</h2>
 }
 </span></pre>
 <p>We can use <code>unwrap()</code> here since the next table definitely exists.</p>
-<h3 id="safety-2"><a class="zola-anchor" href="#safety-2" aria-label="Anchor link for: safety-2">🔗</a>
-Safety</h3>
+<h3 id="safety-2"><a class="zola-anchor" href="#safety-2" aria-label="Anchor link for: safety-2">🔗</a>Safety</h3>
 <p>We used an <code>unsafe</code> block in <code>map_to</code> to convert the raw <code>P4</code> pointer to a <code>&amp;mut</code> reference. That's bad. It's now possible that the <code>&amp;mut</code> reference is not exclusive, which breaks Rust's guarantees. It's only a matter time before we run into a data race. For example, imagine that one thread maps an entry to <code>frame_A</code> and another thread (on the same core) tries to map the same entry to <code>frame_B</code>.</p>
 <p>The problem is that there's no clear <em>owner</em> for the page tables. So let's define page table ownership!</p>
-<h3 id="page-table-ownership"><a class="zola-anchor" href="#page-table-ownership" aria-label="Anchor link for: page-table-ownership">🔗</a>
-Page Table Ownership</h3>
+<h3 id="page-table-ownership"><a class="zola-anchor" href="#page-table-ownership" aria-label="Anchor link for: page-table-ownership">🔗</a>Page Table Ownership</h3>
 <p>We define the following:</p>
 <blockquote>
 <p>A page table owns all of its subtables.</p>
@@ -696,8 +680,7 @@ Page Table Ownership</h3>
 }
 </span></pre>
 <p>Now the <code>p4()</code> and <code>p4_mut()</code> methods should be the only methods containing an <code>unsafe</code> block in the <code>paging/mod.rs</code> file.</p>
-<h3 id="more-mapping-functions"><a class="zola-anchor" href="#more-mapping-functions" aria-label="Anchor link for: more-mapping-functions">🔗</a>
-More Mapping Functions</h3>
+<h3 id="more-mapping-functions"><a class="zola-anchor" href="#more-mapping-functions" aria-label="Anchor link for: more-mapping-functions">🔗</a>More Mapping Functions</h3>
 <p>For convenience, we add a <code>map</code> method that just picks a free frame for us:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">map&lt;A&gt;(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self, page: Page, flags: EntryFlags, allocator: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> A)
@@ -718,8 +701,7 @@ More Mapping Functions</h3>
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> page </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Page::containing_address(frame.start_address());
     self.map_to(page, frame, flags, allocator)
 }
-</span></pre><h3 id="unmapping-pages"><a class="zola-anchor" href="#unmapping-pages" aria-label="Anchor link for: unmapping-pages">🔗</a>
-Unmapping Pages</h3>
+</span></pre><h3 id="unmapping-pages"><a class="zola-anchor" href="#unmapping-pages" aria-label="Anchor link for: unmapping-pages">🔗</a>Unmapping Pages</h3>
 <p>To unmap a page, we set the corresponding P1 entry to unused:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">unmap&lt;A&gt;(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self, page: Page, allocator: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> A)
@@ -741,8 +723,7 @@ Unmapping Pages</h3>
 <p>The assertion ensures that the page is mapped. Thus the corresponding P1 table and frame must exist for a standard 4KiB page. We set the entry to unused and free the associated frame in the supplied frame allocator.</p>
 <p>We can also free the P1, P2, or even P3 table when the last entry is freed. But checking the whole table on every <code>unmap</code> would be very expensive. So we leave the <code>TODO</code> in place until we find a good solution. I'm open for suggestions :).</p>
 <p><em>Spoiler</em>: There is an ugly bug in this function, which we will find in the next section.</p>
-<h2 id="testing-and-bugfixing"><a class="zola-anchor" href="#testing-and-bugfixing" aria-label="Anchor link for: testing-and-bugfixing">🔗</a>
-Testing and Bugfixing</h2>
+<h2 id="testing-and-bugfixing"><a class="zola-anchor" href="#testing-and-bugfixing" aria-label="Anchor link for: testing-and-bugfixing">🔗</a>Testing and Bugfixing</h2>
 <p>To test it, we add a <code>test_paging</code> function in <code>memory/paging/mod.rs</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">test_paging&lt;A&gt;(allocator: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> A)
@@ -761,8 +742,7 @@ Testing and Bugfixing</h2>
 </span><span style="color:#608b4e;">// lib.rs
 </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator </span><span style="color:#569cd6;">= ...</span><span style="color:#dcdcdc;">;
 memory::test_paging(</span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> frame_allocator);
-</span></pre><h3 id="map-to"><a class="zola-anchor" href="#map-to" aria-label="Anchor link for: map-to">🔗</a>
-map_to</h3>
+</span></pre><h3 id="map-to"><a class="zola-anchor" href="#map-to" aria-label="Anchor link for: map-to">🔗</a>map_to</h3>
 <p>Let's test the <code>map_to</code> function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> addr </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">42 </span><span style="color:#569cd6;">* </span><span style="color:#b5cea8;">512 </span><span style="color:#569cd6;">* </span><span style="color:#b5cea8;">512 </span><span style="color:#569cd6;">* </span><span style="color:#b5cea8;">4096</span><span style="color:#dcdcdc;">; </span><span style="color:#608b4e;">// 42th P3 entry
@@ -783,8 +763,7 @@ Some = Some(0)
 next free frame: Some(Frame { number: 3 })
 </span></pre>
 <p>It's frame 0 because it's the first frame returned by the frame allocator. Since we map the 42th P3 entry, the mapping code needs to create a P2 and a P1 table. So the next free frame returned by the allocator is frame 3.</p>
-<h3 id="unmap"><a class="zola-anchor" href="#unmap" aria-label="Anchor link for: unmap">🔗</a>
-unmap</h3>
+<h3 id="unmap"><a class="zola-anchor" href="#unmap" aria-label="Anchor link for: unmap">🔗</a>unmap</h3>
 <p>To test the <code>unmap</code> function, we unmap the test page so that it translates to <code>None</code> again:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">page_table.unmap(Page::containing_address(addr), allocator);
@@ -821,8 +800,7 @@ println!(</span><span style="color:#d69d85;">&quot;None = </span><span style="co
 </span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>Now the desired page fault occurs even when we access the page before.</p>
-<h2 id="conclusion"><a class="zola-anchor" href="#conclusion" aria-label="Anchor link for: conclusion">🔗</a>
-Conclusion</h2>
+<h2 id="conclusion"><a class="zola-anchor" href="#conclusion" aria-label="Anchor link for: conclusion">🔗</a>Conclusion</h2>
 <p>This post has become pretty long. So let's summarize what we've done:</p>
 <ul>
 <li>we created a paging module and modeled page tables plus entries</li>
@@ -832,13 +810,11 @@ Conclusion</h2>
 <li>we created safe functions to map and unmap pages</li>
 <li>and we fixed stack overflow and TLB related bugs</li>
 </ul>
-<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
-What's next?</h2>
+<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What's next?</h2>
 <p>In the <a href="https://os.phil-opp.com/remap-the-kernel/">next post</a> we will extend this module and add a function to modify inactive page tables. Through that function, we will create a new page table hierarchy that maps the kernel correctly using 4KiB pages. Then we will switch to the new table to get a safer kernel environment.</p>
 <p>Afterwards, we will use this paging module to build a heap allocator. This will allow us to use allocation and collection types such as <code>Box</code> and <code>Vec</code>.</p>
 <p><small>Image sources: <sup class="footnote-reference"><a href="#virtual_physical_translation_source">2</a></sup></small></p>
-<h2 id="footnotes"><a class="zola-anchor" href="#footnotes" aria-label="Anchor link for: footnotes">🔗</a>
-Footnotes</h2>
+<h2 id="footnotes"><a class="zola-anchor" href="#footnotes" aria-label="Anchor link for: footnotes">🔗</a>Footnotes</h2>
 <div class="footnote-definition" id="fn-invalid-address"><sup class="footnote-definition-label">1</sup>
 <p>If the <code>XXX</code> part of the address is smaller than <code>0o400</code>, it's binary representation doesn't start with <code>1</code>. But the sign extension bits, which should be a copy of that bit, are <code>1</code> instead of <code>0</code>. Thus the address is not valid.</p>
 </div>
@@ -1417,7 +1393,7 @@ Footnotes</h2>
             <hr>
             <small>
                 &copy; <time datetime="2017">2017</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;.&#x2F;pages&#x2F;contact.md">Contact</a>
             </small>
         </footer>
     </div>

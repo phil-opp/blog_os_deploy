@@ -69,28 +69,26 @@
     </aside>
 
     <div class="warning">
-        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;second-edition&#x2f;">here</a>.
+        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;second-edition&#x2F;">here</a>.
     </div>
 
     <p>This post explains how to create a minimal x86 operating system kernel using the Multiboot standard. In fact, it will just boot and print <code>OK</code> to the screen. In subsequent blog posts we will extend it using the <a href="http://www.rust-lang.org/">Rust</a> programming language.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
 <p>I tried to explain everything in detail and to keep the code as simple as possible. If you have any questions, suggestions or other issues, please leave a comment or <a href="https://github.com/phil-opp/blog_os/issues">create an issue</a> on Github. The source code is available in a <a href="https://github.com/phil-opp/blog_os/tree/first_edition_post_1/src/arch/x86_64">repository</a>, too.</p>
 <p>Note that this tutorial is written mainly for Linux. For some known problems on OS X see the comment section and <a href="https://github.com/phil-opp/blog_os/issues/55">this issue</a>. If you want to use a virtual Linux machine, you can find instructions and a Vagrantfile in Ashley Willams's <a href="https://github.com/ashleygwilliams/x86-kernel">x86-kernel repository</a>.</p>
-<h2 id="overview"><a class="zola-anchor" href="#overview" aria-label="Anchor link for: overview">🔗</a>
-Overview</h2>
+<h2 id="overview"><a class="zola-anchor" href="#overview" aria-label="Anchor link for: overview">🔗</a>Overview</h2>
 <p>When you turn on a computer, it loads the <a href="https://en.wikipedia.org/wiki/BIOS">BIOS</a> from some special flash memory. The BIOS runs self test and initialization routines of the hardware, then it looks for bootable devices. If it finds one, the control is transferred to its <em>bootloader</em>, which is a small portion of executable code stored at the device's beginning. The bootloader has to determine the location of the kernel image on the device and load it into memory. It also needs to switch the CPU to the so-called <a href="https://en.wikipedia.org/wiki/Protected_mode">protected mode</a> because x86 CPUs start in the very limited <a href="http://wiki.osdev.org/Real_Mode">real mode</a> by default (to be compatible to programs from 1978).</p>
 <p>We won't write a bootloader because that would be a complex project on its own (if you really want to do it, check out <a href="http://wiki.osdev.org/Rolling_Your_Own_Bootloader"><em>Rolling Your Own Bootloader</em></a>). Instead we will use one of the <a href="https://en.wikipedia.org/wiki/Comparison_of_boot_loaders">many well-tested bootloaders</a> out there to boot our kernel from a CD-ROM. But which one?</p>
-<h2 id="multiboot"><a class="zola-anchor" href="#multiboot" aria-label="Anchor link for: multiboot">🔗</a>
-Multiboot</h2>
+<h2 id="multiboot"><a class="zola-anchor" href="#multiboot" aria-label="Anchor link for: multiboot">🔗</a>Multiboot</h2>
 <p>Fortunately there is a bootloader standard: the <a href="https://en.wikipedia.org/wiki/Multiboot_Specification">Multiboot Specification</a>. Our kernel just needs to indicate that it supports Multiboot and every Multiboot-compliant bootloader can boot it. We will use the Multiboot 2 specification (<a href="http://nongnu.askapache.com/grub/phcoder/multiboot.pdf">PDF</a>) together with the well-known <a href="http://wiki.osdev.org/GRUB_2">GRUB 2</a> bootloader.</p>
 <p>To indicate our Multiboot 2 support to the bootloader, our kernel must start with a <em>Multiboot Header</em>, which has the following format:</p>
-<table><thead><tr><th>Field         </th><th>Type            </th><th>Value</th></tr></thead><tbody>
-<tr><td>magic number  </td><td>u32             </td><td><code>0xE85250D6</code></td></tr>
-<tr><td>architecture  </td><td>u32             </td><td><code>0</code> for i386, <code>4</code> for MIPS</td></tr>
-<tr><td>header length </td><td>u32             </td><td>total header size, including tags</td></tr>
-<tr><td>checksum      </td><td>u32             </td><td><code>-(magic + architecture + header_length)</code></td></tr>
-<tr><td>tags          </td><td>variable        </td><td></td></tr>
-<tr><td>end tag       </td><td>(u16, u16, u32) </td><td><code>(0, 0, 8)</code></td></tr>
+<table><thead><tr><th>Field</th><th>Type</th><th>Value</th></tr></thead><tbody>
+<tr><td>magic number</td><td>u32</td><td><code>0xE85250D6</code></td></tr>
+<tr><td>architecture</td><td>u32</td><td><code>0</code> for i386, <code>4</code> for MIPS</td></tr>
+<tr><td>header length</td><td>u32</td><td>total header size, including tags</td></tr>
+<tr><td>checksum</td><td>u32</td><td><code>-(magic + architecture + header_length)</code></td></tr>
+<tr><td>tags</td><td>variable</td><td></td></tr>
+<tr><td>end tag</td><td>(u16, u16, u32)</td><td><code>(0, 0, 8)</code></td></tr>
 </tbody></table>
 <p>Converted to a x86 assembly file it looks like this (Intel syntax):</p>
 <pre style="background-color:#1e1e1e;">
@@ -124,8 +122,7 @@ header_start:
 0000000    50d6    e852    0000    0000    0018    0000    af12    17ad
 0000010    0000    0000    0008    0000
 0000018
-</span></pre><h2 id="the-boot-code"><a class="zola-anchor" href="#the-boot-code" aria-label="Anchor link for: the-boot-code">🔗</a>
-The Boot Code</h2>
+</span></pre><h2 id="the-boot-code"><a class="zola-anchor" href="#the-boot-code" aria-label="Anchor link for: the-boot-code">🔗</a>The Boot Code</h2>
 <p>To boot our kernel, we must add some code that the bootloader can call. Let's create a file named <code>boot.asm</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">global start
@@ -155,8 +152,7 @@ start:</span><span style="color:#608b4e;">
 00000000  C70500800B004B2F  mov dword [dword 0xb8000],0x2f4b2f4f
          -4F2F
 0000000A  F4                hlt
-</span></pre><h2 id="building-the-executable"><a class="zola-anchor" href="#building-the-executable" aria-label="Anchor link for: building-the-executable">🔗</a>
-Building the Executable</h2>
+</span></pre><h2 id="building-the-executable"><a class="zola-anchor" href="#building-the-executable" aria-label="Anchor link for: building-the-executable">🔗</a>Building the Executable</h2>
 <p>To boot our executable later through GRUB, it should be an <a href="https://en.wikipedia.org/wiki/Executable_and_Linkable_Format">ELF</a> executable. So we want <code>nasm</code> to create ELF <a href="http://wiki.osdev.org/Object_Files">object files</a> instead of plain binaries. To do that, we simply pass the <code>‑f elf64</code> argument to it.</p>
 <p>To create the ELF <em>executable</em>, we need to <a href="https://en.wikipedia.org/wiki/Linker_(computing)">link</a> the object files together. We use a custom <a href="https://sourceware.org/binutils/docs/ld/Scripts.html">linker script</a> named <code>linker.ld</code>:</p>
 <pre style="background-color:#1e1e1e;">
@@ -205,8 +201,7 @@ Idx Name      Size      VMA               LMA               File off  Algn
               CONTENTS, ALLOC, LOAD, READONLY, CODE
 </span></pre>
 <p><em>Note</em>: The <code>ld</code> and <code>objdump</code> commands are platform specific. If you're <em>not</em> working on x86_64 architecture, you will need to <a href="https://os.phil-opp.com/cross-compile-binutils/">cross compile binutils</a>. Then use <code>x86_64‑elf‑ld</code> and <code>x86_64‑elf‑objdump</code> instead of <code>ld</code> and <code>objdump</code>.</p>
-<h2 id="creating-the-iso"><a class="zola-anchor" href="#creating-the-iso" aria-label="Anchor link for: creating-the-iso">🔗</a>
-Creating the ISO</h2>
+<h2 id="creating-the-iso"><a class="zola-anchor" href="#creating-the-iso" aria-label="Anchor link for: creating-the-iso">🔗</a>Creating the ISO</h2>
 <p>All PC BIOSes know how to boot from a CD-ROM, so we want to create a bootable CD-ROM image, containing our kernel and the GRUB bootloader's files, in a single file called an <a href="https://en.wikipedia.org/wiki/ISO_image">ISO</a>. Make the following directory structure and copy the <code>kernel.bin</code> to the right place:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">isofiles
@@ -237,8 +232,7 @@ menuentry &quot;my os&quot; {
 <li>If you're using an EFI-system, <code>grub-mkrescue</code> tries to create an EFI image by default. You can either pass <code>-d /usr/lib/grub/i386-pc</code> to avoid EFI or install the <code>mtools</code> package to get a working EFI image</li>
 <li>on some system the command is named <code>grub2-mkrescue</code></li>
 </ul>
-<h2 id="booting"><a class="zola-anchor" href="#booting" aria-label="Anchor link for: booting">🔗</a>
-Booting</h2>
+<h2 id="booting"><a class="zola-anchor" href="#booting" aria-label="Anchor link for: booting">🔗</a>Booting</h2>
 <p>Now it's time to boot our OS. We will use <a href="https://en.wikipedia.org/wiki/QEMU">QEMU</a>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">qemu-system-x86_64 -cdrom os.iso
@@ -254,8 +248,7 @@ Booting</h2>
 <li>our kernel prints the green <code>OK</code> and stops the CPU</li>
 </ol>
 <p>You can test it on real hardware, too. Just burn the ISO to a disk or USB stick and boot from it.</p>
-<h2 id="build-automation"><a class="zola-anchor" href="#build-automation" aria-label="Anchor link for: build-automation">🔗</a>
-Build Automation</h2>
+<h2 id="build-automation"><a class="zola-anchor" href="#build-automation" aria-label="Anchor link for: build-automation">🔗</a>Build Automation</h2>
 <p>Right now we need to execute 4 commands in the right order every time we change a file. That's bad. So let's automate the build using a <code>Makefile</code>. But first we should create some clean directory structure for our source files to separate the architecture specific files:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">…
@@ -315,11 +308,9 @@ build/arch/</span><span style="color:#569cd6;">$(</span><span style="color:#dcdc
 <li>if you're using <a href="https://os.phil-opp.com/cross-compile-binutils/">cross-compiled binutils</a> just replace <code>ld</code> with <code>x86_64‑elf‑ld</code></li>
 </ul>
 <p>Now we can invoke <code>make</code> and all updated assembly files are compiled and linked. The <code>make iso</code> command also creates the ISO image and <code>make run</code> will additionally start QEMU.</p>
-<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
-What's next?</h2>
+<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What's next?</h2>
 <p>In the <a href="https://os.phil-opp.com/entering-longmode/">next post</a> we will create a page table and do some CPU configuration to switch to the 64-bit <a href="https://en.wikipedia.org/wiki/Long_mode">long mode</a>.</p>
-<h2 id="footnotes"><a class="zola-anchor" href="#footnotes" aria-label="Anchor link for: footnotes">🔗</a>
-Footnotes</h2>
+<h2 id="footnotes"><a class="zola-anchor" href="#footnotes" aria-label="Anchor link for: footnotes">🔗</a>Footnotes</h2>
 <div class="footnote-definition" id="fn-checksum_hack"><sup class="footnote-definition-label">1</sup>
 <p>The formula from the table, <code>-(magic + architecture + header_length)</code>, creates a negative value that doesn't fit into 32bit. By subtracting from <code>0x100000000</code> (= 2^(32)) instead, we keep the value positive without changing its truncated value. Without the additional sign bit(s) the result fits into 32bit and the compiler is happy :).</p>
 </div>
@@ -1399,7 +1390,7 @@ Footnotes</h2>
             <hr>
             <small>
                 &copy; <time datetime="2017">2017</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;.&#x2F;pages&#x2F;contact.md">Contact</a>
             </small>
         </footer>
     </div>

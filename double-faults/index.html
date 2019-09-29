@@ -74,18 +74,16 @@
     </aside>
 
     <div class="warning">
-        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;second-edition&#x2f;">here</a>.
+        <b>No longer updated!</b> You are viewing the a post of the first edition of “Writing an OS in Rust”, which is no longer updated. You can find the second edition <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;second-edition&#x2F;">here</a>.
     </div>
 
     <p>In this post we explore double faults in detail. We also set up an <em>Interrupt Stack Table</em> to catch double faults on a separate kernel stack. This way, we can completely prevent triple faults, even on kernel stack overflow.</p>
 <p id="zola-continue-reading"><a name="continue-reading"></a></p>
 <p>As always, the complete source code is available on <a href="https://github.com/phil-opp/blog_os/tree/first_edition_post_10">GitHub</a>. Please file <a href="https://github.com/phil-opp/blog_os/issues">issues</a> for any problems, questions, or improvement suggestions. There is also a <a href="https://gitter.im/phil-opp/blog_os">gitter chat</a> and a comment section at the end of this page.</p>
-<h2 id="what-is-a-double-fault"><a class="zola-anchor" href="#what-is-a-double-fault" aria-label="Anchor link for: what-is-a-double-fault">🔗</a>
-What is a Double Fault?</h2>
+<h2 id="what-is-a-double-fault"><a class="zola-anchor" href="#what-is-a-double-fault" aria-label="Anchor link for: what-is-a-double-fault">🔗</a>What is a Double Fault?</h2>
 <p>In simplified terms, a double fault is a special exception that occurs when the CPU fails to invoke an exception handler. For example, it occurs when a page fault is triggered but there is no page fault handler registered in the <a href="https://os.phil-opp.com/handling-exceptions/#the-interrupt-descriptor-table">Interrupt Descriptor Table</a> (IDT). So it's kind of similar to catch-all blocks in programming languages with exceptions, e.g. <code>catch(...)</code> in C++ or <code>catch(Exception e)</code> in Java or C#.</p>
 <p>A double fault behaves like a normal exception. It has the vector number <code>8</code> and we can define a normal handler function for it in the IDT. It is really important to provide a double fault handler, because if a double fault is unhandled a fatal <em>triple fault</em> occurs. Triple faults can't be caught and most hardware reacts with a system reset.</p>
-<h3 id="triggering-a-double-fault"><a class="zola-anchor" href="#triggering-a-double-fault" aria-label="Anchor link for: triggering-a-double-fault">🔗</a>
-Triggering a Double Fault</h3>
+<h3 id="triggering-a-double-fault"><a class="zola-anchor" href="#triggering-a-double-fault" aria-label="Anchor link for: triggering-a-double-fault">🔗</a>Triggering a Double Fault</h3>
 <p>Let's provoke a double fault by triggering an exception for that we didn't define a handler function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
@@ -116,8 +114,7 @@ Triggering a Double Fault</h3>
 <li>A triple fault is fatal. QEMU reacts to it like most real hardware and issues a system reset.</li>
 </ol>
 <p>So in order to prevent this triple fault, we need to either provide a handler function for page faults or a double fault handler. Let's start with the latter, since we want to avoid triple faults in all cases.</p>
-<h3 id="a-double-fault-handler"><a class="zola-anchor" href="#a-double-fault-handler" aria-label="Anchor link for: a-double-fault-handler">🔗</a>
-A Double Fault Handler</h3>
+<h3 id="a-double-fault-handler"><a class="zola-anchor" href="#a-double-fault-handler" aria-label="Anchor link for: a-double-fault-handler">🔗</a>A Double Fault Handler</h3>
 <p>A double fault is a normal exception with an error code, so we can use our <code>handler_with_error_code</code> macro to create a wrapper function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts.rs
@@ -152,8 +149,7 @@ A Double Fault Handler</h3>
 </ol>
 <p>The triple fault (and the boot-loop) no longer occurs, since the CPU can now call the double fault handler.</p>
 <p>That was quite straightforward! So why do we need a whole post for this topic? Well, we're now able to catch <em>most</em> double faults, but there are some cases where our current approach doesn't suffice.</p>
-<h2 id="causes-of-double-faults"><a class="zola-anchor" href="#causes-of-double-faults" aria-label="Anchor link for: causes-of-double-faults">🔗</a>
-Causes of Double Faults</h2>
+<h2 id="causes-of-double-faults"><a class="zola-anchor" href="#causes-of-double-faults" aria-label="Anchor link for: causes-of-double-faults">🔗</a>Causes of Double Faults</h2>
 <p>Before we look at the special cases, we need to know the exact causes of double faults. Above, we used a pretty vague definition:</p>
 <blockquote>
 <p>A double fault is a special exception that occurs when the CPU fails to invoke an exception handler.</p>
@@ -167,9 +163,9 @@ Causes of Double Faults</h2>
 <li>our kernel overflows its stack and the <a href="https://os.phil-opp.com/remap-the-kernel/#creating-a-guard-page">guard page</a> is hit?</li>
 </ol>
 <p>Fortunately, the AMD64 manual (<a href="https://www.amd.com/system/files/TechDocs/24593.pdf">PDF</a>) has an exact definition (in Section 8.2.9). According to it, a “double fault exception <em>can</em> occur when a second exception occurs during the handling of a prior (first) exception handler”. The <em>“can”</em> is important: Only very specific combinations of exceptions lead to a double fault. These combinations are:</p>
-<table><thead><tr><th>First Exception </th><th>Second Exception</th></tr></thead><tbody>
-<tr><td><a href="http://wiki.osdev.org/Exceptions#Divide-by-zero_Error">Divide-by-zero</a>,<br><a href="http://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="http://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="http://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="http://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a> </td><td><a href="http://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="http://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="http://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="http://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td></tr>
-<tr><td><a href="http://wiki.osdev.org/Exceptions#Page_Fault">Page Fault</a> </td><td><a href="http://wiki.osdev.org/Exceptions#Page_Fault">Page Fault</a>,<br><a href="http://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="http://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="http://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="http://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td></tr>
+<table><thead><tr><th>First Exception</th><th>Second Exception</th></tr></thead><tbody>
+<tr><td><a href="http://wiki.osdev.org/Exceptions#Divide-by-zero_Error">Divide-by-zero</a>,<br><a href="http://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="http://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="http://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="http://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td><td><a href="http://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="http://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="http://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="http://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td></tr>
+<tr><td><a href="http://wiki.osdev.org/Exceptions#Page_Fault">Page Fault</a></td><td><a href="http://wiki.osdev.org/Exceptions#Page_Fault">Page Fault</a>,<br><a href="http://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="http://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="http://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="http://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td></tr>
 </tbody></table>
 <p>So for example a divide-by-zero fault followed by a page fault is fine (the page fault handler is invoked), but a divide-by-zero fault followed by a general-protection fault leads to a double fault.</p>
 <p>With the help of this table, we can answer the first three of the above questions:</p>
@@ -179,8 +175,7 @@ Causes of Double Faults</h2>
 <li>If a divide-by-zero handler causes a breakpoint exception, the CPU tries to invoke the breakpoint handler. If the breakpoint handler is swapped out, a <em>page fault</em> occurs and the <em>page fault handler</em> is invoked.</li>
 </ol>
 <p>In fact, even the case of a non-present handler follows this scheme: A non-present handler causes a <em>segment-not-present</em> exception. We didn't define a segment-not-present handler, so another segment-not-present exception occurs. According to the table, this leads to a double fault.</p>
-<h3 id="kernel-stack-overflow"><a class="zola-anchor" href="#kernel-stack-overflow" aria-label="Anchor link for: kernel-stack-overflow">🔗</a>
-Kernel Stack Overflow</h3>
+<h3 id="kernel-stack-overflow"><a class="zola-anchor" href="#kernel-stack-overflow" aria-label="Anchor link for: kernel-stack-overflow">🔗</a>Kernel Stack Overflow</h3>
 <p>Let's look at the fourth question:</p>
 <blockquote>
 <p>What happens if our kernel overflows its stack and the <a href="https://os.phil-opp.com/remap-the-kernel/#creating-a-guard-page">guard page</a> is hit?</p>
@@ -210,8 +205,7 @@ Kernel Stack Overflow</h3>
 </span></pre>
 <p>When we try this code in QEMU, we see that the system enters a boot-loop again.</p>
 <p>So how can we avoid this problem? We can't omit the pushing of the exception stack frame, since the CPU itself does it. So we need to ensure somehow that the stack is always valid when a double fault exception occurs. Fortunately, the x86_64 architecture has a solution to this problem.</p>
-<h2 id="switching-stacks"><a class="zola-anchor" href="#switching-stacks" aria-label="Anchor link for: switching-stacks">🔗</a>
-Switching Stacks</h2>
+<h2 id="switching-stacks"><a class="zola-anchor" href="#switching-stacks" aria-label="Anchor link for: switching-stacks">🔗</a>Switching Stacks</h2>
 <p>The x86_64 architecture is able to switch to a predefined, known-good stack when an exception occurs. This switch happens at hardware level, so it can be performed before the CPU pushes the exception stack frame.</p>
 <p>This switching mechanism is implemented as an <em>Interrupt Stack Table</em> (IST). The IST is a table of 7 pointers to known-good stacks. In Rust-like pseudo code:</p>
 <pre style="background-color:#1e1e1e;">
@@ -220,8 +214,7 @@ Switching Stacks</h2>
 }
 </span></pre>
 <p>For each exception handler, we can choose a stack from the IST through the <code>options</code> field in the corresponding <a href="https://os.phil-opp.com/handling-exceptions/#the-interrupt-descriptor-table">IDT entry</a>. For example, we could use the first stack in the IST for our double fault handler. Then the CPU would automatically switch to this stack whenever a double fault occurs. This switch would happen before anything is pushed, so it would prevent the triple fault.</p>
-<h3 id="allocating-a-new-stack"><a class="zola-anchor" href="#allocating-a-new-stack" aria-label="Anchor link for: allocating-a-new-stack">🔗</a>
-Allocating a new Stack</h3>
+<h3 id="allocating-a-new-stack"><a class="zola-anchor" href="#allocating-a-new-stack" aria-label="Anchor link for: allocating-a-new-stack">🔗</a>Allocating a new Stack</h3>
 <p>In order to fill an Interrupt Stack Table later, we need a way to allocate new stacks. Therefore we extend our <code>memory</code> module with a new <code>stack_allocator</code> submodule:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/memory/mod.rs
@@ -329,8 +322,7 @@ Allocating a new Stack</h3>
 }
 </span></pre>
 <p>The <code>Stack</code> struct describes a stack though its top and bottom addresses.</p>
-<h4 id="the-memory-controller"><a class="zola-anchor" href="#the-memory-controller" aria-label="Anchor link for: the-memory-controller">🔗</a>
-The Memory Controller</h4>
+<h4 id="the-memory-controller"><a class="zola-anchor" href="#the-memory-controller" aria-label="Anchor link for: the-memory-controller">🔗</a>The Memory Controller</h4>
 <p>Now we're able to allocate a new double fault stack. However, we add one more level of abstraction to make things easier. For that we add a new <code>MemoryController</code> type to our <code>memory</code> module:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/memory/mod.rs
@@ -390,8 +382,7 @@ The Memory Controller</h4>
         Page { number: self.number </span><span style="color:#569cd6;">+</span><span style="color:#dcdcdc;"> rhs }
     }
 }
-</span></pre><h4 id="allocating-a-double-fault-stack"><a class="zola-anchor" href="#allocating-a-double-fault-stack" aria-label="Anchor link for: allocating-a-double-fault-stack">🔗</a>
-Allocating a Double Fault Stack</h4>
+</span></pre><h4 id="allocating-a-double-fault-stack"><a class="zola-anchor" href="#allocating-a-double-fault-stack" aria-label="Anchor link for: allocating-a-double-fault-stack">🔗</a>Allocating a Double Fault Stack</h4>
 <p>Now we can allocate a new double fault stack by passing the memory controller to our <code>interrupts::init</code> function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
@@ -422,23 +413,21 @@ Allocating a Double Fault Stack</h4>
 }
 </span></pre>
 <p>We allocate a 4096 bytes stack (one page) for our double fault handler. Now we just need some way to tell the CPU that it should use this stack for handling double faults.</p>
-<h3 id="the-ist-and-tss"><a class="zola-anchor" href="#the-ist-and-tss" aria-label="Anchor link for: the-ist-and-tss">🔗</a>
-The IST and TSS</h3>
+<h3 id="the-ist-and-tss"><a class="zola-anchor" href="#the-ist-and-tss" aria-label="Anchor link for: the-ist-and-tss">🔗</a>The IST and TSS</h3>
 <p>The Interrupt Stack Table (IST) is part of an old legacy structure called <em><a href="https://en.wikipedia.org/wiki/Task_state_segment">Task State Segment</a></em> (TSS). The TSS used to hold various information (e.g. processor register state) about a task in 32-bit mode and was for example used for <a href="http://wiki.osdev.org/Context_Switching#Hardware_Context_Switching">hardware context switching</a>. However, hardware context switching is no longer supported in 64-bit mode and the format of the TSS changed completely.</p>
 <p>On x86_64, the TSS no longer holds any task specific information at all. Instead, it holds two stack tables (the IST is one of them). The only common field between the 32-bit and 64-bit TSS is the pointer to the <a href="https://en.wikipedia.org/wiki/Task_state_segment#I.2FO_port_permissions">I/O port permissions bitmap</a>.</p>
 <p>The 64-bit TSS has the following format:</p>
-<table><thead><tr><th>Field  </th><th>Type</th></tr></thead><tbody>
-<tr><td><span style="opacity: 0.5">(reserved)</span> </td><td><code>u32</code></td></tr>
-<tr><td>Privilege Stack Table </td><td><code>[u64; 3]</code></td></tr>
-<tr><td><span style="opacity: 0.5">(reserved)</span> </td><td><code>u64</code></td></tr>
-<tr><td>Interrupt Stack Table </td><td><code>[u64; 7]</code></td></tr>
-<tr><td><span style="opacity: 0.5">(reserved)</span> </td><td><code>u64</code></td></tr>
-<tr><td><span style="opacity: 0.5">(reserved)</span> </td><td><code>u16</code></td></tr>
-<tr><td>I/O Map Base Address </td><td><code>u16</code></td></tr>
+<table><thead><tr><th>Field</th><th>Type</th></tr></thead><tbody>
+<tr><td><span style="opacity: 0.5">(reserved)</span></td><td><code>u32</code></td></tr>
+<tr><td>Privilege Stack Table</td><td><code>[u64; 3]</code></td></tr>
+<tr><td><span style="opacity: 0.5">(reserved)</span></td><td><code>u64</code></td></tr>
+<tr><td>Interrupt Stack Table</td><td><code>[u64; 7]</code></td></tr>
+<tr><td><span style="opacity: 0.5">(reserved)</span></td><td><code>u64</code></td></tr>
+<tr><td><span style="opacity: 0.5">(reserved)</span></td><td><code>u16</code></td></tr>
+<tr><td>I/O Map Base Address</td><td><code>u16</code></td></tr>
 </tbody></table>
 <p>The <em>Privilege Stack Table</em> is used by the CPU when the privilege level changes. For example, if an exception occurs while the CPU is in user mode (privilege level 3), the CPU normally switches to kernel mode (privilege level 0) before invoking the exception handler. In that case, the CPU would switch to the 0th stack in the Privilege Stack Table (since 0 is the target privilege level). We don't have any user mode programs yet, so we ignore this table for now.</p>
-<h4 id="creating-a-tss"><a class="zola-anchor" href="#creating-a-tss" aria-label="Anchor link for: creating-a-tss">🔗</a>
-Creating a TSS</h4>
+<h4 id="creating-a-tss"><a class="zola-anchor" href="#creating-a-tss" aria-label="Anchor link for: creating-a-tss">🔗</a>Creating a TSS</h4>
 <p>Let's create a new TSS that contains our double fault stack in its interrupt stack table. For that we need a TSS struct. Fortunately, the <code>x86_64</code> crate already contains a <a href="https://docs.rs/x86_64/0.1.1/x86_64/structures/tss/struct.TaskStateSegment.html"><code>TaskStateSegment</code> struct</a> that we can use:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts.rs
@@ -465,11 +454,9 @@ Creating a TSS</h4>
 }
 </span></pre>
 <p>We define that the 0th IST entry is the double fault stack (any other IST index would work too). We create a new TSS through the <code>TaskStateSegment::new</code> function and load the top address (stacks grow downwards) of the double fault stack into the 0th entry.</p>
-<h4 id="loading-the-tss"><a class="zola-anchor" href="#loading-the-tss" aria-label="Anchor link for: loading-the-tss">🔗</a>
-Loading the TSS</h4>
+<h4 id="loading-the-tss"><a class="zola-anchor" href="#loading-the-tss" aria-label="Anchor link for: loading-the-tss">🔗</a>Loading the TSS</h4>
 <p>Now that we created a new TSS, we need a way to tell the CPU that it should use it. Unfortunately, this is a bit cumbersome, since the TSS is a Task State <em>Segment</em> (for historical reasons). So instead of loading the table directly, we need to add a new segment descriptor to the <a href="http://www.flingos.co.uk/docs/reference/Global-Descriptor-Table/">Global Descriptor Table</a> (GDT). Then we can load our TSS invoking the <a href="https://www.felixcloutier.com/x86/ltr"><code>ltr</code> instruction</a> with the respective GDT index.</p>
-<h3 id="the-global-descriptor-table-again"><a class="zola-anchor" href="#the-global-descriptor-table-again" aria-label="Anchor link for: the-global-descriptor-table-again">🔗</a>
-The Global Descriptor Table (again)</h3>
+<h3 id="the-global-descriptor-table-again"><a class="zola-anchor" href="#the-global-descriptor-table-again" aria-label="Anchor link for: the-global-descriptor-table-again">🔗</a>The Global Descriptor Table (again)</h3>
 <p>The Global Descriptor Table (GDT) is a relict that was used for <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation">memory segmentation</a> before paging became the de facto standard. It is still needed in 64-bit mode for various things such as kernel/user mode configuration or TSS loading.</p>
 <p>We already created a GDT <a href="https://os.phil-opp.com/entering-longmode/#the-global-descriptor-table">when switching to long mode</a>. Back then, we used assembly to create valid code and data segment descriptors, which were required to enter 64-bit mode. We could just edit that assembly file and add an additional TSS descriptor. However, we now have the expressiveness of Rust, so let's do it in Rust instead.</p>
 <p>We start by creating a new <code>interrupts::gdt</code> submodule. For that we need to rename the <code>src/interrupts.rs</code> file to <code>src/interrupts/mod.rs</code>. Then we can create a new submodule:</p>
@@ -496,8 +483,7 @@ The Global Descriptor Table (again)</h3>
 </span></pre>
 <p>We create a simple <code>Gdt</code> struct with two fields. The <code>table</code> field contains the actual GDT modeled as a <code>[u64; 8]</code>. Theoretically, a GDT can have up to 8192 entries, but this doesn't make much sense in 64-bit mode (since there is no real segmentation support). Eight entries should be more than enough for our system.</p>
 <p>The <code>next_free</code> field stores the index of the next free entry. We initialize it with <code>1</code> since the 0th entry needs always needs to be 0 in a valid GDT.</p>
-<h4 id="user-and-system-segments"><a class="zola-anchor" href="#user-and-system-segments" aria-label="Anchor link for: user-and-system-segments">🔗</a>
-User and System Segments</h4>
+<h4 id="user-and-system-segments"><a class="zola-anchor" href="#user-and-system-segments" aria-label="Anchor link for: user-and-system-segments">🔗</a>User and System Segments</h4>
 <p>There are two types of GDT entries in long mode: user and system segment descriptors. Descriptors for code and data segment segments are user segment descriptors. They contain no addresses since segments always span the complete address space on x86_64 (real segmentation is no longer supported). Thus, user segment descriptors only contain a few flags (e.g. present or user mode) and fit into a single <code>u64</code> entry.</p>
 <p>System descriptors such as TSS descriptors are different. They often contain a base address and a limit (e.g. TSS start and length) and thus need more than 64 bits. Therefore, system segments are 128 bits. They are stored as two consecutive entries in the GDT.</p>
 <p>Consequently, we model a <code>Descriptor</code> as an <code>enum</code>:</p>
@@ -524,8 +510,7 @@ User and System Segments</h4>
 }
 </span></pre>
 <p>We only add flags that are relevant in 64-bit mode. For example, we omit the read/write bit, since it is completely ignored by the CPU in 64-bit mode.</p>
-<h4 id="code-segments"><a class="zola-anchor" href="#code-segments" aria-label="Anchor link for: code-segments">🔗</a>
-Code Segments</h4>
+<h4 id="code-segments"><a class="zola-anchor" href="#code-segments" aria-label="Anchor link for: code-segments">🔗</a>Code Segments</h4>
 <p>We add a function to create kernel mode code segments:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/gdt.rs
@@ -539,23 +524,22 @@ Code Segments</h4>
 </span></pre>
 <p>We set the <code>USER_SEGMENT</code> bit to indicate a 64 bit user segment descriptor (otherwise the CPU expects a 128 bit system segment descriptor). The <code>PRESENT</code>, <code>EXECUTABLE</code>, and <code>LONG_MODE</code> bits are also needed for a 64-bit mode code segment.</p>
 <p>The data segment registers <code>ds</code>, <code>ss</code>, and <code>es</code> are completely ignored in 64-bit mode, so we don't need any data segment descriptors in our GDT.</p>
-<h4 id="tss-segments"><a class="zola-anchor" href="#tss-segments" aria-label="Anchor link for: tss-segments">🔗</a>
-TSS Segments</h4>
+<h4 id="tss-segments"><a class="zola-anchor" href="#tss-segments" aria-label="Anchor link for: tss-segments">🔗</a>TSS Segments</h4>
 <p>A TSS descriptor is a system segment descriptor with the following format:</p>
-<table><thead><tr><th>Bit(s)                </th><th>Name </th><th>Meaning</th></tr></thead><tbody>
-<tr><td>0-15 </td><td><strong>limit 0-15</strong> </td><td>the first 2 byte of the TSS's limit</td></tr>
-<tr><td>16-39 </td><td><strong>base 0-23</strong> </td><td>the first 3 byte of the TSS's base address</td></tr>
-<tr><td>40-43 </td><td><strong>type</strong> </td><td>must be <code>0b1001</code> for an available 64-bit TSS</td></tr>
-<tr><td>44    </td><td>zero </td><td>must be 0</td></tr>
-<tr><td>45-46 </td><td>privilege </td><td>the <a href="http://wiki.osdev.org/Security#Rings">ring level</a>: 0 for kernel, 3 for user</td></tr>
-<tr><td>47 </td><td><strong>present</strong> </td><td>must be 1 for valid selectors</td></tr>
-<tr><td>48-51 </td><td>limit 16-19 </td><td>bits 16 to 19 of the segment's limit</td></tr>
-<tr><td>52 </td><td>available </td><td>freely available to the OS</td></tr>
-<tr><td>53-54 </td><td>ignored </td><td></td></tr>
-<tr><td>55 </td><td>granularity </td><td>if it's set, the limit is the number of pages, else it's a byte number</td></tr>
-<tr><td>56-63 </td><td><strong>base 24-31</strong> </td><td>the fourth byte of the base address</td></tr>
-<tr><td>64-95 </td><td><strong>base 32-63</strong> </td><td>the last four bytes of the base address</td></tr>
-<tr><td>96-127 </td><td>ignored/must be zero </td><td>bits 104-108 must be zero, the rest is ignored</td></tr>
+<table><thead><tr><th>Bit(s)</th><th>Name</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>0-15</td><td><strong>limit 0-15</strong></td><td>the first 2 byte of the TSS's limit</td></tr>
+<tr><td>16-39</td><td><strong>base 0-23</strong></td><td>the first 3 byte of the TSS's base address</td></tr>
+<tr><td>40-43</td><td><strong>type</strong></td><td>must be <code>0b1001</code> for an available 64-bit TSS</td></tr>
+<tr><td>44</td><td>zero</td><td>must be 0</td></tr>
+<tr><td>45-46</td><td>privilege</td><td>the <a href="http://wiki.osdev.org/Security#Rings">ring level</a>: 0 for kernel, 3 for user</td></tr>
+<tr><td>47</td><td><strong>present</strong></td><td>must be 1 for valid selectors</td></tr>
+<tr><td>48-51</td><td>limit 16-19</td><td>bits 16 to 19 of the segment's limit</td></tr>
+<tr><td>52</td><td>available</td><td>freely available to the OS</td></tr>
+<tr><td>53-54</td><td>ignored</td><td></td></tr>
+<tr><td>55</td><td>granularity</td><td>if it's set, the limit is the number of pages, else it's a byte number</td></tr>
+<tr><td>56-63</td><td><strong>base 24-31</strong></td><td>the fourth byte of the base address</td></tr>
+<tr><td>64-95</td><td><strong>base 32-63</strong></td><td>the last four bytes of the base address</td></tr>
+<tr><td>96-127</td><td>ignored/must be zero</td><td>bits 104-108 must be zero, the rest is ignored</td></tr>
 </tbody></table>
 <p>We only need the bold fields for our TSS descriptor. For example, we don't need the <code>limit 16-19</code> field since a TSS has a fixed size that is smaller than <code>2^16</code>.</p>
 <p>Let's add a function to our descriptor that creates a TSS descriptor for a given TSS:</p>
@@ -596,8 +580,7 @@ TSS Segments</h4>
 <span style="color:#569cd6;">extern crate</span><span style="color:#dcdcdc;"> bit_field;
 </span></pre>
 <p>We require the <code>'static</code> lifetime for the <code>TaskStateSegment</code> reference, since the hardware might access it on every interrupt as long as the OS runs.</p>
-<h4 id="adding-descriptors-to-the-gdt"><a class="zola-anchor" href="#adding-descriptors-to-the-gdt" aria-label="Anchor link for: adding-descriptors-to-the-gdt">🔗</a>
-Adding Descriptors to the GDT</h4>
+<h4 id="adding-descriptors-to-the-gdt"><a class="zola-anchor" href="#adding-descriptors-to-the-gdt" aria-label="Anchor link for: adding-descriptors-to-the-gdt">🔗</a>Adding Descriptors to the GDT</h4>
 <p>In order to add descriptors to the GDT, we add a <code>add_entry</code> method:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/gdt.rs
@@ -638,8 +621,7 @@ Adding Descriptors to the GDT</h4>
 }
 </span></pre>
 <p>The method just writes to the <code>next_free</code> entry and returns the corresponding index. If there is no free entry left, we panic since this likely indicates a programming error (we should never need to create more than two or three GDT entries for our kernel).</p>
-<h4 id="loading-the-gdt"><a class="zola-anchor" href="#loading-the-gdt" aria-label="Anchor link for: loading-the-gdt">🔗</a>
-Loading the GDT</h4>
+<h4 id="loading-the-gdt"><a class="zola-anchor" href="#loading-the-gdt" aria-label="Anchor link for: loading-the-gdt">🔗</a>Loading the GDT</h4>
 <p>To load the GDT, we add a new <code>load</code> method:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/gdt.rs
@@ -659,8 +641,7 @@ Loading the GDT</h4>
 }
 </span></pre>
 <p>We use the <a href="https://docs.rs/x86_64/0.1.1/x86_64/instructions/tables/struct.DescriptorTablePointer.html"><code>DescriptorTablePointer</code> struct</a> and the <a href="https://docs.rs/x86_64/0.1.1/x86_64/instructions/tables/fn.lgdt.html"><code>lgdt</code> function</a> provided by the <code>x86_64</code> crate to load our GDT. Again, we require a <code>'static</code> reference since the GDT possibly needs to live for the rest of the run time.</p>
-<h3 id="putting-it-together"><a class="zola-anchor" href="#putting-it-together" aria-label="Anchor link for: putting-it-together">🔗</a>
-Putting it together</h3>
+<h3 id="putting-it-together"><a class="zola-anchor" href="#putting-it-together" aria-label="Anchor link for: putting-it-together">🔗</a>Putting it together</h3>
 <p>We now have a double fault stack and are able to create and load a TSS (which contains an IST). So let's put everything together to catch kernel stack overflows.</p>
 <p>We already created a new TSS in our <code>interrupts::init</code> function. Now we can load this TSS by creating a new GDT:</p>
 <pre style="background-color:#1e1e1e;">
@@ -709,8 +690,7 @@ error: `gdt` does not live long enough
 <p>The problem is that we require that the TSS and GDT are valid for the rest of the run time (i.e. for the <code>'static</code> lifetime). But our created <code>tss</code> and <code>gdt</code> live on the stack and are thus destroyed at the end of the <code>init</code> function. So how do we fix this problem?</p>
 <p>We could allocate our TSS and GDT on the heap using <code>Box</code> and use <a href="https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw">into_raw</a> and a bit of <code>unsafe</code> to convert it to <code>&amp;'static</code> references (<a href="https://github.com/rust-lang/rfcs/pull/1233">RFC 1233</a> was closed unfortunately).</p>
 <p>Alternatively, we could store them in a <code>static</code> somehow. The <a href="https://docs.rs/lazy_static/0.2.2/lazy_static/"><code>lazy_static</code> macro</a> doesn't work here, since we need access to the <code>MemoryController</code> for initialization. However, we can use its fundamental building block, the <a href="https://docs.rs/spin/0.4.5/spin/struct.Once.html"><code>spin::Once</code> type</a>.</p>
-<h4 id="spin-once"><a class="zola-anchor" href="#spin-once" aria-label="Anchor link for: spin-once">🔗</a>
-spin::Once</h4>
+<h4 id="spin-once"><a class="zola-anchor" href="#spin-once" aria-label="Anchor link for: spin-once">🔗</a>spin::Once</h4>
 <p>Let's try to solve our problem using <a href="https://docs.rs/spin/0.4.5/spin/struct.Once.html"><code>spin::Once</code></a>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts/mod.rs
@@ -748,8 +728,7 @@ spin::Once</h4>
 }
 </span></pre>
 <p>Now it should compile again!</p>
-<h4 id="the-final-steps"><a class="zola-anchor" href="#the-final-steps" aria-label="Anchor link for: the-final-steps">🔗</a>
-The final Steps</h4>
+<h4 id="the-final-steps"><a class="zola-anchor" href="#the-final-steps" aria-label="Anchor link for: the-final-steps">🔗</a>The final Steps</h4>
 <p>We're almost done. We successfully loaded our new GDT, which contains a TSS descriptor. Now there are just a few steps left:</p>
 <ol>
 <li>We changed our GDT, so we should reload the <code>cs</code>, the code segment register. This required since the old segment selector could point a different GDT descriptor now (e.g. a TSS descriptor).</li>
@@ -806,8 +785,7 @@ The final Steps</h4>
 <p>That's it! Now the CPU should switch to the double fault stack whenever a double fault occurs. Thus, we are able to catch <em>all</em> double faults, including kernel stack overflows:</p>
 <p><img src="https://os.phil-opp.com/double-faults/qemu-double-fault-on-stack-overflow.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT and a dump of the exception stack frame" /></p>
 <p>From now on we should never see a triple fault again!</p>
-<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>
-What's next?</h2>
+<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What's next?</h2>
 <p>Now that we mastered exceptions, it's time to explore another kind of interrupts: interrupts from external devices such as timers, keyboards, or network controllers. These hardware interrupts are very similar to exceptions, e.g. they are also dispatched through the IDT.</p>
 <p>However, unlike exceptions, they don't arise directly on the CPU. Instead, an <em>interrupt controller</em> aggregates these interrupts and forwards them to CPU depending on their priority. In the next posts we will explore the two interrupt controller variants on x86: the <a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> (“PIC”) and the <a href="https://en.wikipedia.org/wiki/Advanced_Programmable_Interrupt_Controller">APIC</a>. This will allow us to react to keyboard and mouse input.</p>
 
@@ -1137,7 +1115,7 @@ What's next?</h2>
             <hr>
             <small>
                 &copy; <time datetime="2017">2017</time>. All rights reserved.
-                <a href="https:&#x2f;&#x2f;os.phil-opp.com&#x2f;contact&#x2f;">Contact</a>
+                <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;.&#x2F;pages&#x2F;contact.md">Contact</a>
             </small>
         </footer>
     </div>
