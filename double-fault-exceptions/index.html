@@ -207,12 +207,12 @@
 
 </span><span style="color:#608b4e;">// new
 </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">double_fault_handler(
-    stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> InterruptStackFrame, _error_code: </span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">)
-{
+    stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> InterruptStackFrame, _error_code: </span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">) -&gt; </span><span style="color:#569cd6;">!
+</span><span style="color:#dcdcdc;">{
     panic!(</span><span style="color:#d69d85;">&quot;EXCEPTION: DOUBLE FAULT</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">{:#?}&quot;</span><span style="color:#dcdcdc;">, stack_frame);
 }
 </span></pre>
-<p>Our handler prints a short error message and dumps the exception stack frame. The error code of the double fault handler is always zero, so there's no reason to print it.</p>
+<p>Our handler prints a short error message and dumps the exception stack frame. The error code of the double fault handler is always zero, so there's no reason to print it. One difference to the breakpoint handler is that the double fault handler is <a href="https://doc.rust-lang.org/stable/rust-by-example/fn/diverging.html"><em>diverging</em></a>. The reason is that the <code>x86_64</code> architecture does not permit returning from a double fault exception.</p>
 <p>When we start our kernel now, we should see that the double fault handler is invoked:</p>
 <p><img src="https://os.phil-opp.com/double-fault-exceptions/qemu-catch-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT and the exception stack frame" /></p>
 <p>It worked! Here is what happens this time:</p>
@@ -303,7 +303,7 @@
 </tbody></table>
 <p>The <em>Privilege Stack Table</em> is used by the CPU when the privilege level changes. For example, if an exception occurs while the CPU is in user mode (privilege level 3), the CPU normally switches to kernel mode (privilege level 0) before invoking the exception handler. In that case, the CPU would switch to the 0th stack in the Privilege Stack Table (since 0 is the target privilege level). We don't have any user mode programs yet, so we ignore this table for now.</p>
 <h3 id="creating-a-tss"><a class="zola-anchor" href="#creating-a-tss" aria-label="Anchor link for: creating-a-tss">🔗</a>Creating a TSS</h3>
-<p>Let's create a new TSS that contains a separate double fault stack in its interrupt stack table. For that we need a TSS struct. Fortunately, the <code>x86_64</code> crate already contains a <a href="https://docs.rs/x86_64/0.7.5/x86_64/structures/tss/struct.TaskStateSegment.html"><code>TaskStateSegment</code> struct</a> that we can use.</p>
+<p>Let's create a new TSS that contains a separate double fault stack in its interrupt stack table. For that we need a TSS struct. Fortunately, the <code>x86_64</code> crate already contains a <a href="https://docs.rs/x86_64/0.8.1/x86_64/structures/tss/struct.TaskStateSegment.html"><code>TaskStateSegment</code> struct</a> that we can use.</p>
 <p>We create the TSS in a new <code>gdt</code> module (the name will make sense later):</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
@@ -418,7 +418,7 @@ lazy_static! {
     }
 }
 </span></pre>
-<p>We reload the code segment register using <a href="https://docs.rs/x86_64/0.7.5/x86_64/instructions/segmentation/fn.set_cs.html"><code>set_cs</code></a> and to load the TSS using <a href="https://docs.rs/x86_64/0.7.5/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>. The functions are marked as <code>unsafe</code>, so we need an <code>unsafe</code> block to invoke them. The reason is that it might be possible to break memory safety by loading invalid selectors.</p>
+<p>We reload the code segment register using <a href="https://docs.rs/x86_64/0.8.1/x86_64/instructions/segmentation/fn.set_cs.html"><code>set_cs</code></a> and to load the TSS using <a href="https://docs.rs/x86_64/0.8.1/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>. The functions are marked as <code>unsafe</code>, so we need an <code>unsafe</code> block to invoke them. The reason is that it might be possible to break memory safety by loading invalid selectors.</p>
 <p>Now that we loaded a valid TSS and interrupt stack table, we can set the stack index for our double fault handler in the IDT:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/interrupts.rs
@@ -536,7 +536,7 @@ lazy_static! {
 </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_double_fault_handler(
     _stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> InterruptStackFrame,
     _error_code: </span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">,
-) {
+) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
     exit_qemu(QemuExitCode::Success);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
