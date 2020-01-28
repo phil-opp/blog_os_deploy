@@ -362,10 +362,12 @@
 <p>The first step for both <code>alloc</code> and <code>dealloc</code> is to call the <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> method through the <code>inner</code> field to get a mutable reference to the wrapped allocator type. The instance remains locked until the end of the method, so that no data race can occur in multithreaded contexts (we will add threading support soon).</p>
 <p>Compared to the previous prototype, the <code>alloc</code> implementation now respects alignment requirements and performs a bounds check to ensure that the allocations stay inside the heap memory region. The first step is to round up the <code>next</code> address to the alignment specified by the <code>Layout</code> argument. The code for the <code>align_up</code> function is shown in a moment. We then add the requested allocation size to <code>alloc_start</code> to get the end address of the allocation. To prevent integer overflow on large allocations, we use the <a href="https://doc.rust-lang.org/std/primitive.usize.html#method.checked_add"><code>checked_add</code></a> method. If the resulting end address of the allocation is larger than the end address of the heap, we return a null pointer to signal an out-of-memory situation. Otherwise, we update the <code>next</code> address and increase the <code>allocations</code> counter by 1 like before. Finally, we return the <code>alloc_start</code> address converted to a <code>*mut u8</code> pointer.</p>
 <p>The <code>dealloc</code> function ignores the given pointer and <code>Layout</code> arguments. Instead, it just decreases the <code>allocations</code> counter. If the counter reaches <code>0</code> again, it means that all allocations were freed again. In this case, it resets the <code>next</code> address to the <code>heap_start</code> address to make the complete heap memory available again.</p>
-<p>The <code>align_up</code> function is general enough that we can put it into the parent <code>allocator</code> module. It looks like this:</p>
+<h4 id="address-alignment"><a class="zola-anchor" href="#address-alignment" aria-label="Anchor link for: address-alignment">🔗</a>Address Alignment</h4>
+<p>The <code>align_up</code> function is general enough that we can put it into the parent <code>allocator</code> module. A basic implementation looks like this:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/allocator.rs
 
+/// Align the given address `addr` upwards to alignment `align`.
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">align_up(addr: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">, align: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">) -&gt; </span><span style="color:#569cd6;">usize </span><span style="color:#dcdcdc;">{
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> remainder </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> addr </span><span style="color:#569cd6;">%</span><span style="color:#dcdcdc;"> align;
     </span><span style="color:#569cd6;">if</span><span style="color:#dcdcdc;"> remainder </span><span style="color:#569cd6;">== </span><span style="color:#b5cea8;">0 </span><span style="color:#dcdcdc;">{
@@ -376,6 +378,23 @@
 }
 </span></pre>
 <p>The function first computes the <a href="https://en.wikipedia.org/wiki/Euclidean_division">remainder</a> of the division of <code>addr</code> by <code>align</code>. If the remainder is <code>0</code>, the address is already aligned with the given alignment. Otherwise, we align the address by subtracting the remainder (so that the new remainder is 0) and then adding the alignment (so that the address does not become smaller than the original address).</p>
+<p>Note that this isn't the most efficient way to implement this function. A much faster implementation looks like this:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">/// Align the given address `addr` upwards to alignment `align`.
+///
+/// Requires that `align` is a power of two.
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">align_up(addr: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">, align: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">) -&gt; </span><span style="color:#569cd6;">usize </span><span style="color:#dcdcdc;">{
+    (addr </span><span style="color:#569cd6;">+</span><span style="color:#dcdcdc;"> align </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">&amp; !</span><span style="color:#dcdcdc;">(align </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">)
+}
+</span></pre>
+<p>This method utilizes that the <code>GlobalAlloc</code> trait guarantees that <code>align</code> is always a power of two. This makes it possible to create a <a href="https://en.wikipedia.org/wiki/Mask_(computing)">bitmask</a> to align the address in a very efficient way. To understand how it works, let's go through it step by step starting on the right side:</p>
+<ul>
+<li>Since <code>align</code> is a power of two, its <a href="https://en.wikipedia.org/wiki/Binary_number#Representation">binary representation</a> has only a single bit set (e.g. <code>0b000100000</code>). This means that <code>align - 1</code> has all the lower bits set (e.g. <code>0b00011111</code>).</li>
+<li>By creating the <a href="https://en.wikipedia.org/wiki/Bitwise_operation#NOT">bitwise <code>NOT</code></a> through the <code>!</code> operator, we get a number that has all the bits set except for the bits lower than <code>align</code> (e.g. <code>0b…111111111100000</code>).</li>
+<li>By performing a <a href="https://en.wikipedia.org/wiki/Bitwise_operation#AND">bitwise <code>AND</code></a> on an address and <code>!(align - 1)</code>, we align the address <em>downwards</em>. This works by clearing all the bits that are lower than <code>align</code>.</li>
+<li>Since we want to align upwards instead of downwards, we increase the <code>addr</code> by <code>align - 1</code> before performing the bitwise <code>AND</code>. This way, already aligned addresses remain the same while non-aligned addresses are rounded to the next alignment boundary.</li>
+</ul>
+<p>Which variant you choose it up to you. Both compute the same result, only using different methods.</p>
 <h3 id="using-it"><a class="zola-anchor" href="#using-it" aria-label="Anchor link for: using-it">🔗</a>Using It</h3>
 <p>To use the bump allocator instead of the <code>linked_list_allocator</code> crate, we need to update the <code>ALLOCATOR</code> static in <code>allocator.rs</code>:</p>
 <pre style="background-color:#1e1e1e;">
