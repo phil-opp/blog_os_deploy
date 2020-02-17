@@ -1,0 +1,414 @@
+<!doctype html>
+
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="创建一个不链接标准库的 Rust 可执行文件，将是我们迈出的第一步。无需底层操作系统的支撑，这样才能在裸机（bare metal）上运行 Rust 代码。
+">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/zh-CN/freestanding-rust-binary/" />
+    
+    <link href="/css/poole.css" rel="stylesheet">
+    <link href="/css/main.css" rel="stylesheet">
+
+    <script async src="/js/main.js"></script>
+
+    <title>独立式可执行程序 | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h1 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h1>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/zh-CN" title="All Posts">« All Posts</a></aside>
+    
+
+            </div>
+        </header>
+
+        <main>
+    <h1>独立式可执行程序</h1>
+    <time datetime="2018-02-10" class="post-date">
+        Feb 10, 2018
+        
+    </time>
+
+    <aside id="toc-aside">
+        <h2>Table of Contents</h2>
+        <ol>
+            <li>
+                <a href="#jian-jie">简介</a>
+                
+            </li><li>
+                <a href="#jin-yong-biao-zhun-ku">禁用标准库</a>
+                <ol>
+                    <li>
+                        <a href="#no-std-shu-xing">no_std 属性</a>
+                    </li>
+                </ol>
+            </li><li>
+                <a href="#shi-xian-panic-chu-li-han-shu">实现 panic 处理函数</a>
+                
+            </li><li>
+                <a href="#eh-personality-yu-yan-xiang">eh_personality 语言项</a>
+                <ol>
+                    <li>
+                        <a href="#jin-yong-zhan-zhan-kai">禁用栈展开</a>
+                    </li>
+                </ol>
+            </li><li>
+                <a href="#start-yu-yan-xiang">start 语言项</a>
+                <ol>
+                    <li>
+                        <a href="#zhong-xie-ru-kou-dian">重写入口点</a>
+                    </li>
+                </ol>
+            </li><li>
+                <a href="#lian-jie-qi-cuo-wu">链接器错误</a>
+                <ol>
+                    <li>
+                        <a href="#bian-yi-wei-luo-ji-mu-biao">编译为裸机目标</a>
+                    </li><li>
+                        <a href="#lian-jie-qi-can-shu">链接器参数</a>
+                    </li>
+                </ol>
+            </li><li>
+                <a href="#xiao-jie">小结</a>
+                
+            </li><li>
+                <a href="#xia-pian-yu-lan">下篇预览</a>
+                
+            </li>
+        </ol>
+    </aside>
+
+    
+
+    
+        <div class="warning">
+            
+            
+            <b>Translated Content:</b>
+            This is a community translation of the <strong><a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;freestanding-rust-binary&#x2F;">A Freestanding Rust Binary</a></strong> post. It might be incomplete, outdated or contain errors. Please report any issues!
+        </div>
+    
+
+    <p>创建一个不链接标准库的 Rust 可执行文件，将是我们迈出的第一步。无需底层操作系统的支撑，这样才能在<strong>裸机</strong>（<a href="https://en.wikipedia.org/wiki/Bare_machine">bare metal</a>）上运行 Rust 代码。</p>
+<span id="continue-reading"></span>
+<p>此博客在 <a href="https://github.com/phil-opp/blog_os">GitHub</a> 上公开开发. 如果您有任何问题或疑问，请在此处打开一个 issue。 您也可以在<a href="https://os.phil-opp.com/zh-CN/freestanding-rust-binary/#comments">底部</a>发表评论. 这篇文章的完整源代码可以在 [<code>post-01</code>] <a href="https://github.com/phil-opp/blog_os/tree/post-01">post branch</a> 分支中找到。</p>
+
+    <details id = "toc-inline">
+        <summary><b>Table of Contents</b></summary>
+        <ul>
+            <li>
+                <a href="#jian-jie">简介</a>
+                
+            </li><li>
+                <a href="#jin-yong-biao-zhun-ku">禁用标准库</a>
+                <ul>
+                    <li>
+                        <a href="#no-std-shu-xing">no_std 属性</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#shi-xian-panic-chu-li-han-shu">实现 panic 处理函数</a>
+                
+            </li><li>
+                <a href="#eh-personality-yu-yan-xiang">eh_personality 语言项</a>
+                <ul>
+                    <li>
+                        <a href="#jin-yong-zhan-zhan-kai">禁用栈展开</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#start-yu-yan-xiang">start 语言项</a>
+                <ul>
+                    <li>
+                        <a href="#zhong-xie-ru-kou-dian">重写入口点</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#lian-jie-qi-cuo-wu">链接器错误</a>
+                <ul>
+                    <li>
+                        <a href="#bian-yi-wei-luo-ji-mu-biao">编译为裸机目标</a>
+                    </li><li>
+                        <a href="#lian-jie-qi-can-shu">链接器参数</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#xiao-jie">小结</a>
+                
+            </li><li>
+                <a href="#xia-pian-yu-lan">下篇预览</a>
+                
+            </li>
+        </ul>
+    </details>
+
+<h2 id="jian-jie"><a class="zola-anchor" href="#jian-jie" aria-label="Anchor link for: jian-jie">🔗</a>简介</h2>
+<p>要编写一个操作系统内核，我们需要编写不依赖任何操作系统特性的代码。这意味着我们不能使用线程、文件、堆内存、网络、随机数、标准输出，或其它任何需要操作系统抽象和特定硬件的特性；因为我们正在编写自己的操作系统和硬件驱动。</p>
+<p>实现这一点，意味着我们不能使用 <a href="https://doc.rust-lang.org/std/">Rust标准库</a>的大部分；但还有很多 Rust 特性是我们依然可以使用的。比如说，我们可以使用<a href="https://doc.rust-lang.org/book/ch13-02-iterators.html">迭代器</a>、<a href="https://doc.rust-lang.org/book/ch13-01-closures.html">闭包</a>、<a href="https://doc.rust-lang.org/book/ch06-00-enums.html">模式匹配</a>、<a href="https://doc.rust-lang.org/core/option/">Option</a>、<a href="https://doc.rust-lang.org/core/result/index.html">Result</a>、<a href="https://doc.rust-lang.org/core/macro.write.html">字符串格式化</a>，当然还有<a href="https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html">所有权系统</a>。这些功能让我们能够编写表达性强、高层抽象的操作系统，而无需关心<a href="https://www.nayuki.io/page/undefined-behavior-in-c-and-cplusplus-programs">未定义行为</a>和<a href="https://tonyarcieri.com/it-s-time-for-a-memory-safety-intervention">内存安全</a>。</p>
+<p>为了用 Rust 编写一个操作系统内核，我们需要创建一个独立于操作系统的可执行程序。这样的可执行程序常被称作<strong>独立式可执行程序</strong>（freestanding executable）或<strong>裸机程序</strong>(bare-metal executable)。</p>
+<p>在这篇文章里，我们将逐步地创建一个独立式可执行程序，并且详细解释为什么每个步骤都是必须的。如果读者只对最终的代码感兴趣，可以跳转到本篇文章的小结部分。</p>
+<h2 id="jin-yong-biao-zhun-ku"><a class="zola-anchor" href="#jin-yong-biao-zhun-ku" aria-label="Anchor link for: jin-yong-biao-zhun-ku">🔗</a>禁用标准库</h2>
+<p>在默认情况下，所有的 Rust <strong>包</strong>（crate）都会链接<strong>标准库</strong>（<a href="https://doc.rust-lang.org/std/">standard library</a>），而标准库依赖于操作系统功能，如线程、文件系统、网络。标准库还与 <strong>Rust 的 C 语言标准库实现库</strong>（libc）相关联，它也是和操作系统紧密交互的。既然我们的计划是编写自己的操作系统，我们就需要不使用任何与操作系统相关的库——因此我们必须禁用<strong>标准库自动引用</strong>（automatic inclusion）。使用 <a href="https://doc.rust-lang.org/book/first-edition/using-rust-without-the-standard-library.html">no_std 属性</a>可以实现这一点。</p>
+<p>我们可以从创建一个新的 cargo 项目开始。最简单的办法是使用下面的命令：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">&gt; cargo new blog_os
+</span></pre>
+<p>在这里我把项目命名为 <code>blog_os</code>，当然读者也可以选择自己的项目名称。这里，cargo 默认为我们添加了<code>--bin</code> 选项，说明我们将要创建一个可执行文件（而不是一个库）；cargo还为我们添加了<code>--edition 2018</code> 标签，指明项目的包要使用 Rust 的 <strong>2018 版次</strong>（<a href="https://rust-lang-nursery.github.io/edition-guide/rust-2018/index.html">2018 edition</a>）。当我们执行这行指令的时候，cargo 为我们创建的目录结构如下：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">blog_os
+├── Cargo.toml
+└── src
+    └── main.rs
+</span></pre>
+<p>在这里，<code>Cargo.toml</code> 文件包含了包的<strong>配置</strong>（configuration），比如包的名称、作者、<a href="http://semver.org/">semver版本</a> 和项目依赖项；<code>src/main.rs</code> 文件包含包的<strong>根模块</strong>（root module）和 main 函数。我们可以使用 <code>cargo build</code> 来编译这个包，然后在 <code>target/debug</code> 文件夹内找到编译好的 <code>blog_os</code> 二进制文件。</p>
+<h3 id="no-std-shu-xing"><a class="zola-anchor" href="#no-std-shu-xing" aria-label="Anchor link for: no-std-shu-xing">🔗</a>no_std 属性</h3>
+<p>现在我们的包依然隐式地与标准库链接。为了禁用这种链接，我们可以尝试添加 <a href="https://doc.rust-lang.org/book/first-edition/using-rust-without-the-standard-library.html">no_std 属性</a>：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// main.rs
+
+</span><span style="color:#dcdcdc;">#![no_std]
+
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">main() {
+    println!(</span><span style="color:#d69d85;">&quot;Hello, world!&quot;</span><span style="color:#dcdcdc;">);
+}
+</span></pre>
+<p>看起来很顺利。当我们使用 <code>cargo build</code> 来编译的时候，却出现了下面的错误：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">error: cannot find </span><span style="color:#ff3333;">macro</span><span style="color:#dcdcdc;"> `println</span><span style="color:#569cd6;">!</span><span style="color:#dcdcdc;">` </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> this scope
+ </span><span style="color:#569cd6;">-</span><span style="color:#dcdcdc;">-&gt; src\main.rs:</span><span style="color:#b5cea8;">4</span><span style="color:#dcdcdc;">:</span><span style="color:#b5cea8;">5
+  </span><span style="color:#569cd6;">|
+</span><span style="color:#b5cea8;">4 </span><span style="color:#569cd6;">|     </span><span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;Hello, world!&quot;</span><span style="color:#dcdcdc;">);
+  |     ^^^^^^^
+</span></pre>
+<p>出现这个错误的原因是：<a href="https://doc.rust-lang.org/std/macro.println.html">println! 宏</a>是标准库的一部分，而我们的项目不再依赖于标准库。我们选择不再打印字符串。这也很好理解，因为 <code>println!</code> 将会向<strong>标准输出</strong>（<a href="https://en.wikipedia.org/wiki/Standard_streams#Standard_output_.28stdout.29">standard output</a>）打印字符，它依赖于特殊的文件描述符，而这是由操作系统提供的特性。</p>
+<p>所以我们可以移除这行代码，使用一个空的 main 函数再次尝试编译：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// main.rs
+
+</span><span style="color:#dcdcdc;">#![no_std]
+
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">main() {}
+</span></pre><pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">&gt; cargo build
+error: `#[panic_handler]` function required, but not found
+error: language item required, but not found: `eh_personality`
+</span></pre>
+<p>现在我们发现，编译器缺少一个 <code>#[panic_handler]</code> 函数和一个<strong>语言项</strong>（language item）。</p>
+<h2 id="shi-xian-panic-chu-li-han-shu"><a class="zola-anchor" href="#shi-xian-panic-chu-li-han-shu" aria-label="Anchor link for: shi-xian-panic-chu-li-han-shu">🔗</a>实现 panic 处理函数</h2>
+<p><code>panic_handler</code> 属性定义了一个函数，它会在一个 panic 发生时被调用。标准库中提供了自己的 panic 处理函数，但在 <code>no_std</code> 环境中，我们需要定义一个自己的 panic 处理函数：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in main.rs
+
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
+
+</span><span style="color:#608b4e;">/// 这个函数将在 panic 时被调用
+</span><span style="color:#dcdcdc;">#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(_info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
+}
+</span></pre>
+<p>类型为 <a href="https://doc.rust-lang.org/nightly/core/panic/struct.PanicInfo.html">PanicInfo</a> 的参数包含了 panic 发生的文件名、代码行数和可选的错误信息。这个函数从不返回，所以他被标记为<strong>发散函数</strong>（<a href="https://doc.rust-lang.org/book/first-edition/functions.html#diverging-functions">diverging function</a>）。发散函数的返回类型称作 <strong>Never 类型</strong>（<a href="https://doc.rust-lang.org/nightly/std/primitive.never.html">&quot;never&quot; type</a>），记为<code>!</code>。对这个函数，我们目前能做的很少，所以我们只需编写一个无限循环 <code>loop {}</code>。</p>
+<h2 id="eh-personality-yu-yan-xiang"><a class="zola-anchor" href="#eh-personality-yu-yan-xiang" aria-label="Anchor link for: eh-personality-yu-yan-xiang">🔗</a>eh_personality 语言项</h2>
+<p>语言项是一些编译器需求的特殊函数或类型。举例来说，Rust 的 <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html">Copy</a> trait 是一个这样的语言项，告诉编译器哪些类型需要遵循<strong>复制语义</strong>（<a href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html">copy semantics</a>）——当我们查找 <code>Copy</code> trait 的<a href="https://github.com/rust-lang/rust/blob/485397e49a02a3b7ff77c17e4a3f16c653925cb3/src/libcore/marker.rs#L296-L299">实现</a>时，我们会发现，一个特殊的 <code>#[lang = &quot;copy&quot;]</code> 属性将它定义为了一个语言项，达到与编译器联系的目的。</p>
+<p>我们可以自己实现语言项，但这是下下策：目前来看，语言项是高度不稳定的语言细节实现，它们不会经过编译期类型检查（所以编译器甚至不确保它们的参数类型是否正确）。幸运的是，我们有更稳定的方式，来修复上面的语言项错误。</p>
+<p><code>eh_personality</code> 语言项标记的函数，将被用于实现<strong>栈展开</strong>（<a href="http://www.bogotobogo.com/cplusplus/stackunwinding.php">stack unwinding</a>）。在使用标准库的情况下，当 panic 发生时，Rust 将使用栈展开，来运行在栈上所有活跃的变量的<strong>析构函数</strong>（destructor）——这确保了所有使用的内存都被释放，允许调用程序的<strong>父进程</strong>（parent thread）捕获 panic，处理并继续运行。但是，栈展开是一个复杂的过程，如 Linux 的 <a href="http://www.nongnu.org/libunwind/">libunwind</a> 或 Windows 的<strong>结构化异常处理</strong>（<a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680657(v=vs.85).aspx">structured exception handling, SEH</a>），通常需要依赖于操作系统的库；所以我们不在自己编写的操作系统中使用它。</p>
+<h3 id="jin-yong-zhan-zhan-kai"><a class="zola-anchor" href="#jin-yong-zhan-zhan-kai" aria-label="Anchor link for: jin-yong-zhan-zhan-kai">🔗</a>禁用栈展开</h3>
+<p>在其它一些情况下，栈展开并不是迫切需求的功能；因此，Rust 提供了<strong>在 panic 时中止</strong>（<a href="https://github.com/rust-lang/rust/pull/32900">abort on panic</a>）的选项。这个选项能禁用栈展开相关的标志信息生成，也因此能缩小生成的二进制程序的长度。有许多方式能打开这个选项，最简单的方式是把下面的几行设置代码加入我们的 <code>Cargo.toml</code>：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">[</span><span style="color:#808080;">profile.dev</span><span style="color:#dcdcdc;">]
+</span><span style="color:#569cd6;">panic </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;abort&quot;
+
+</span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">profile.release</span><span style="color:#dcdcdc;">]
+</span><span style="color:#569cd6;">panic </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;abort&quot;
+</span></pre>
+<p>这些选项能将 <strong>dev 配置</strong>（dev profile）和 <strong>release 配置</strong>（release profile）的 panic 策略设为 <code>abort</code>。<code>dev</code> 配置适用于 <code>cargo build</code>，而 <code>release</code> 配置适用于 <code>cargo build --release</code>。现在编译器应该不再要求我们提供 <code>eh_personality</code> 语言项实现。</p>
+<p>现在我们已经修复了出现的两个错误，可以开始编译了。然而，尝试编译运行后，一个新的错误出现了：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">&gt; cargo build
+error: requires `start` lang_item
+</span></pre><h2 id="start-yu-yan-xiang"><a class="zola-anchor" href="#start-yu-yan-xiang" aria-label="Anchor link for: start-yu-yan-xiang">🔗</a>start 语言项</h2>
+<p>这里，我们的程序遗失了 <code>start</code> 语言项，它将定义一个程序的<strong>入口点</strong>（entry point）。</p>
+<p>我们通常会认为，当运行一个程序时，首先被调用的是 <code>main</code> 函数。但是，大多数语言都拥有一个<strong>运行时系统</strong>（<a href="https://en.wikipedia.org/wiki/Runtime_system">runtime system</a>），它通常为<strong>垃圾回收</strong>（garbage collection）或<strong>绿色线程</strong>（software threads，或 green threads）服务，如 Java 的 GC 或 Go 语言的协程（goroutine）；这个运行时系统需要在 main 函数前启动，因为它需要让程序初始化。</p>
+<p>在一个典型的使用标准库的 Rust 程序中，程序运行是从一个名为 <code>crt0</code> 的运行时库开始的。<code>crt0</code> 意为 C runtime zero，它能建立一个适合运行 C 语言程序的环境，这包含了栈的创建和可执行程序参数的传入。在这之后，这个运行时库会调用 <a href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">Rust 的运行时入口点</a>，这个入口点被称作 <strong>start语言项</strong>（&quot;start&quot; language item）。Rust 只拥有一个极小的运行时，它被设计为拥有较少的功能，如爆栈检测和打印<strong>堆栈轨迹</strong>（stack trace）。这之后，这个运行时将会调用 main 函数。</p>
+<p>我们的独立式可执行程序并不能访问 Rust 运行时或 <code>crt0</code> 库，所以我们需要定义自己的入口点。只实现一个 <code>start</code> 语言项并不能帮助我们，因为这之后程序依然要求 <code>crt0</code> 库。所以，我们要做的是，直接重写整个 <code>crt0</code> 库和它定义的入口点。</p>
+<h3 id="zhong-xie-ru-kou-dian"><a class="zola-anchor" href="#zhong-xie-ru-kou-dian" aria-label="Anchor link for: zhong-xie-ru-kou-dian">🔗</a>重写入口点</h3>
+<p>要告诉 Rust 编译器我们不使用预定义的入口点，我们可以添加 <code>#![no_main]</code> 属性。</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">#![no_std]
+#![no_main]
+
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
+
+</span><span style="color:#608b4e;">/// 这个函数将在 panic 时被调用
+</span><span style="color:#dcdcdc;">#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(_info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
+}
+</span></pre>
+<p>读者也许会注意到，我们移除了 <code>main</code> 函数。原因很显然，既然没有底层运行时调用它，<code>main</code> 函数也失去了存在的必要性。为了重写操作系统的入口点，我们转而编写一个 <code>_start</code> 函数：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
+}
+</span></pre>
+<p>我们使用 <code>no_mangle</code> 标记这个函数，来对它禁用<strong>名称重整</strong>（<a href="https://en.wikipedia.org/wiki/Name_mangling">name mangling</a>）——这确保 Rust 编译器输出一个名为 <code>_start</code> 的函数；否则，编译器可能最终生成名为 <code>_ZN3blog_os4_start7hb173fedf945531caE</code> 的函数，无法让链接器正确辨别。</p>
+<p>我们还将函数标记为 <code>extern &quot;C&quot;</code>，告诉编译器这个函数应当使用 <a href="https://en.wikipedia.org/wiki/Calling_convention">C 语言的调用约定</a>，而不是 Rust 语言的调用约定。函数名为 <code>_start</code> ，是因为大多数系统默认使用这个名字作为入口点名称。</p>
+<p>与前文的 <code>panic</code> 函数类似，这个函数的返回值类型为<code>!</code>——它定义了一个发散函数，或者说一个不允许返回的函数。这一点很重要，因为这个入口点不会被任何函数调用，但将直接被操作系统或<strong>引导程序</strong>（bootloader）调用。所以作为函数返回的替代，这个入口点应该去调用，比如操作系统提供的 <strong>exit 系统调用</strong>（<a href="https://en.wikipedia.org/wiki/Exit_(system_call)">&quot;exit&quot; system call</a>）函数。在我们编写操作系统的情况下，关机应该是一个合适的选择，因为<strong>当一个独立式可执行程序返回时，不会留下任何需要做的事情</strong>（there is nothing to do if a freestanding binary returns）。现在来看，我们可以添加一个无限循环，来满足对返回值类型的需求。</p>
+<p>如果我们现在编译这段程序，会出来一大段不太好看的<strong>链接器错误</strong>（linker error）。</p>
+<h2 id="lian-jie-qi-cuo-wu"><a class="zola-anchor" href="#lian-jie-qi-cuo-wu" aria-label="Anchor link for: lian-jie-qi-cuo-wu">🔗</a>链接器错误</h2>
+<p><strong>链接器</strong>（linker）是一个程序，它将生成的目标文件组合为一个可执行文件。不同的操作系统如 Windows、macOS、Linux，规定了不同的可执行文件格式，因此也各有自己的链接器，抛出不同的错误；但这些错误的根本原因还是相同的：链接器的默认配置假定程序依赖于C语言的运行时环境，但我们的程序并不依赖于它。</p>
+<p>为了解决这个错误，我们需要告诉链接器，它不应该包含（include）C 语言运行环境。我们可以选择提供特定的<strong>链接器参数</strong>（linker argument），也可以选择编译为<strong>裸机目标</strong>（bare metal target）。</p>
+<h3 id="bian-yi-wei-luo-ji-mu-biao"><a class="zola-anchor" href="#bian-yi-wei-luo-ji-mu-biao" aria-label="Anchor link for: bian-yi-wei-luo-ji-mu-biao">🔗</a>编译为裸机目标</h3>
+<p>在默认情况下，Rust 尝试适配当前的系统环境，编译可执行程序。举个例子，如果你使用 <code>x86_64</code> 平台的 Windows 系统，Rust 将尝试编译一个扩展名为 <code>.exe</code> 的 Windows 可执行程序，并使用 <code>x86_64</code> 指令集。这个环境又被称作为你的<strong>宿主系统</strong>（&quot;host&quot; system）。</p>
+<p>为了描述不同的环境，Rust 使用一个称为<strong>目标三元组</strong>（target triple）的字符串。要查看当前系统的目标三元组，我们可以运行 <code>rustc --version --verbose</code>：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">rustc 1.35.0-nightly (474e7a648 2019-04-07)
+binary: rustc
+commit-hash: 474e7a6486758ea6fc761893b1a49cd9076fb0ab
+commit-date: 2019-04-07
+host: x86_64-unknown-linux-gnu
+release: 1.35.0-nightly
+LLVM version: 8.0
+</span></pre>
+<p>上面这段输出来自一个 <code>x86_64</code> 平台下的 Linux 系统。我们能看到，<code>host</code> 字段的值为三元组 <code>x86_64-unknown-linux-gnu</code>，它包含了 CPU 架构 <code>x86_64</code> 、供应商 <code>unknown</code> 、操作系统 <code>linux</code> 和<a href="https://en.wikipedia.org/wiki/Application_binary_interface">二进制接口</a> <code>gnu</code>。</p>
+<p>Rust 编译器尝试为当前系统的三元组编译，并假定底层有一个类似于 Windows 或 Linux 的操作系统提供C语言运行环境——然而这将导致链接器错误。所以，为了避免这个错误，我们可以另选一个底层没有操作系统的运行环境。</p>
+<p>这样的运行环境被称作裸机环境，例如目标三元组 <code>thumbv7em-none-eabihf</code> 描述了一个 ARM <strong>嵌入式系统</strong>（<a href="https://en.wikipedia.org/wiki/Embedded_system">embedded system</a>）。我们暂时不需要了解它的细节，只需要知道这个环境底层没有操作系统——这是由三元组中的 <code>none</code> 描述的。要为这个目标编译，我们需要使用 rustup 添加它：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">rustup target add thumbv7em-none-eabihf
+</span></pre>
+<p>这行命令将为目标下载一个标准库和 core 库。这之后，我们就能为这个目标构建独立式可执行程序了：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">cargo build --target thumbv7em-none-eabihf
+</span></pre>
+<p>我们传递了 <code>--target</code> 参数，来为裸机目标系统<strong>交叉编译</strong>（<a href="https://en.wikipedia.org/wiki/Cross_compiler">cross compile</a>）我们的程序。我们的目标并不包括操作系统，所以链接器不会试着链接 C 语言运行环境，因此构建过程成功会完成，不会产生链接器错误。</p>
+<p>我们将使用这个方法编写自己的操作系统内核。我们不会编译到 <code>thumbv7em-none-eabihf</code>，而是使用描述 <code>x86_64</code> 环境的<strong>自定义目标</strong>（<a href="https://doc.rust-lang.org/rustc/targets/custom.html">custom target</a>）。在下一篇文章中，我们将详细描述一些相关的细节。</p>
+<h3 id="lian-jie-qi-can-shu"><a class="zola-anchor" href="#lian-jie-qi-can-shu" aria-label="Anchor link for: lian-jie-qi-can-shu">🔗</a>链接器参数</h3>
+<p>我们也可以选择不编译到裸机系统，因为传递特定的参数也能解决链接器错误问题。虽然我们不会在后面使用到这个方法，为了教程的完整性，我们也撰写了专门的短文章，来提供这个途径的解决方案。</p>
+<h2 id="xiao-jie"><a class="zola-anchor" href="#xiao-jie" aria-label="Anchor link for: xiao-jie">🔗</a>小结</h2>
+<p>一个用 Rust 编写的最小化的独立式可执行程序应该长这样：</p>
+<p><code>src/main.rs</code>：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">#![no_std] </span><span style="color:#608b4e;">// 不链接 Rust 标准库
+</span><span style="color:#dcdcdc;">#![no_main] </span><span style="color:#608b4e;">// 禁用所有 Rust 层级的入口点
+
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
+
+#[no_mangle] </span><span style="color:#608b4e;">// 不重整函数名
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#608b4e;">// 因为编译器会寻找一个名为 `_start` 的函数，所以这个函数就是入口点
+    // 默认命名为 `_start`
+    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
+}
+
+</span><span style="color:#608b4e;">/// 这个函数将在 panic 时被调用
+</span><span style="color:#dcdcdc;">#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(_info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
+}
+</span></pre>
+<p><code>Cargo.toml</code>：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">[</span><span style="color:#808080;">package</span><span style="color:#dcdcdc;">]
+</span><span style="color:#569cd6;">name </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;crate_name&quot;
+</span><span style="color:#569cd6;">version </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.1.0&quot;
+</span><span style="color:#569cd6;">authors </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;Author Name &lt;author@example.com&gt;&quot;</span><span style="color:#dcdcdc;">]
+
+</span><span style="color:#608b4e;"># 使用 `cargo build` 编译时需要的配置
+</span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">profile.dev</span><span style="color:#dcdcdc;">]
+</span><span style="color:#569cd6;">panic </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;abort&quot; </span><span style="color:#608b4e;"># 禁用panic时栈展开
+
+# 使用 `cargo build --release` 编译时需要的配置
+</span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">profile.release</span><span style="color:#dcdcdc;">]
+</span><span style="color:#569cd6;">panic </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;abort&quot; </span><span style="color:#608b4e;"># 禁用 panic 时栈展开
+</span></pre>
+<p>选用任意一个裸机目标来编译。比如对 <code>thumbv7em-none-eabihf</code>，我们使用以下命令：</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">cargo build --target thumbv7em-none-eabihf
+</span></pre>
+<p>要注意的是，现在我们的代码只是一个 Rust 编写的独立式可执行程序的一个例子。运行这个二进制程序还需要很多准备，比如在 <code>_start</code> 函数之前需要一个已经预加载完毕的栈。所以为了真正运行这样的程序，我们还有很多事情需要做。</p>
+<h2 id="xia-pian-yu-lan"><a class="zola-anchor" href="#xia-pian-yu-lan" aria-label="Anchor link for: xia-pian-yu-lan">🔗</a>下篇预览</h2>
+<p>下一篇文章要做的事情基于我们这篇文章的成果，它将详细讲述编写一个最小的操作系统内核需要的步骤：如何配置特定的编译目标，如何将可执行程序与引导程序拼接，以及如何把一些特定的字符串打印到屏幕上。</p>
+
+
+    <div class="post-footer-support">
+        <h2>Support Me</h2>
+        <p>
+    Creating and <a href="https:&#x2F;&#x2F;os.phil-opp.com&#x2F;status-update&#x2F;">maintaining</a> this blog and the associated libraries is a lot of work, but I really enjoy doing it. By supporting me, you allow me to invest more time in new content, new features, and continuous maintenance.
+</p>
+<p>
+    The best way to support me is to <a href="https://github.com/sponsors/phil-opp"><em>sponsor me on GitHub</em></a>. GitHub will even match sponsorships until October 2020! If you prefer other platforms, I also have <a href="https://www.patreon.com/phil_opp"><em>Patreon</em></a> and <a href="https://donorbox.org/phil-opp"><em>Donorbox</em></a> accounts. The latter is the most flexible as it supports multiple currencies and one-time contributions.
+</p>
+<p>
+    Thank you!
+</p>
+    </div>
+</main>
+
+        <div>
+    <hr>
+    <div class="PageNavigation">
+        
+        
+            <a class="next" href="/zh-CN/minimal-rust-kernel/">最小化内核 &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments">Comments</h2>
+        
+    <script src="https://utteranc.es/client.js"
+        data-repo="phil-opp/blog_os"
+        data-issue-term="url"
+        data-label="comments"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    </section>
+
+</div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2020">2020</time>. All rights reserved.
+                <a href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+
+    <!-- Fathom - simple website analytics - https://github.com/usefathom/fathom -->
+    <script>
+        (function(f, a, t, h, o, m){
+            a[h]=a[h]||function(){
+                (a[h].q=a[h].q||[]).push(arguments)
+            };
+            o=f.createElement('script'),
+            m=f.getElementsByTagName('script')[0];
+            o.async=1; o.src=t; o.id='fathom-script';
+            m.parentNode.insertBefore(o,m)
+        })(document, window, '//fathom.phil-opp.com/tracker.js', 'fathom');
+        fathom('set', 'siteId', 'MUXWM');
+        fathom('trackPageview');
+    </script>
+    <!-- / Fathom -->
+</body>
+
+</html>
