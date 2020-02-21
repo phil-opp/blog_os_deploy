@@ -400,7 +400,7 @@
     </span><span style="color:#608b4e;">// TODO restore recursive mapping to original p4 table
 </span><span style="color:#dcdcdc;">}
 </span></pre>
-<p>It overwrites the 511th P4 entry and points it to the inactive table frame. Then it flushes the <a href="http://wiki.osdev.org/TLB">translation lookaside buffer (TLB)</a>, which still contains some old translations. We need to flush all pages that are part of the recursive mapping, so the easiest way is to flush the TLB completely.</p>
+<p>It overwrites the 511th P4 entry and points it to the inactive table frame. Then it flushes the <a href="https://wiki.osdev.org/TLB">translation lookaside buffer (TLB)</a>, which still contains some old translations. We need to flush all pages that are part of the recursive mapping, so the easiest way is to flush the TLB completely.</p>
 <p>Now that the recursive mapping points to the given inactive table, we execute the closure in the new context. The closure can call all active table methods such as <code>translate</code> or <code>map_to</code>. It could even call <code>with</code> again and chain another inactive table! Wait… that would not work:</p>
 <p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_access_p1_invalid_chaining.svg" alt="access inactive P3 table through recursive mapping" /></p>
 <p>Here the closure called <code>with</code> again and thus changed the recursive mapping of the inactive table to point to a second inactive table. Now we want to modify the P1 of the <em>second</em> inactive table, but instead we land on the P1 of the <em>first</em> inactive table since we never follow the pointer to the second table. Only when modifying the P2, P3, or P4 table we really access the second inactive table. This inconsistency would break our mapping functions completely.</p>
@@ -479,7 +479,7 @@
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ control_regs::cr3() } </span><span style="color:#569cd6;">as usize
 </span><span style="color:#dcdcdc;">);
 </span></pre>
-<p>Why is it unsafe? Because reading the CR3 register leads to a CPU exception if the processor is not running in kernel mode (<a href="http://wiki.osdev.org/Security#Low-level_Protection_Mechanisms">Ring 0</a>). But this code will always run in kernel mode, so the <code>unsafe</code> block is completely safe here.</p>
+<p>Why is it unsafe? Because reading the CR3 register leads to a CPU exception if the processor is not running in kernel mode (<a href="https://wiki.osdev.org/Security#Low-level_Protection_Mechanisms">Ring 0</a>). But this code will always run in kernel mode, so the <code>unsafe</code> block is completely safe here.</p>
 <p>Now that we have a backup of the original P4 frame, we need a way to restore it after the closure has run. So we need to somehow modify the 511th entry of the original P4 frame, which is still the active table in the CPU. But we can't access it because the recursive mapping now points to the inactive table:</p>
 <p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_inactive_table_scheme.svg" alt="it's not possible to access the original P4 through recursive mapping anymore" /></p>
 <p>It's just not possible to access the active P4 entry in 4 steps, so we can't reach it through the 4-level page table.</p>
@@ -784,10 +784,10 @@ check_exception old: 0xffffffff new 0xe
 <p>These lines are the important ones. We can read many useful information from them:</p>
 <ul>
 <li>
-<p><code>v=0e</code>: An exception with number <code>0xe</code> occurred, which is a page fault according to the <a href="http://wiki.osdev.org/Exceptions">OSDev Wiki</a>.</p>
+<p><code>v=0e</code>: An exception with number <code>0xe</code> occurred, which is a page fault according to the <a href="https://wiki.osdev.org/Exceptions">OSDev Wiki</a>.</p>
 </li>
 <li>
-<p><code>e=0002</code>: The CPU set an <a href="http://wiki.osdev.org/Exceptions#Error_code">error code</a>, which tells us why the exception occurred. The <code>0x2</code> bit tells us that it was caused by a write operation. And since the <code>0x1</code> bit is not set, the target page was not present.</p>
+<p><code>e=0002</code>: The CPU set an <a href="https://wiki.osdev.org/Exceptions#Error_code">error code</a>, which tells us why the exception occurred. The <code>0x2</code> bit tells us that it was caused by a write operation. And since the <code>0x1</code> bit is not set, the target page was not present.</p>
 </li>
 <li>
 <p><code>IP=0008:000000000010ab97</code> or <code>pc=000000000010ab97</code>: The program counter register tells us that the exception occurred when the CPU tried to execute the instruction at <code>0x10ab97</code>. We can disassemble this address to see the corresponding function. The <code>0008:</code> prefix in <code>IP</code> indicates the code <a href="https://os.phil-opp.com/entering-longmode/#loading-the-gdt">GDT segment</a>.</p>
@@ -927,7 +927,7 @@ check_exception old: 0xffffffff new 0xe
 </span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>But when we test it now, we get a page fault again. We can use the same technique as above to get the responsible function. I won't bother you with the QEMU output and just tell you the results:</p>
-<p>This time the responsible function is <code>control_regs::cr3_write()</code> itself. From the <a href="http://wiki.osdev.org/Exceptions#Error_code">error code</a> we learn that it was a page protection violation and caused by “reading a 1 in a reserved field”. So the page table had some reserved bit set that should be always 0. It must be the <code>NO_EXECUTE</code> flag, since it's the only new bit that we set in the page table.</p>
+<p>This time the responsible function is <code>control_regs::cr3_write()</code> itself. From the <a href="https://wiki.osdev.org/Exceptions#Error_code">error code</a> we learn that it was a page protection violation and caused by “reading a 1 in a reserved field”. So the page table had some reserved bit set that should be always 0. It must be the <code>NO_EXECUTE</code> flag, since it's the only new bit that we set in the page table.</p>
 <h3 id="the-nxe-bit"><a class="zola-anchor" href="#the-nxe-bit" aria-label="Anchor link for: the-nxe-bit">🔗</a>The NXE Bit</h3>
 <p>The reason is that the <code>NO_EXECUTE</code> bit must only be used when the <code>NXE</code> bit in the <a href="https://en.wikipedia.org/wiki/Control_register#EFER">Extended Feature Enable Register</a> (EFER) is set. That register is similar to Rust's feature gating and can be used to enable all sorts of advanced CPU features. Since the <code>NXE</code> bit is off by default, we caused a page fault when we added the <code>NO_EXECUTE</code> bit to the page table.</p>
 <p>So we need to enable the <code>NXE</code> bit. For that we use the <a href="https://docs.rs/x86_64">x86_64 crate</a> again:</p>
