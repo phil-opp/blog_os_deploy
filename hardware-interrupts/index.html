@@ -633,12 +633,12 @@ lazy_static! {
 <p>The above code translates keypresses of the number keys 0-9 and ignores all other keys. It uses a <a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a> statement to assign a character or <code>None</code> to each scancode. It then uses <a href="https://doc.rust-lang.org/book/ch18-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a> to destructure the optional <code>key</code>. By using the same variable name <code>key</code> in the pattern, we <a href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">shadow</a> the previous declaration, which is a common pattern for destructuring <code>Option</code> types in Rust.</p>
 <p>Now we can write numbers:</p>
 <p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
-<p>Translating the other keys works in the same way. Fortunately there is a crate named <a href="https://docs.rs/pc-keyboard/0.3.1/pc_keyboard/"><code>pc-keyboard</code></a> for translating scancodes of scancode sets 1 and 2, so we don't have to implement this ourselves. To use the crate, we add it to our <code>Cargo.toml</code> and import it in our <code>lib.rs</code>:</p>
+<p>Translating the other keys works in the same way. Fortunately there is a crate named <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/"><code>pc-keyboard</code></a> for translating scancodes of scancode sets 1 and 2, so we don't have to implement this ourselves. To use the crate, we add it to our <code>Cargo.toml</code> and import it in our <code>lib.rs</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
-</span><span style="color:#569cd6;">pc-keyboard </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.3.1&quot;
+</span><span style="color:#569cd6;">pc-keyboard </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.5.0&quot;
 </span></pre>
 <p>Now we can use this crate to rewrite our <code>keyboard_interrupt_handler</code>:</p>
 <pre style="background-color:#1e1e1e;">
@@ -647,13 +647,15 @@ lazy_static! {
 </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">keyboard_interrupt_handler(
     _stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> InterruptStackFrame)
 {
-    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::instructions::port::Port;
-    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">pc_keyboard::{Keyboard, ScancodeSet1, DecodedKey, layouts};
+    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">spin::Mutex;
+    </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::instructions::port::Port;
 
     lazy_static! {
         </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">KEYBOARD</span><span style="color:#dcdcdc;">: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; </span><span style="color:#569cd6;">=
-            </span><span style="color:#dcdcdc;">Mutex::new(Keyboard::new(layouts::Us104Key, ScancodeSet1));
+            </span><span style="color:#dcdcdc;">Mutex::new(Keyboard::new(layouts::Us104Key, ScancodeSet1,
+                HandleControl::Ignore)
+            );
     }
 
     </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> keyboard </span><span style="color:#569cd6;">= </span><span style="color:#b4cea8;">KEYBOARD</span><span style="color:#dcdcdc;">.lock();
@@ -675,8 +677,9 @@ lazy_static! {
     }
 }
 </span></pre>
-<p>We use the <code>lazy_static</code> macro to create a static <a href="https://docs.rs/pc-keyboard/0.3.1/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> object protected by a Mutex. On each interrupt, we lock the Mutex, read the scancode from the keyboard controller and pass it to the <a href="https://docs.rs/pc-keyboard/0.3.1/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> method, which translates the scancode into an <code>Option&lt;KeyEvent&gt;</code>. The <a href="https://docs.rs/pc-keyboard/0.3.1/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> contains which key caused the event and whether it was a press or release event.</p>
-<p>To interpret this key event, we pass it to the <a href="https://docs.rs/pc-keyboard/0.3.1/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> method, which translates the key event to a character if possible. For example, translates a press event of the <code>A</code> key to either a lowercase <code>a</code> character or an uppercase <code>A</code> character, depending on whether the shift key was pressed.</p>
+<p>We use the <code>lazy_static</code> macro to create a static <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> object protected by a Mutex. We initialize the <code>Keyboard</code> with an US keyboard layout and the scancode set 1. The <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> parameter allows to map <code>ctrl+[a-z]</code> to the Unicode characters <code>U+0001</code> through <code>U+001A</code>. We don't want to do that, so we use the <code>Ignore</code> option to handle the <code>ctrl</code> like normal keys.</p>
+<p>On each interrupt, we lock the Mutex, read the scancode from the keyboard controller and pass it to the <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> method, which translates the scancode into an <code>Option&lt;KeyEvent&gt;</code>. The <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> contains which key caused the event and whether it was a press or release event.</p>
+<p>To interpret this key event, we pass it to the <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> method, which translates the key event to a character if possible. For example, translates a press event of the <code>A</code> key to either a lowercase <code>a</code> character or an uppercase <code>A</code> character, depending on whether the shift key was pressed.</p>
 <p>With this modified interrupt handler we can now write text:</p>
 <p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-typing.gif" alt="Typing &quot;Hello World&quot; in QEMU" /></p>
 <h3 id="configuring-the-keyboard"><a class="zola-anchor" href="#configuring-the-keyboard" aria-label="Anchor link for: configuring-the-keyboard">🔗</a>Configuring the Keyboard</h3>
