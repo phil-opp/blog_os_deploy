@@ -967,30 +967,40 @@ features &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;= [&lt;&
 &lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; in src&#x2F;task&#x2F;mod.rs
 
 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;TaskId(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;usize&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;TaskId(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;u64&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
 &lt;&#x2F;span&gt;&lt;&#x2F;pre&gt;
-&lt;p&gt;The &lt;code&gt;TaskId&lt;&#x2F;code&gt; struct is a simple wrapper type around &lt;code&gt;usize&lt;&#x2F;code&gt;. We derive a number of traits for it to make it printable, copyable, comparable, and sortable. The latter is important because we want to use &lt;code&gt;TaskId&lt;&#x2F;code&gt; as the key type of a &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;alloc&#x2F;collections&#x2F;btree_map&#x2F;struct.BTreeMap.html&quot;&gt;&lt;code&gt;BTreeMap&lt;&#x2F;code&gt;&lt;&#x2F;a&gt; in a moment.&lt;&#x2F;p&gt;
-&lt;p&gt;To assign each task an unique ID, we utilize the fact that each task stores a pinned, heap-allocated future:&lt;&#x2F;p&gt;
+&lt;p&gt;The &lt;code&gt;TaskId&lt;&#x2F;code&gt; struct is a simple wrapper type around &lt;code&gt;u64&lt;&#x2F;code&gt;. We derive a number of traits for it to make it printable, copyable, comparable, and sortable. The latter is important because we want to use &lt;code&gt;TaskId&lt;&#x2F;code&gt; as the key type of a &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;alloc&#x2F;collections&#x2F;btree_map&#x2F;struct.BTreeMap.html&quot;&gt;&lt;code&gt;BTreeMap&lt;&#x2F;code&gt;&lt;&#x2F;a&gt; in a moment.&lt;&#x2F;p&gt;
+&lt;p&gt;To create a new unique ID, we create a &lt;code&gt;TaskID::new&lt;&#x2F;code&gt; function:&lt;&#x2F;p&gt;
 &lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#569cd6;&quot;&gt;pub struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;Task {
-    future: Pin&amp;lt;Box&amp;lt;dyn Future&amp;lt;Output = ()&amp;gt;&amp;gt;&amp;gt;,
-}
-&lt;&#x2F;span&gt;&lt;&#x2F;pre&gt;
-&lt;p&gt;The idea is to use the memory address of this future as an ID. This address is unique because no two futures are stored at the same address. The &lt;code&gt;Pin&lt;&#x2F;code&gt; type ensures that they can&#x27;t move in memory, so we also know that the address stays the same as long as the task exists. These properties make the address a good candidate for an ID.&lt;&#x2F;p&gt;
-&lt;p&gt;The implementation looks like this:&lt;&#x2F;p&gt;
-&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
-&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; in src&#x2F;task&#x2F;mod.rs
+&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;core::sync::atomic::{AtomicU64, Ordering};
 
-&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;Task {
-    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;id(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;self) -&amp;gt; TaskId {
-        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;use &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;core::ops::Deref;
-
-        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; addr &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;Pin::deref(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;self.future) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;as *const _ as *const &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;() &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;as usize&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;;
-        TaskId(addr)
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;TaskId {
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;new() -&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;Self &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;{
+        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;static &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b4cea8;&quot;&gt;NEXT_ID&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;: AtomicU64 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;AtomicU64::new(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;);
+        TaskId(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b4cea8;&quot;&gt;NEXT_ID&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;.fetch_add(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b5cea8;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;, Ordering::Relaxed))
     }
 }
 &lt;&#x2F;span&gt;&lt;&#x2F;pre&gt;
-&lt;p&gt;We use the &lt;code&gt;deref&lt;&#x2F;code&gt; method of the &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;core&#x2F;ops&#x2F;trait.Deref.html&quot;&gt;&lt;code&gt;Deref&lt;&#x2F;code&gt;&lt;&#x2F;a&gt; trait to get a reference to the heap allocated future. To get the corresponding memory address, we convert this reference to a raw pointer and then to an &lt;code&gt;usize&lt;&#x2F;code&gt;. Finally, we return the address wrapped in the &lt;code&gt;TaskId&lt;&#x2F;code&gt; struct.&lt;&#x2F;p&gt;
+&lt;p&gt;The function uses an static &lt;code&gt;NEXT_ID&lt;&#x2F;code&gt; variable of type &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;core&#x2F;sync&#x2F;atomic&#x2F;struct.AtomicU64.html&quot;&gt;&lt;code&gt;AtomicU64&lt;&#x2F;code&gt;&lt;&#x2F;a&gt; to ensure that each ID is assigned only once. The &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;core&#x2F;sync&#x2F;atomic&#x2F;struct.AtomicU64.html#method.fetch_add&quot;&gt;&lt;code&gt;fetch_add&lt;&#x2F;code&gt;&lt;&#x2F;a&gt; method atomically increases the value and returns the previous value in one atomic operation. This means that even when the &lt;code&gt;TaskId::new&lt;&#x2F;code&gt; method is called in parallel, every ID is returned exactly once. The &lt;a href=&quot;https:&#x2F;&#x2F;doc.rust-lang.org&#x2F;core&#x2F;sync&#x2F;atomic&#x2F;enum.Ordering.html&quot;&gt;&lt;code&gt;Ordering&lt;&#x2F;code&gt;&lt;&#x2F;a&gt; parameter defines whether the compiler is allowed to reorder the &lt;code&gt;fetch_add&lt;&#x2F;code&gt; operation in the instructions stream. Since we only require that the ID is unique, the &lt;code&gt;Relaxed&lt;&#x2F;code&gt; ordering with the weakest requirements is enough in this case.&lt;&#x2F;p&gt;
+&lt;p&gt;We can now extend our &lt;code&gt;Task&lt;&#x2F;code&gt; type with an additional &lt;code&gt;id&lt;&#x2F;code&gt; field:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
+&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; in src&#x2F;task&#x2F;mod.rs
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;Task {
+    id: TaskId, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; new
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;future: Pin&amp;lt;Box&amp;lt;dyn Future&amp;lt;Output = ()&amp;gt;&amp;gt;&amp;gt;,
+}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;Task {
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;pub fn &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;new(future: impl Future&amp;lt;Output = ()&amp;gt; + &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;#39;static&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;) -&amp;gt; Task {
+        Task {
+            id: TaskId::new(), &lt;&#x2F;span&gt;&lt;span style=&quot;color:#608b4e;&quot;&gt;&#x2F;&#x2F; new
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;            future: Box::pin(future),
+        }
+    }
+}
+&lt;&#x2F;span&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The new &lt;code&gt;id&lt;&#x2F;code&gt; field makes it possible to uniquely name a task, which required for waking a specific task.&lt;&#x2F;p&gt;
 &lt;h4 id=&quot;the-executor-type&quot;&gt;&lt;a class=&quot;zola-anchor&quot; href=&quot;#the-executor-type&quot; aria-label=&quot;Anchor link for: the-executor-type&quot;&gt;🔗&lt;&#x2F;a&gt;The &lt;code&gt;Executor&lt;&#x2F;code&gt; Type&lt;&#x2F;h4&gt;
 &lt;p&gt;We create our new &lt;code&gt;Executor&lt;&#x2F;code&gt; type in a &lt;code&gt;task::executor&lt;&#x2F;code&gt; module:&lt;&#x2F;p&gt;
 &lt;pre style=&quot;background-color:#1e1e1e;&quot;&gt;
@@ -1059,7 +1069,7 @@ features &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;= [&lt;&
 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;impl &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;Executor {
     &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;fn &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;run_ready_tasks(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;mut &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;self) {
         &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;while let &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;Some(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;mut&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; task) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;self.task_queue.pop_front() {
-            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; task_id &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; task.id();
+            &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; task_id &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;=&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt; task.id;
             &lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;if !&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;self.waker_cache.contains_key(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#569cd6;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#dcdcdc;&quot;&gt;task_id) {
                 self.waker_cache.insert(task_id, self.create_waker(task_id));
             }
