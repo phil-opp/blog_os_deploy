@@ -1148,54 +1148,47 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
 <span style="color:#608b4e;">// in src/task/executor.rs
 
 </span><span style="color:#569cd6;">use super</span><span style="color:#dcdcdc;">::{Task, TaskId};
-</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">alloc::{collections::{BTreeMap, VecDeque}, sync::Arc};
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">alloc::{collections::BTreeMap, sync::Arc};
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::task::Waker;
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">crossbeam_queue::ArrayQueue;
 
 </span><span style="color:#569cd6;">pub struct </span><span style="color:#dcdcdc;">Executor {
-    task_queue: VecDeque&lt;Task&gt;,
-    waiting_tasks: BTreeMap&lt;TaskId, Task&gt;,
-    wake_queue: Arc&lt;ArrayQueue&lt;TaskId&gt;&gt;,
+    tasks: BTreeMap&lt;TaskId, Task&gt;,
+    task_queue: Arc&lt;ArrayQueue&lt;TaskId&gt;&gt;,
     waker_cache: BTreeMap&lt;TaskId, Waker&gt;,
 }
 
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">Executor {
     </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">new() -&gt; </span><span style="color:#569cd6;">Self </span><span style="color:#dcdcdc;">{
         Executor {
-            task_queue: VecDeque::new(),
-            waiting_tasks: BTreeMap::new(),
-            wake_queue: Arc::new(ArrayQueue::new(</span><span style="color:#b5cea8;">100</span><span style="color:#dcdcdc;">)),
+            tasks: BTreeMap::new(),
+            task_queue: Arc::new(ArrayQueue::new(</span><span style="color:#b5cea8;">100</span><span style="color:#dcdcdc;">)),
             waker_cache: BTreeMap::new(),
         }
     }
 }
 </span></pre>
-<p>In addition to a <code>task_queue</code>, which stores the tasks that are ready to execute, the type has a <code>waiting_tasks</code> map, a <code>wake_queue</code> and a <code>waker_cache</code>. These fields have the following purpose:</p>
-<ul>
-<li>
-<p>The <code>waiting_tasks</code> map stores tasks that returned <code>Poll::Pending</code>. The map is indexed by the <code>TaskId</code> to allow efficient continuation of a specific task.</p>
-</li>
-<li>
-<p>The <code>wake_queue</code> is <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html"><code>ArrayQueue</code></a> of task IDs, wrapped into the <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> type that implements <em>reference counting</em>. Reference counting makes it possible to share ownership of the value between multiple owners. It works by allocating the value on the heap and counting the number of active references to it. When the number of active references reaches zero, the value is no longer needed and can be deallocated.</p>
-<p>We use the <code>Arc</code> wrapper for the <code>wake_queue</code> because it will be shared between the executor and wakers. The idea is that the wakers push the ID of the woken task to the queue. The executor sits on the receiving end of the queue and moves all woken tasks from the <code>waiting_tasks</code> map back to the <code>task_queue</code>. The reason for using a fixed-size queue instead of an unbounded queue such as <a href="https://docs.rs/crossbeam-queue/0.2.1/crossbeam_queue/struct.SegQueue.html"><code>SegQueue</code></a> is that interrupt handlers that should not allocate will push to this queue.</p>
-</li>
-<li>
-<p>The <code>waker_cache</code> map caches the <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> of a task after its creation. This has two reasons: First, it improves performance by reusing the same waker for multiple wake-ups of the same task instead of creating a new waker each time. Second, it ensures that reference-counted wakers are not deallocated inside interrupt handlers because it could lead to deadlocks (there are more details on this below).</p>
-</li>
-</ul>
-<p>To create an <code>Executor</code>, we provide a simple <code>new</code> function. We choose a capacity of 100 for the <code>wake_queue</code>, which should be more than enough for the foreseeable future. In case our system will have more than 100 concurrent tasks at some point, we can easily increase this size.</p>
+<p>Instead of storing tasks in a <a href="https://doc.rust-lang.org/stable/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a> like we did for our <code>SimpleExecutor</code>, we use a <code>task_queue</code> of task IDs and a <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a> named <code>tasks</code> that contains the actual <code>Task</code> instances. The map is indexed by the <code>TaskId</code> to allow efficient continuation of a specific task.</p>
+<p>The <code>task_queue</code> field is an <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html"><code>ArrayQueue</code></a> of task IDs, wrapped into the <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> type that implements <em>reference counting</em>. Reference counting makes it possible to share ownership of the value between multiple owners. It works by allocating the value on the heap and counting the number of active references to it. When the number of active references reaches zero, the value is no longer needed and can be deallocated.</p>
+<p>We use this <code>Arc&lt;ArrayQueue&gt;</code> type for the <code>task_queue</code> because it will be shared between the executor and wakers. The idea is that the wakers push the ID of the woken task to the queue. The executor sits on the receiving end of the queue, retrieves the woken tasks by their ID from the <code>tasks</code> map, and then runs them. The reason for using a fixed-size queue instead of an unbounded queue such as <a href="https://docs.rs/crossbeam-queue/0.2.1/crossbeam_queue/struct.SegQueue.html"><code>SegQueue</code></a> is that interrupt handlers that should not allocate will push to this queue.</p>
+<p>In addition to the <code>task_queue</code> and the <code>tasks</code> map, the <code>Executor</code> type has a <code>waker_cache</code> field that is also a map. This map caches the <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> of a task after its creation. This has two reasons: First, it improves performance by reusing the same waker for multiple wake-ups of the same task instead of creating a new waker each time. Second, it ensures that reference-counted wakers are not deallocated inside interrupt handlers because it could lead to deadlocks (there are more details on this below).</p>
+<p>To create an <code>Executor</code>, we provide a simple <code>new</code> function. We choose a capacity of 100 for the <code>task_queue</code>, which should be more than enough for the foreseeable future. In case our system will have more than 100 concurrent tasks at some point, we can easily increase this size.</p>
 <h4 id="spawning-tasks"><a class="zola-anchor" href="#spawning-tasks" aria-label="Anchor link for: spawning-tasks">🔗</a>Spawning Tasks</h4>
-<p>As for the <code>SimpleExecutor</code>, we provide a <code>spawn</code> method on our <code>Executor</code> type that adds a given task to the <code>task_queue</code>:</p>
+<p>As for the <code>SimpleExecutor</code>, we provide a <code>spawn</code> method on our <code>Executor</code> type that adds a given task to the <code>tasks</code> map and immediately wakes it by pushing its ID to the <code>task_queue</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/task/executor.rs
 
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">Executor {
     </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">spawn(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self, task: Task) {
-        self.task_queue.push_back(task)
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> task_id </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> task.id;
+        </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.tasks.insert(task.id, task).is_some() {
+            panic!(</span><span style="color:#d69d85;">&quot;task with same ID already in tasks&quot;</span><span style="color:#dcdcdc;">);
+        }
+        self.task_queue.push(task_id).expect(</span><span style="color:#d69d85;">&quot;queue full&quot;</span><span style="color:#dcdcdc;">);
     }
 }
 </span></pre>
-<p>While this method requires a <code>&amp;mut</code> reference to the executor it is not callable after the executor has been started. If it should be possible to let tasks themselves spawn additional tasks at some point, we could change the type of the task queue to a concurrent queue such as <a href="https://docs.rs/crossbeam-queue/0.2.1/crossbeam_queue/struct.SegQueue.html"><code>SegQueue</code></a> and share a reference to this queue with tasks.</p>
+<p>If there is already a task with the same idea in the map, the [<code>BTreeMap::insert</code>] method returns it. This should never happen since each task has an unique ID, so we panic in this case since it indicates a bug in our code. Similarly, we panic when the <code>task_queue</code> is full since this should never happen if we choose a large-enough queue size.</p>
 <h4 id="running-tasks"><a class="zola-anchor" href="#running-tasks" aria-label="Anchor link for: running-tasks">🔗</a>Running Tasks</h4>
 <p>To execute all tasks in the <code>task_queue</code>, we create a private <code>run_ready_tasks</code> method:</p>
 <pre style="background-color:#1e1e1e;">
@@ -1205,53 +1198,70 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
 
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">Executor {
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">run_ready_tasks(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) {
-        </span><span style="color:#569cd6;">while let </span><span style="color:#dcdcdc;">Some(</span><span style="color:#569cd6;">mut</span><span style="color:#dcdcdc;"> task) </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.task_queue.pop_front() {
-            </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> task_id </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> task.id;
-            </span><span style="color:#569cd6;">if !</span><span style="color:#dcdcdc;">self.waker_cache.contains_key(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">task_id) {
-                self.waker_cache.insert(task_id, self.create_waker(task_id));
-            }
-            </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> waker </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.waker_cache.get(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">task_id).expect(</span><span style="color:#d69d85;">&quot;should exist&quot;</span><span style="color:#dcdcdc;">);
+        </span><span style="color:#608b4e;">// destructure `self` to avoid borrow checker errors
+        </span><span style="color:#569cd6;">let Self </span><span style="color:#dcdcdc;">{
+            tasks,
+            task_queue,
+            waker_cache,
+        } </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self;
+
+        </span><span style="color:#569cd6;">while let </span><span style="color:#dcdcdc;">Ok(task_id) </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> task_queue.pop() {
+            </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> task </span><span style="color:#569cd6;">= match</span><span style="color:#dcdcdc;"> tasks.get_mut(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">task_id) {
+                Some(task) </span><span style="color:#569cd6;">=&gt;</span><span style="color:#dcdcdc;"> task,
+                None </span><span style="color:#569cd6;">=&gt; continue</span><span style="color:#dcdcdc;">, </span><span style="color:#608b4e;">// task no longer exists
+            </span><span style="color:#dcdcdc;">};
+            </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> waker </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> waker_cache
+                .entry(task_id)
+                .or_insert_with(|| TaskWaker::new(task_id, task_queue.clone()));
             </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> context </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Context::from_waker(waker);
             </span><span style="color:#569cd6;">match</span><span style="color:#dcdcdc;"> task.poll(</span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> context) {
                 Poll::Ready(()) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{
-                    </span><span style="color:#608b4e;">// task done -&gt; remove cached waker
-                    </span><span style="color:#dcdcdc;">self.waker_cache.remove(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">task_id);
+                    </span><span style="color:#608b4e;">// task done -&gt; remove it and its cached waker
+</span><span style="color:#dcdcdc;">                    tasks.remove(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">task_id);
+                    waker_cache.remove(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">task_id);
                 }
-                Poll::Pending </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{
-                    </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.waiting_tasks.insert(task_id, task).is_some() {
-                        panic!(</span><span style="color:#d69d85;">&quot;task with same ID already in waiting_tasks&quot;</span><span style="color:#dcdcdc;">);
-                    }
-                },
+                Poll::Pending </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{}
             }
         }
     }
 }
 </span></pre>
-<p>The basic idea of this function is similar to our <code>SimpleExecutor</code>: Loop over all tasks in the <code>task_queue</code>, create a waker for each task, and then poll it. However, instead of adding pending tasks back to the end of the <code>task_queue</code>, we store them in the <code>waiting_tasks</code> map until they are woken again. The waker creation is done by a method named <code>create_waker</code>, whose implemenation will be shown in a moment.</p>
-<p>To avoid the performance overhead of creating a waker on each poll, we use the <code>waker_cache</code> map to store the waker for each task after it has been created. For this, we first use the <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html#method.contains_key"><code>BTreeMap::contains_key</code></a> method to check whether a cached waker exists for the task. If not, we use the <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html#method.insert"><code>BTreeMap::insert</code></a> method to create it. Afterwards, we can be sure that the waker exists, so we use the <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html#method.get"><code>BTreeMap::get</code></a> method in combination with an <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.expect"><code>expect</code></a> call to get a reference to it.</p>
-<p>Note that reusing wakers like this is not possible for all waker implementations, but our implemenation will allow it. To clean up the <code>waker_cache</code> when a task is finished, we use the <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html#method.remove"><code>BTreeMap::remove</code></a> method to remove any cached waker for that task from the map.</p>
+<p>The basic idea of this function is similar to our <code>SimpleExecutor</code>: Loop over all tasks in the <code>task_queue</code>, create a waker for each task, and then poll it. However, instead of adding pending tasks back to the end of the <code>task_queue</code>, we let our <code>TaskWaker</code> implementation take care of of adding woken tasks back to the queue. The implementation of this waker type will be shown in a moment.</p>
+<p>Let's look into some of the implementation details of this <code>run_ready_tasks</code> method:</p>
+<ul>
+<li>
+<p>We use <a href="https://doc.rust-lang.org/book/ch18-03-pattern-syntax.html#destructuring-to-break-apart-values"><em>destructuring</em></a> to split <code>self</code> into its three fields to avoid some borrow checker errors. Namely, our implementation needs to access the <code>self.task_queue</code> from within a closure, which currently tries to borrow <code>self</code> completely. This is a fundamental borrow checker issue that will be resolved when <a href="https://github.com/rust-lang/rfcs/pull/2229">RFC 2229</a> is <a href="https://github.com/rust-lang/rust/issues/53488">implemented</a>.</p>
+</li>
+<li>
+<p>For each popped task ID, we retrieve a mutable reference to the corresponding task from the <code>tasks</code> map. Since our <code>ScancodeStream</code> implementation registers wakers before checking whether a task needs to be put to sleep, it might happen that a wake-up occurs for a task that no longer exists. In this case, we simply ignore the wake-up and continue with the next ID from the queue.</p>
+</li>
+<li>
+<p>To avoid the performance overhead of creating a waker on each poll, we use the <code>waker_cache</code> map to store the waker for each task after it has been created. For this, we use the <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html#method.entry"><code>BTreeMap::entry</code></a> method in combination with <a href="https://doc.rust-lang.org/alloc/collections/btree_map/enum.Entry.html#method.or_insert_with"><code>Entry::or_insert_with</code></a> to create a new waker if it doesn't exist yet and then get a mutable reference to it. For creating a new waker, we clone the <code>task_queue</code> and pass it together with the task ID to the <code>TaskWaker::new</code> function (implementation shown below). Since the <code>task_queue</code> is wrapped into <code>Arc</code>, the <code>clone</code> only increases the reference count of the value, but still points to the same heap allocated queue. Note that reusing wakers like this is not possible for all waker implementations, but our <code>TaskWaker</code> type will allow it.</p>
+</li>
+</ul>
+<p>A task is finished when it returns <code>Poll::Ready</code>. In that case, we remove it from the <code>tasks</code> map using the <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html#method.remove"><code>BTreeMap::remove</code></a> method. We also remove its cached waker, if it exists.</p>
 <h4 id="waker-design"><a class="zola-anchor" href="#waker-design" aria-label="Anchor link for: waker-design">🔗</a>Waker Design</h4>
-<p>The job of the waker is to push the ID of the woken task to the <code>wake_queue</code> of the executor. We implement this by creating a new <code>TaskWaker</code> struct that stores the task ID and a reference to the <code>wake_queue</code>:</p>
+<p>The job of the waker is to push the ID of the woken task to the <code>task_queue</code> of the executor. We implement this by creating a new <code>TaskWaker</code> struct that stores the task ID and a reference to the <code>task_queue</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/task/executor.rs
 
 </span><span style="color:#569cd6;">struct </span><span style="color:#dcdcdc;">TaskWaker {
     task_id: TaskId,
-    wake_queue: Arc&lt;ArrayQueue&lt;TaskId&gt;&gt;,
+    task_queue: Arc&lt;ArrayQueue&lt;TaskId&gt;&gt;,
 }
 </span></pre>
-<p>Since the ownership of the <code>wake_queue</code> is shared between the executor and wakers, we use the <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> wrapper type to implement shared reference-counted ownership.</p>
+<p>Since the ownership of the <code>task_queue</code> is shared between the executor and wakers, we use the <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> wrapper type to implement shared reference-counted ownership.</p>
 <p>The implementation of the wake operation is quite simple:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/task/executor.rs
 
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">TaskWaker {
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">wake_task(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) {
-        self.wake_queue.push(self.task_id).expect(</span><span style="color:#d69d85;">&quot;wake_queue full&quot;</span><span style="color:#dcdcdc;">);
+        self.task_queue.push(self.task_id).expect(</span><span style="color:#d69d85;">&quot;task_queue full&quot;</span><span style="color:#dcdcdc;">);
     }
 }
 </span></pre>
-<p>We push the <code>task_id</code> to the referenced <code>wake_queue</code>. Since modifications of the <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html"><code>ArrayQueue</code></a> type only require a shared reference, we can implement this method on <code>&amp;self</code> instead of <code>&amp;mut self</code>.</p>
+<p>We push the <code>task_id</code> to the referenced <code>task_queue</code>. Since modifications of the <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html"><code>ArrayQueue</code></a> type only require a shared reference, we can implement this method on <code>&amp;self</code> instead of <code>&amp;mut self</code>.</p>
 <h5 id="the-wake-trait"><a class="zola-anchor" href="#the-wake-trait" aria-label="Anchor link for: the-wake-trait">🔗</a>The <code>Wake</code> Trait</h5>
 <p>In order to use our <code>TaskWaker</code> type for polling futures, we need to convert it to a <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> instance first. This is required because the <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>Future::poll</code></a> method takes a <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a> instance as argument, which can only be constructed from the <code>Waker</code> type. While we could do this by providing an implementation of the <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> type, it's both simpler and safer to instead implement the <code>Arc</code>-based <a href="https://doc.rust-lang.org/nightly/alloc/task/trait.Wake.html"><code>Wake</code></a> trait and then use the <a href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html"><code>From</code></a> implementations provided by the standard library to construct the <code>Waker</code>.</p>
 <p>The trait implementation looks like this:</p>
@@ -1273,36 +1283,20 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
 <p>The trait is still unstable, so we have to add <strong><code>#![feature(wake_trait)]</code></strong> to the top of our <code>lib.rs</code> to use it. Since wakers are commonly shared between the executor and the asynchronous tasks, the trait methods require that the <code>Self</code> instance is wrapped in the <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> type, which implements reference-counted ownership. This means that we have to move our <code>TaskWaker</code> to an <code>Arc</code> in order to call them.</p>
 <p>The difference between the <code>wake</code> and <code>wake_by_ref</code> methods is that the latter only requires a reference to the <code>Arc</code>, while the former takes ownership of the <code>Arc</code> and thus often requires an increase of the reference count. Not all types support waking by reference, so implementing the <code>wake_by_ref</code> method is optional, however it can lead to better performance because it avoids unnecessary reference count modifications. In our case, we can simply forward both trait methods to our <code>wake_task</code> function, which requires only a shared <code>&amp;self</code> reference.</p>
 <h5 id="creating-wakers"><a class="zola-anchor" href="#creating-wakers" aria-label="Anchor link for: creating-wakers">🔗</a>Creating Wakers</h5>
-<p>Since the <code>Waker</code> type supports <a href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html"><code>From</code></a> conversions for all <code>Arc</code>-wrapped values that implement the <code>Wake</code> trait, we can now implement the <code>Executor::create_waker</code> method using our <code>TaskWaker</code>:</p>
+<p>Since the <code>Waker</code> type supports <a href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html"><code>From</code></a> conversions for all <code>Arc</code>-wrapped values that implement the <code>Wake</code> trait, we can now implement the <code>TaskWaker::new</code> function that is required by our <code>Executor::run_ready_tasks</code> method:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/task/executor.rs
 
-</span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">Executor {
-    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">create_waker(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self, task_id: TaskId) -&gt; Waker {
+</span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">TaskWaker {
+    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">new(task_id: TaskId, task_queue: Arc&lt;ArrayQueue&lt;TaskId&gt;&gt;) -&gt; Waker {
         Waker::from(Arc::new(TaskWaker {
             task_id,
-            wake_queue: self.wake_queue.clone(),
+            task_queue,
         }))
     }
 }
 </span></pre>
-<p>We create the <code>TaskWaker</code> using the passed <code>task_id</code> and a clone of the <code>wake_queue</code>. Since the <code>wake_queue</code> is wrapped into <code>Arc</code>, the <code>clone</code> only increases the reference count of the value, but still points to the same heap allocated queue. We store the <code>TaskWaker</code> in an <code>Arc</code> too because the <code>Waker::from</code> implementation requires it. This function then takes care of constructing a <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWakerVTable.html"><code>RawWakerVTable</code></a> and a <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> instance for our <code>TaskWaker</code> type. In case you're interested in how it works in detail, check out the <a href="https://github.com/rust-lang/rust/blob/cdb50c6f2507319f29104a25765bfb79ad53395c/src/liballoc/task.rs#L58-L87">implementation in the <code>alloc</code> crate</a>.</p>
-<h5 id="handling-wake-ups"><a class="zola-anchor" href="#handling-wake-ups" aria-label="Anchor link for: handling-wake-ups">🔗</a>Handling Wake-Ups</h5>
-<p>To handle wake-ups in our executor, we add a <code>wake_tasks</code> method:</p>
-<pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/task/executor.rs
-
-</span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">Executor {
-    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">wake_tasks(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) {
-        </span><span style="color:#569cd6;">while let </span><span style="color:#dcdcdc;">Ok(task_id) </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.wake_queue.pop() {
-            </span><span style="color:#569cd6;">if let </span><span style="color:#dcdcdc;">Some(task) </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.waiting_tasks.remove(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">task_id) {
-                self.task_queue.push_back(task);
-            }
-        }
-    }
-}
-</span></pre>
-<p>We use a <code>while let</code> loop to pop all items from the <code>wake_queue</code>. For each popped task ID, we remove the corresponding task from the <code>waiting_tasks</code> map and add it to the back of the <code>task_queue</code>. Since we register wakers before checking whether a task needs to be put to sleep, it might happen that a wake-up occurs for tasks even though they are not in the <code>waiting_tasks</code> map. In this case, we simply ignore the wake-up.</p>
+<p>We create the <code>TaskWaker</code> using the passed <code>task_id</code> and <code>task_queue</code>. We then wrap the <code>TaskWaker</code> in an <code>Arc</code> and use the <code>Waker::from</code> implementation to convert it to a <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a>. This <code>from</code> method takes care of constructing a <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWakerVTable.html"><code>RawWakerVTable</code></a> and a <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> instance for our <code>TaskWaker</code> type. In case you're interested in how it works in detail, check out the <a href="https://github.com/rust-lang/rust/blob/cdb50c6f2507319f29104a25765bfb79ad53395c/src/liballoc/task.rs#L58-L87">implementation in the <code>alloc</code> crate</a>.</p>
 <h4 id="a-run-method-1"><a class="zola-anchor" href="#a-run-method-1" aria-label="Anchor link for: a-run-method-1">🔗</a>A <code>run</code> Method</h4>
 <p>With our waker implementation in place, we can finally construct a <code>run</code> method for our executor:</p>
 <pre style="background-color:#1e1e1e;">
@@ -1311,13 +1305,12 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">Executor {
     </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">run(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
         </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{
-            self.wake_tasks();
             self.run_ready_tasks();
         }
     }
 }
 </span></pre>
-<p>This method just calls the <code>wake_tasks</code> and <code>run_ready_tasks</code> functions in a loop. While we could theoretically return from the function when both the <code>task_queue</code> and the <code>waiting_tasks</code> map become empty, this would never happen since our <code>keyboard_task</code> never finishes, so a simple <code>loop</code> should suffice. Since the function never returns, we use the <code>!</code> return type to mark the function as <a href="https://doc.rust-lang.org/stable/rust-by-example/fn/diverging.html">diverging</a> to the compiler.</p>
+<p>This method just calls the <code>run_ready_tasks</code> function in a loop. While we could theoretically return from the function when the <code>tasks</code> map becomes empty, this would never happen since our <code>keyboard_task</code> never finishes, so a simple <code>loop</code> should suffice. Since the function never returns, we use the <code>!</code> return type to mark the function as <a href="https://doc.rust-lang.org/stable/rust-by-example/fn/diverging.html">diverging</a> to the compiler.</p>
 <p>We can now change our <code>kernel_main</code> to use our new <code>Executor</code> instead of the <code>SimpleExecutor</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
@@ -1336,9 +1329,9 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
 <p>We only need to change the import and the type name. Since our <code>run</code> function is marked as diverging, the compiler knows that it never returns so that we no longer need a call to <code>hlt_loop</code> at the end of our <code>kernel_main</code> function.</p>
 <p>When we run our kernel using <code>cargo xrun</code> now, we see that keyboard input still works:</p>
 <p><img src="https://os.phil-opp.com/async-await/qemu-keyboard-output-again.gif" alt="QEMU printing &quot;.....H...e...l...l..o..... ...a..g..a....i...n...!&quot;" /></p>
-<p>However, the CPU utilization of QEMU did not get any better. The reason for this is that we still keep the CPU busy for the whole time. We no longer poll tasks until they are woken again, but we still check the <code>wake_queue</code> and the <code>task_queue</code> in a busy loop. To fix this, we need to put the CPU to sleep if there is no more work to do.</p>
+<p>However, the CPU utilization of QEMU did not get any better. The reason for this is that we still keep the CPU busy for the whole time. We no longer poll tasks until they are woken again, but we still check the <code>task_queue</code> in a busy loop. To fix this, we need to put the CPU to sleep if there is no more work to do.</p>
 <h4 id="sleep-if-idle"><a class="zola-anchor" href="#sleep-if-idle" aria-label="Anchor link for: sleep-if-idle">🔗</a>Sleep If Idle</h4>
-<p>The basic idea is to execute the <a href="https://en.wikipedia.org/wiki/HLT_(x86_instruction)"><code>hlt</code> instruction</a> when both the <code>task_queue</code> and the <code>wake_queue</code> are empty. This instruction puts the CPU to sleep until the next interrupt arrives. The fact that the CPU immediately becomes active again on interrupts ensures that we can still directly react when an interrupt handler pushes to the <code>wake_queue</code>.</p>
+<p>The basic idea is to execute the <a href="https://en.wikipedia.org/wiki/HLT_(x86_instruction)"><code>hlt</code> instruction</a> when the <code>task_queue</code> is empty. This instruction puts the CPU to sleep until the next interrupt arrives. The fact that the CPU immediately becomes active again on interrupts ensures that we can still directly react when an interrupt handler pushes to the <code>task_queue</code>.</p>
 <p>To implement this, we create a new <code>sleep_if_idle</code> method in our executor and call it from our <code>run</code> method:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/task/executor.rs
@@ -1346,28 +1339,27 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">Executor {
     </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">run(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
         </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{
-            self.wake_tasks();
             self.run_ready_tasks();
             self.sleep_if_idle();   </span><span style="color:#608b4e;">// new
         </span><span style="color:#dcdcdc;">}
     }
 
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">sleep_if_idle(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) {
-        </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.wake_queue.is_empty() {
+        </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.task_queue.is_empty() {
             x86_64::instructions::hlt();
         }
     }
 }
 </span></pre>
-<p>Since we call <code>sleep_if_idle</code> directly after <code>run_ready_tasks</code>, which loops until the <code>task_queue</code> becomes empty, we only need to check the <code>wake_queue</code>. If it is empty too, there is no task that is ready to run, so we execute the <code>hlt</code> instruction through the <a href="https://docs.rs/x86_64/0.9.6/x86_64/instructions/fn.hlt.html"><code>instructions::hlt</code></a> wrapper function provided by the <a href="https://docs.rs/x86_64/0.9.6/x86_64/index.html"><code>x86_64</code></a> crate.</p>
-<p>Unfortunately, there is a subtle race condition in this implementation. Since interrupts are asynchronous and can happen at any time, it is possible that an interrupt happens between the <code>is_empty</code> check and the call to <code>hlt</code>:</p>
+<p>Since we call <code>sleep_if_idle</code> directly after <code>run_ready_tasks</code>, which loops until the <code>task_queue</code> becomes empty, checking the queue again might seem unnecessary. However, a hardware interrupt might occur directly after <code>run_ready_tasks</code> returns, so there might be a new task in the queue at the time the <code>sleep_if_idle</code> function is called. Only if the queue is still empty, we put the CPU to sleep by executing the <code>hlt</code> instruction through the <a href="https://docs.rs/x86_64/0.9.6/x86_64/instructions/fn.hlt.html"><code>instructions::hlt</code></a> wrapper function provided by the <a href="https://docs.rs/x86_64/0.9.6/x86_64/index.html"><code>x86_64</code></a> crate.</p>
+<p>Unfortunately, there is still a subtle race condition in this implementation. Since interrupts are asynchronous and can happen at any time, it is possible that an interrupt happens right between the <code>is_empty</code> check and the call to <code>hlt</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.wake_queue.is_empty() {
+<span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.task_queue.is_empty() {
     </span><span style="color:#608b4e;">/// &lt;--- interrupt can happen here
     </span><span style="color:#dcdcdc;">x86_64::instructions::hlt();
 }
 </span></pre>
-<p>In case this interrupt pushes to the <code>wake_queue</code>, we put the CPU to sleep even though there is now a ready task. In the worst case, this could delay the handling of a keyboard interrupt until the next keypress or the next timer interrupt. So how do we prevent it?</p>
+<p>In case this interrupt pushes to the <code>task_queue</code>, we put the CPU to sleep even though there is now a ready task. In the worst case, this could delay the handling of a keyboard interrupt until the next keypress or the next timer interrupt. So how do we prevent it?</p>
 <p>The answer is to disable interrupts on the CPU before the check and atomically enable them again together with the <code>hlt</code> instruction. This way, all interrupts that happen in between are delayed after the <code>hlt</code> instruction so that no wake-ups are missed. To implement this approach, we can use the <a href="https://docs.rs/x86_64/0.9.6/x86_64/instructions/interrupts/fn.enable_interrupts_and_hlt.html"><code>enable_interrupts_and_hlt</code></a> function provided by the <a href="https://docs.rs/x86_64/0.9.6/x86_64/index.html"><code>x86_64</code></a> crate. This function is only available since version 0.9.6, so you might need to update your <code>x86_64</code> dependency to use it.</p>
 <p>The updated implementation of our <code>sleep_if_idle</code> function looks like this:</p>
 <pre style="background-color:#1e1e1e;">
@@ -1377,13 +1369,8 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">sleep_if_idle(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) {
         </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::instructions::interrupts::{self, enable_interrupts_and_hlt};
 
-        </span><span style="color:#608b4e;">// fast path
-        </span><span style="color:#569cd6;">if !</span><span style="color:#dcdcdc;">self.wake_queue.is_empty() {
-            </span><span style="color:#569cd6;">return</span><span style="color:#dcdcdc;">;
-        }
-
         interrupts::disable();
-        </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.wake_queue.is_empty() {
+        </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.task_queue.is_empty() {
             enable_interrupts_and_hlt();
         } </span><span style="color:#569cd6;">else </span><span style="color:#dcdcdc;">{
             interrupts::enable();
@@ -1391,7 +1378,7 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
     }
 }
 </span></pre>
-<p>To avoid unnecessarily disabling interrupts, we early return if the <code>wake_queue</code> is not empty. Otherwise, we disable interrupts and check the <code>wake_queue</code> again. If it is still empty, we use the <a href="https://docs.rs/x86_64/0.9.6/x86_64/instructions/interrupts/fn.enable_interrupts_and_hlt.html"><code>enable_interrupts_and_hlt</code></a> function to enable interrupts and put the CPU to sleep as a single atomic operation. In case the queue is no longer empty, it means that an interrupt woke a task between the first and the second check. In that case, we enable interrupts again and directly continue execution without executing <code>hlt</code>.</p>
+<p>To avoid race conditions, we disable interrupts before checking whether the <code>task_queue</code> is empty. If it is, we use the <a href="https://docs.rs/x86_64/0.9.6/x86_64/instructions/interrupts/fn.enable_interrupts_and_hlt.html"><code>enable_interrupts_and_hlt</code></a> function to enable interrupts and put the CPU to sleep as a single atomic operation. In case the queue is no longer empty, it means that an interrupt woke a task after <code>run_ready_tasks</code> returned. In that case, we enable interrupts again and directly continue execution without executing <code>hlt</code>.</p>
 <p>Now our executor properly puts the CPU to sleep when there is nothing to do. We can see that the QEMU process has a much lower CPU utilization when we run our kernel using <code>cargo xrun</code> again.</p>
 <h4 id="possible-extensions"><a class="zola-anchor" href="#possible-extensions" aria-label="Anchor link for: possible-extensions">🔗</a>Possible Extensions</h4>
 <p>Our executor is now able to run tasks in an efficient way. It utilizes waker notifications to avoid polling waiting tasks and puts the CPU to sleep when there is currently no work to do. However, our executor is still quite basic and there are many possible ways to extend its functionality:</p>
@@ -1406,7 +1393,7 @@ features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d8
 <p>We then explored how Rust's support of <strong>async/await</strong> provides a language-level implementation of cooperative multitasking. Rust bases its implementation on top of the polling-based <code>Future</code> trait, which abstracts asynchronous tasks. Using async/await, it is possible to work with futures almost like with normal synchronous code. The difference is that asynchronous functions return a <code>Future</code> again, which needs to be added to an executor at some point in order to run it.</p>
 <p>Behind the scenes, the compiler transforms async/await code to <em>state machines</em>, with each <code>.await</code> operation corresponding to a possible pause point. By utilizing its knowledge about the program, the compiler is able to save only the minimal state for each pause point, resulting in a very small memory consumption per task. One challenge is that the generated state machines might contain <em>self-referential</em> structs, for example when local variables of the asynchronous function reference each other. To prevent pointer invalidation, Rust uses the <code>Pin</code> type to ensure that futures cannot be moved in memory anymore after they have been polled for the first time.</p>
 <p>For our <strong>implementation</strong>, we first created a very basic executor that polls all spawned tasks in a busy loop without using the <code>Waker</code> type at all. We then showed the advantage of waker notifications by implementing an asynchronous keyboard task. The task defines a static <code>SCANCODE_QUEUE</code> using the mutex-free <code>ArrayQueue</code> type provided by the <code>crossbeam</code> crate. Instead of handling keypresses directly, the keyboard interrupt handler now puts all received scancodes in the queue and then wakes the registered <code>Waker</code> to signal that new input is available. On the receiving end, we created a <code>ScancodeStream</code> type to provide a <code>Future</code> resolving to the next scancode in the queue. This made it possible to create an asynchronous <code>print_keypresses</code> task that uses async/await to interpret and print the scancodes in the queue.</p>
-<p>To utilize the waker notifications of the keyboard task, we created a new <code>Executor</code> type that differentiates between ready and waiting tasks. Using an <code>Arc</code>-shared <code>wake_queue</code>, we implemented a <code>TaskWaker</code> type that sends wake-up notifications directly to the executor, which can then mark the corresponding task as ready again. To save power when no tasks are runnable, we added support for putting the CPU to sleep using the <code>hlt</code> instruction. Finally, we discussed some potential extensions of our executor, for example for providing multi-core support.</p>
+<p>To utilize the waker notifications of the keyboard task, we created a new <code>Executor</code> type that uses an <code>Arc</code>-shared <code>task_queue</code> for ready tasks. We implemented a <code>TaskWaker</code> type that pushes the ID of woken tasks directly to this <code>task_queue</code>, which are then polled again by the executor. To save power when no tasks are runnable, we added support for putting the CPU to sleep using the <code>hlt</code> instruction. Finally, we discussed some potential extensions of our executor, for example for providing multi-core support.</p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What's Next?</h2>
 <p>Using async/wait, we now have basic support for cooperative multitasking in our kernel. While cooperative multitasking is very efficient, it leads to latency problems when individual tasks keep running for too long and thus prevent other tasks to run. For this reason, it makes sense to also add support for preemptive multitasking to our kernel.</p>
 <p>In the next post, we will introduce <em>threads</em> as the most common form of preemptive multitasking. In addition to resolving the problem of long running tasks, threads will also prepare us for utilizing multiple CPU cores and running untrusted user programs in the future.</p>
