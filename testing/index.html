@@ -75,6 +75,8 @@
                     <a href="#hiding-qemu">Hiding QEMU</a>
                 </li><li>
                     <a href="#timeouts">Timeouts</a>
+                </li><li>
+                    <a href="#insert-printing-automatically">Insert Printing Automatically</a>
                 </li>
             </ol>
         </li><li>
@@ -156,6 +158,8 @@
                         <a href="#hiding-qemu">Hiding QEMU</a>
                     </li><li>
                         <a href="#timeouts">Timeouts</a>
+                    </li><li>
+                        <a href="#insert-printing-automatically">Insert Printing Automatically</a>
                     </li>
                 </ul>
             </li><li>
@@ -504,34 +508,90 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 </span><span style="color:#569cd6;">test-timeout </span><span style="color:#dcdcdc;">= </span><span style="color:#b5cea8;">300          </span><span style="color:#608b4e;"># (in seconds)
 </span></pre>
 <p>If you don't want to wait 5 minutes for the <code>trivial_assertion</code> test to time out, you can temporarily decrease the above value.</p>
-<p>After this, we no longer need the <code>trivial_assertion</code> test, so we can delete it.</p>
+<h3 id="insert-printing-automatically"><a class="zola-anchor" href="#insert-printing-automatically" aria-label="Anchor link for: insert-printing-automatically">🔗</a>Insert Printing Automatically</h3>
+<p>Our <code>trivial_assertion</code> test currently needs to print its own status information using <code>serial_print!</code>/<code>serial_println!</code>:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">#[test_case]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">trivial_assertion() {
+    serial_print!(</span><span style="color:#d69d85;">&quot;trivial assertion... &quot;</span><span style="color:#dcdcdc;">);
+    assert_eq!(</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
+    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
+}
+</span></pre>
+<p>Manually adding these print statements for every test we write is cumbersome, so let's update our <code>test_runner</code> to print these messages automatically. To do that, we need to create a new <code>Testable</code> trait:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/main.rs
+
+</span><span style="color:#569cd6;">pub trait </span><span style="color:#dcdcdc;">Testable {
+    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">run(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) -&gt; ();
+}
+</span></pre>
+<p>The trick now is to implement this trait for all types <code>T</code> that implement the <a href="https://doc.rust-lang.org/stable/core/ops/trait.Fn.html"><code>Fn()</code> trait</a>:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/main.rs
+
+</span><span style="color:#569cd6;">impl</span><span style="color:#dcdcdc;">&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">T
+</span><span style="color:#569cd6;">where</span><span style="color:#dcdcdc;">
+    T: Fn(),
+{
+    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">run(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) {
+        serial_print!(</span><span style="color:#d69d85;">&quot;{}...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, core::any::type_name::&lt;T&gt;());
+        self();
+        serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
+    }
+}
+</span></pre>
+<p>We implement the <code>run</code> function by first printing the function name using the <a href="https://doc.rust-lang.org/stable/core/any/fn.type_name.html"><code>any::type_name</code></a> function. This function is implemented directly in the compiler and returns a string description of every type. For functions, the type is their name, so this is exactly what we want in this case. The <code>\t</code> character is the <a href="https://en.wikipedia.org/wiki/Tab_key#Tab_characters">tab character</a>, which adds some alignment to the <code>[ok]</code> messages.</p>
+<p>After printing the function name, we invoke the test function through <code>self()</code>. This only works because we require that <code>self</code> implements the <code>Fn()</code> trait. After the test function returned, we print <code>[ok]</code> to indicate that the function did not panic.</p>
+<p>The last step is to update our <code>test_runner</code> to use the new <code>Testable</code> trait:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/main.rs
+
+</span><span style="color:#dcdcdc;">#[cfg(test)]
+</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Testable]) {
+    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span style="color:#dcdcdc;">, tests.len());
+    </span><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> test </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> tests {
+        test.run(); </span><span style="color:#608b4e;">// new
+    </span><span style="color:#dcdcdc;">}
+    exit_qemu(QemuExitCode::Success);
+}
+</span></pre>
+<p>The only two changes are the type of the <code>tests</code> argument from <code>&amp;[&amp;dyn Fn()]</code> to <code>&amp;[&amp;dyn Testable]</code> and that we now call <code>test.run()</code> instead of <code>test()</code>.</p>
+<p>We can now remove the print statements from our <code>trivial_assertion</code> test since they're now printed automatically:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#608b4e;">// in src/main.rs
+
+</span><span style="color:#dcdcdc;">#[test_case]
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">trivial_assertion() {
+    assert_eq!(</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
+}
+</span></pre>
+<p>The <code>cargo xtest</code> output now looks like this:</p>
+<pre style="background-color:#1e1e1e;">
+<span style="color:#dcdcdc;">Running 1 tests
+blog_os::trivial_assertion...	[ok]
+</span></pre>
+<p>The function name now includes the full path to the function, which is useful when test functions in different modules have the same name. Otherwise the output looks the same as before, but we no longer need to manually add print statements to our tests.</p>
 <h2 id="testing-the-vga-buffer"><a class="zola-anchor" href="#testing-the-vga-buffer" aria-label="Anchor link for: testing-the-vga-buffer">🔗</a>Testing the VGA Buffer</h2>
 <p>Now that we have a working test framework, we can create a few tests for our VGA buffer implementation. First, we create a very simple test to verify that <code>println</code> works without panicking:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/vga_buffer.rs
 
-</span><span style="color:#dcdcdc;">#[cfg(test)]
-</span><span style="color:#569cd6;">use crate</span><span style="color:#dcdcdc;">::{serial_print, serial_println};
-
-#[test_case]
+</span><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println_simple() {
-    serial_print!(</span><span style="color:#d69d85;">&quot;test_println... &quot;</span><span style="color:#dcdcdc;">);
     println!(</span><span style="color:#d69d85;">&quot;test_println_simple output&quot;</span><span style="color:#dcdcdc;">);
-    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
 }
 </span></pre>
-<p>The test just prints something to the VGA buffer. If it finishes without panicking, it means that the <code>println</code> invocation did not panic either. Since we only need the <code>serial_println</code> import in test mode, we add the <code>cfg(test)</code> attribute to avoid the unused import warning for a normal <code>cargo xbuild</code>.</p>
+<p>The test just prints something to the VGA buffer. If it finishes without panicking, it means that the <code>println</code> invocation did not panic either.</p>
 <p>To ensure that no panic occurs even if many lines are printed and lines are shifted off the screen, we can create another test:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/vga_buffer.rs
 
 </span><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println_many() {
-    serial_print!(</span><span style="color:#d69d85;">&quot;test_println_many... &quot;</span><span style="color:#dcdcdc;">);
     </span><span style="color:#569cd6;">for _ in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">200 </span><span style="color:#dcdcdc;">{
         println!(</span><span style="color:#d69d85;">&quot;test_println_many output&quot;</span><span style="color:#dcdcdc;">);
     }
-    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
 }
 </span></pre>
 <p>We can also create a test function to verify that the printed lines really appear on the screen:</p>
@@ -540,16 +600,12 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 
 </span><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println_output() {
-    serial_print!(</span><span style="color:#d69d85;">&quot;test_println_output... &quot;</span><span style="color:#dcdcdc;">);
-
     </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> s </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span style="color:#dcdcdc;">;
     println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, s);
     </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">(i, c) </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> s.chars().enumerate() {
         </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> screen_char </span><span style="color:#569cd6;">= </span><span style="color:#b4cea8;">WRITER</span><span style="color:#dcdcdc;">.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">][i].read();
         assert_eq!(</span><span style="color:#569cd6;">char</span><span style="color:#dcdcdc;">::from(screen_char.ascii_character), c);
     }
-
-    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
 }
 </span></pre>
 <p>The function defines a test string, prints it using <code>println</code>, and then iterates over the screen characters of the static <code>WRITER</code>, which represents the vga text buffer. Since <code>println</code> prints to the last screen line and then immediately appends a newline, the string should appear on line <code>BUFFER_HEIGHT - 2</code>.</p>
@@ -608,10 +664,25 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
 
-</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Fn()]) {
+</span><span style="color:#569cd6;">pub trait </span><span style="color:#dcdcdc;">Testable {
+    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">run(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) -&gt; ();
+}
+
+</span><span style="color:#569cd6;">impl</span><span style="color:#dcdcdc;">&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">T
+</span><span style="color:#569cd6;">where</span><span style="color:#dcdcdc;">
+    T: Fn(),
+{
+    </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">run(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) {
+        serial_print!(</span><span style="color:#d69d85;">&quot;{}...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, core::any::type_name::&lt;T&gt;());
+        self();
+        serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
+    }
+}
+
+</span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Testable]) {
     serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span style="color:#dcdcdc;">, tests.len());
     </span><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> test </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> tests {
-        test();
+        test.run();
     }
     exit_qemu(QemuExitCode::Success);
 }
@@ -724,13 +795,11 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in tests/basic_boot.rs
 
-</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::{println, serial_print, serial_println};
+</span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::println;
 
 #[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println() {
-    serial_print!(</span><span style="color:#d69d85;">&quot;test_println... &quot;</span><span style="color:#dcdcdc;">);
     println!(</span><span style="color:#d69d85;">&quot;test_println output&quot;</span><span style="color:#dcdcdc;">);
-    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
 }
 </span></pre>
 <p>When we run <code>cargo xtest</code> now, we see that it finds and executes the test function.</p>
@@ -798,11 +867,11 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 
 #[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">should_fail() {
-    serial_print!(</span><span style="color:#d69d85;">&quot;should_fail... &quot;</span><span style="color:#dcdcdc;">);
+    serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">);
     assert_eq!(</span><span style="color:#b5cea8;">0</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
 }
 </span></pre>
-<p>The test uses the <code>assert_eq</code> to assert that <code>0</code> and <code>1</code> are equal. This of course fails, so that our test panics as desired.</p>
+<p>The test uses the <code>assert_eq</code> to assert that <code>0</code> and <code>1</code> are equal. This of course fails, so that our test panics as desired. Note that we need to manually print the function name using <code>serial_print!</code> here because we don't use the <code>Testable</code> trait.</p>
 <p>When we run the test through <code>cargo xtest --test should_panic</code> we see that it is successful because the test panicked as expected. When we comment out the assertion and run the test again, we see that it indeed fails with the <em>&quot;test did not panic&quot;</em> message.</p>
 <p>A significant drawback of this approach is that it only works for a single test function. With multiple <code>#[test_case]</code> functions, only the first function is executed because the execution cannot continue after the panic handler has been called. I currently don't know of a good way to solve this problem, so let me know if you have an idea!</p>
 <h3 id="no-harness-tests"><a class="zola-anchor" href="#no-harness-tests" aria-label="Anchor link for: no-harness-tests">🔗</a>No Harness Tests</h3>
@@ -835,7 +904,7 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 }
 
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">should_fail() {
-    serial_print!(</span><span style="color:#d69d85;">&quot;should_fail... &quot;</span><span style="color:#dcdcdc;">);
+    serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">);
     assert_eq!(</span><span style="color:#b5cea8;">0</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
 }
 
