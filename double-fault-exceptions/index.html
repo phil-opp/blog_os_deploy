@@ -487,7 +487,7 @@ lazy_static! {
 
 #[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
-    serial_print!(</span><span style="color:#d69d85;">&quot;stack_overflow... &quot;</span><span style="color:#dcdcdc;">);
+    serial_print!(</span><span style="color:#d69d85;">&quot;stack_overflow::stack_overflow...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">);
 
     blog_os::gdt::init();
     init_test_idt();
@@ -501,10 +501,12 @@ lazy_static! {
 #[allow(unconditional_recursion)]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">stack_overflow() {
     stack_overflow(); </span><span style="color:#608b4e;">// for each recursion, the return address is pushed
+    </span><span style="color:#dcdcdc;">volatile::Volatile::new(</span><span style="color:#b5cea8;">0</span><span style="color:#dcdcdc;">).read(); </span><span style="color:#608b4e;">// prevent tail recursion optimizations
 </span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>We call our <code>gdt::init</code> function to initialize a new GDT. Instead of calling our <code>interrupts::init_idt</code> function, we call a <code>init_test_idt</code> function that will be explained in a moment. The reason is that we want to register a custom double fault handler that does a <code>exit_qemu(QemuExitCode::Success)</code> instead of panicking.</p>
-<p>The <code>stack_overflow</code> function is identical to the function in our <code>main.rs</code>. We additionally added the <code>allow(unconditional_recursion)</code> attribute to silence the warning that the function recurses endlessly.</p>
+<p>The <code>stack_overflow</code> function is almost identical to the function in our <code>main.rs</code>. The only difference is that we do an additional <a href="https://en.wikipedia.org/wiki/Volatile_(computer_programming)">volatile</a> read at the end of the function using the <a href="https://docs.rs/volatile/0.2.6/volatile/struct.Volatile.html"><code>Volatile</code></a> type to prevent a compiler optimization called <a href="https://en.wikipedia.org/wiki/Tail_call"><em>tail call elimination</em></a>. Among other things, this optimization allows the compiler to transform a function whose last statement is a recursive function call into a normal loop. Thus, no additional stack frame is created for the function call, so that the stack usage does remain constant.</p>
+<p>In our case, however, we want that the stack overflow happens, so we add a dummy volatile read statement at the end of the function, which the compiler is not allowed to remove. Thus, the function is no longer <em>tail recursive</em> and the transformation into a loop is prevented. We also add the <code>allow(unconditional_recursion)</code> attribute to silence the compiler warning that the function recurses endlessly.</p>
 <h3 id="the-test-idt"><a class="zola-anchor" href="#the-test-idt" aria-label="Anchor link for: the-test-idt">🔗</a>The Test IDT</h3>
 <p>As noted above, the test needs its own IDT with a custom double fault handler. The implementation looks like this:</p>
 <pre style="background-color:#1e1e1e;">
