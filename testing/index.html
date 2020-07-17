@@ -192,13 +192,13 @@
     </details>
 
 <h2 id="requirements"><a class="zola-anchor" href="#requirements" aria-label="Anchor link for: requirements">🔗</a>Requirements</h2>
-<p>This post replaces the (now deprecated) <a href="https://os.phil-opp.com/unit-testing/"><em>Unit Testing</em></a> and <a href="https://os.phil-opp.com/integration-tests/"><em>Integration Tests</em></a> posts. It assumes that you have followed the <a href="https://os.phil-opp.com/minimal-rust-kernel/"><em>A Minimal Rust Kernel</em></a> post after 2019-04-27. Mainly, it requires that you have a <code>.cargo/config</code> file that <a href="https://os.phil-opp.com/minimal-rust-kernel/#set-a-default-target">sets a default target</a> and <a href="https://os.phil-opp.com/minimal-rust-kernel/#using-cargo-run">defines a runner executable</a>.</p>
+<p>This post replaces the (now deprecated) <a href="https://os.phil-opp.com/unit-testing/"><em>Unit Testing</em></a> and <a href="https://os.phil-opp.com/integration-tests/"><em>Integration Tests</em></a> posts. It assumes that you have followed the <a href="https://os.phil-opp.com/minimal-rust-kernel/"><em>A Minimal Rust Kernel</em></a> post after 2019-04-27. Mainly, it requires that you have a <code>.cargo/config.toml</code> file that <a href="https://os.phil-opp.com/minimal-rust-kernel/#set-a-default-target">sets a default target</a> and <a href="https://os.phil-opp.com/minimal-rust-kernel/#using-cargo-run">defines a runner executable</a>.</p>
 <h2 id="testing-in-rust"><a class="zola-anchor" href="#testing-in-rust" aria-label="Anchor link for: testing-in-rust">🔗</a>Testing in Rust</h2>
 <p>Rust has a <a href="https://doc.rust-lang.org/book/second-edition/ch11-00-testing.html">built-in test framework</a> that is capable of running unit tests without the need to set anything up. Just create a function that checks some results through assertions and add the <code>#[test]</code> attribute to the function header. Then <code>cargo test</code> will automatically find and execute all test functions of your crate.</p>
 <p>Unfortunately it's a bit more complicated for <code>no_std</code> applications such as our kernel. The problem is that Rust's test framework implicitly uses the built-in <a href="https://doc.rust-lang.org/test/index.html"><code>test</code></a> library, which depends on the standard library. This means that we can't use the default test framework for our <code>#[no_std]</code> kernel.</p>
-<p>We can see this when we try to run <code>cargo xtest</code> in our project:</p>
+<p>We can see this when we try to run <code>cargo test</code> in our project:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo xtest
+<span style="color:#dcdcdc;">&gt; cargo test
    Compiling blog_os v0.1.0 (/…/blog_os)
 error[E0463]: can&#39;t find crate for `test`
 </span></pre>
@@ -222,7 +222,7 @@ error[E0463]: can&#39;t find crate for `test`
 }
 </span></pre>
 <p>Our runner just prints a short debug message and then calls each test function in the list. The argument type <code>&amp;[&amp;dyn Fn()]</code> is a <a href="https://doc.rust-lang.org/std/primitive.slice.html"><em>slice</em></a> of <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/trait-objects.html"><em>trait object</em></a> references of the <a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a> trait. It is basically a list of references to types that can be called like a function. Since the function is useless for non-test runs, we use the <code>#[cfg(test)]</code> attribute to include it only for tests.</p>
-<p>When we run <code>cargo xtest</code> now, we see that it now succeeds. However, we still see our &quot;Hello World&quot; instead of the message from our <code>test_runner</code>. The reason is that our <code>_start</code> function is still used as entry point. The custom test frameworks feature generates a <code>main</code> function that calls <code>test_runner</code>, but this function is ignored because we use the <code>#[no_main]</code> attribute and provide our own entry point.</p>
+<p>When we run <code>cargo test</code> now, we see that it now succeeds. However, we still see our &quot;Hello World&quot; instead of the message from our <code>test_runner</code>. The reason is that our <code>_start</code> function is still used as entry point. The custom test frameworks feature generates a <code>main</code> function that calls <code>test_runner</code>, but this function is ignored because we use the <code>#[no_main]</code> attribute and provide our own entry point.</p>
 <p>To fix this, we first need to change the name of the generated function to something different than <code>main</code> through the <code>reexport_test_harness_main</code> attribute. Then we can call the renamed function from our <code>_start</code> function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
@@ -240,7 +240,7 @@ error[E0463]: can&#39;t find crate for `test`
 }
 </span></pre>
 <p>We set the name of the test framework entry function to <code>test_main</code> and call it from our <code>_start</code> entry point. We use <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">conditional compilation</a> to add the call to <code>test_main</code> only in test contexts because the function is not generated on a normal run.</p>
-<p>When we now execute <code>cargo xtest</code>, we see the &quot;Running 0 tests&quot; message from our <code>test_runner</code> on the screen. We are now ready to create our first test function:</p>
+<p>When we now execute <code>cargo test</code>, we see the &quot;Running 0 tests&quot; message from our <code>test_runner</code> on the screen. We are now ready to create our first test function:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/main.rs
 
@@ -251,12 +251,12 @@ error[E0463]: can&#39;t find crate for `test`
     println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
 }
 </span></pre>
-<p>When we run <code>cargo xtest</code> now, we see the following output:</p>
+<p>When we run <code>cargo test</code> now, we see the following output:</p>
 <p><img src="https://os.phil-opp.com/testing/qemu-test-runner-output.png" alt="QEMU printing &quot;Hello World!&quot;, &quot;Running 1 tests&quot;, and &quot;trivial assertion... [ok]&quot;" /></p>
 <p>The <code>tests</code> slice passed to our <code>test_runner</code> function now contains a reference to the <code>trivial_assertion</code> function. From the <code>trivial assertion... [ok]</code> output on the screen we see that the test was called and that it succeeded.</p>
-<p>After executing the tests, our <code>test_runner</code> returns to the <code>test_main</code> function, which in turn returns to our <code>_start</code> entry point function. At the end of <code>_start</code>, we enter an endless loop because the entry point function is not allowed to return. This is a problem, because we want <code>cargo xtest</code> to exit after running all tests.</p>
+<p>After executing the tests, our <code>test_runner</code> returns to the <code>test_main</code> function, which in turn returns to our <code>_start</code> entry point function. At the end of <code>_start</code>, we enter an endless loop because the entry point function is not allowed to return. This is a problem, because we want <code>cargo test</code> to exit after running all tests.</p>
 <h2 id="exiting-qemu"><a class="zola-anchor" href="#exiting-qemu" aria-label="Anchor link for: exiting-qemu">🔗</a>Exiting QEMU</h2>
-<p>Right now we have an endless loop at the end of our <code>_start</code> function and need to close QEMU manually on each execution of <code>cargo xtest</code>. This is unfortunate because we also want to run <code>cargo xtest</code> in scripts without user interaction. The clean solution to this would be to implement a proper way to shutdown our OS. Unfortunately this is relatively complex, because it requires implementing support for either the <a href="https://wiki.osdev.org/APM">APM</a> or <a href="https://wiki.osdev.org/ACPI">ACPI</a> power management standard.</p>
+<p>Right now we have an endless loop at the end of our <code>_start</code> function and need to close QEMU manually on each execution of <code>cargo test</code>. This is unfortunate because we also want to run <code>cargo test</code> in scripts without user interaction. The clean solution to this would be to implement a proper way to shutdown our OS. Unfortunately this is relatively complex, because it requires implementing support for either the <a href="https://wiki.osdev.org/APM">APM</a> or <a href="https://wiki.osdev.org/ACPI">ACPI</a> power management standard.</p>
 <p>Luckily, there is an escape hatch: QEMU supports a special <code>isa-debug-exit</code> device, which provides an easy way to exit QEMU from the guest system. To enable it, we need to pass a <code>-device</code> argument to QEMU. We can do so by adding a <code>package.metadata.bootimage.test-args</code> configuration key in our <code>Cargo.toml</code>:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;"># in Cargo.toml
@@ -264,7 +264,7 @@ error[E0463]: can&#39;t find crate for `test`
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-args </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;-device&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span style="color:#dcdcdc;">]
 </span></pre>
-<p>The <code>bootimage runner</code> appends the <code>test-args</code> to the default QEMU command for all test executables. For a normal <code>cargo xrun</code>, the arguments are ignored.</p>
+<p>The <code>bootimage runner</code> appends the <code>test-args</code> to the default QEMU command for all test executables. For a normal <code>cargo run</code>, the arguments are ignored.</p>
 <p>Together with the device name (<code>isa-debug-exit</code>), we pass the two parameters <code>iobase</code> and <code>iosize</code> that specify the <em>I/O port</em> through which the device can be reached from our kernel.</p>
 <h3 id="i-o-ports"><a class="zola-anchor" href="#i-o-ports" aria-label="Anchor link for: i-o-ports">🔗</a>I/O Ports</h3>
 <p>There are two different approaches for communicating between the CPU and peripheral hardware on x86, <strong>memory-mapped I/O</strong> and <strong>port-mapped I/O</strong>. We already used memory-mapped I/O for accessing the <a href="https://os.phil-opp.com/vga-text-mode/">VGA text buffer</a> through the memory address <code>0xb8000</code>. This address is not mapped to RAM, but to some memory on the VGA device.</p>
@@ -312,9 +312,9 @@ error[E0463]: can&#39;t find crate for `test`
     </span><span style="color:#dcdcdc;">exit_qemu(QemuExitCode::Success);
 }
 </span></pre>
-<p>When we run <code>cargo xtest</code> now, we see that QEMU immediately closes after executing the tests. The problem is that <code>cargo test</code> interprets the test as failed even though we passed our <code>Success</code> exit code:</p>
+<p>When we run <code>cargo test</code> now, we see that QEMU immediately closes after executing the tests. The problem is that <code>cargo test</code> interprets the test as failed even though we passed our <code>Success</code> exit code:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo xtest
+<span style="color:#dcdcdc;">&gt; cargo test
     Finished dev [unoptimized + debuginfo] target(s) in 0.03s
      Running target/x86_64-blog_os/debug/deps/blog_os-5804fc7d2dd4c9be
 Building bootloader
@@ -333,7 +333,7 @@ error: test failed, to rerun pass &#39;--bin blog_os&#39;
 </span><span style="color:#569cd6;">test-args </span><span style="color:#dcdcdc;">= [</span><span style="color:#ff3333;">…</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-success-exit-code </span><span style="color:#dcdcdc;">= </span><span style="color:#b5cea8;">33         </span><span style="color:#608b4e;"># (0x10 &lt;&lt; 1) | 1
 </span></pre>
-<p>With this configuration, <code>bootimage</code> maps our success exit code to exit code 0, so that <code>cargo xtest</code> correctly recognizes the success case and does not count the test as failed.</p>
+<p>With this configuration, <code>bootimage</code> maps our success exit code to exit code 0, so that <code>cargo test</code> correctly recognizes the success case and does not count the test as failed.</p>
 <p>Our test runner now automatically closes QEMU and correctly reports the test results out. We still see the QEMU window open for a very short time, but it does not suffice to read the results. It would be nice if we could print the test results to the console instead, so that we can still see them after QEMU exited.</p>
 <h2 id="printing-to-the-console"><a class="zola-anchor" href="#printing-to-the-console" aria-label="Anchor link for: printing-to-the-console">🔗</a>Printing to the Console</h2>
 <p>To see the test output on the console, we need to send the data from our kernel to the host system somehow. There are various ways to achieve this, for example by sending the data over a TCP network interface. However, setting up a networking stack is a quite complex task, so we will choose a simpler solution instead.</p>
@@ -423,9 +423,9 @@ macro_rules! serial_println {
     </span><span style="color:#d69d85;">&quot;-device&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;stdio&quot;
 </span><span style="color:#dcdcdc;">]
 </span></pre>
-<p>When we run <code>cargo xtest</code> now, we see the test output directly in the console:</p>
+<p>When we run <code>cargo test</code> now, we see the test output directly in the console:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo xtest
+<span style="color:#dcdcdc;">&gt; cargo test
     Finished dev [unoptimized + debuginfo] target(s) in 0.02s
      Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
 Building bootloader
@@ -463,7 +463,7 @@ trivial assertion... [ok]
 <p>For our test panic handler, we use <code>serial_println</code> instead of <code>println</code> and then exit QEMU with a failure exit code. Note that we still need an endless <code>loop</code> after the <code>exit_qemu</code> call because the compiler does not know that the <code>isa-debug-exit</code> device causes a program exit.</p>
 <p>Now QEMU also exits for failed tests and prints a useful error message on the console:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo xtest
+<span style="color:#dcdcdc;">&gt; cargo test
     Finished dev [unoptimized + debuginfo] target(s) in 0.02s
      Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
 Building bootloader
@@ -492,15 +492,15 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 </span></pre>
 <p>Now QEMU runs completely in the background and no window is opened anymore. This is not only less annoying, but also allows our test framework to run in environments without a graphical user interface, such as CI services or <a href="https://en.wikipedia.org/wiki/Secure_Shell">SSH</a> connections.</p>
 <h3 id="timeouts"><a class="zola-anchor" href="#timeouts" aria-label="Anchor link for: timeouts">🔗</a>Timeouts</h3>
-<p>Since <code>cargo xtest</code> waits until the test runner exits, a test that never returns can block the test runner forever. That's unfortunate, but not a big problem in practice since it's normally easy to avoid endless loops. In our case, however, endless loops can occur in various situations:</p>
+<p>Since <code>cargo test</code> waits until the test runner exits, a test that never returns can block the test runner forever. That's unfortunate, but not a big problem in practice since it's normally easy to avoid endless loops. In our case, however, endless loops can occur in various situations:</p>
 <ul>
 <li>The bootloader fails to load our kernel, which causes the system to reboot endlessly.</li>
 <li>The BIOS/UEFI firmware fails to load the bootloader, which causes the same endless rebooting.</li>
 <li>The CPU enters a <code>loop {}</code> statement at the end of some of our functions, for example because the QEMU exit device doesn't work properly.</li>
 <li>The hardware causes a system reset, for example when a CPU exception is not caught (explained in a future post).</li>
 </ul>
-<p>Since endless loops can occur in so many situations, the <code>bootimage</code> tool sets a timeout of 5 minutes for each test executable by default. If the test does not finish in this time, it is marked as failed and a &quot;Timed Out&quot; error is printed to the console. This feature ensures that tests that are stuck in an endless loop don't block <code>cargo xtest</code> forever.</p>
-<p>You can try it yourself by adding a <code>loop {}</code> statement in the <code>trivial_assertion</code> test. When you run <code>cargo xtest</code>, you see that the test is marked as timed out after 5 minutes. The timeout duration is <a href="https://github.com/rust-osdev/bootimage#configuration">configurable</a> through a <code>test-timeout</code> key in the Cargo.toml:</p>
+<p>Since endless loops can occur in so many situations, the <code>bootimage</code> tool sets a timeout of 5 minutes for each test executable by default. If the test does not finish in this time, it is marked as failed and a &quot;Timed Out&quot; error is printed to the console. This feature ensures that tests that are stuck in an endless loop don't block <code>cargo test</code> forever.</p>
+<p>You can try it yourself by adding a <code>loop {}</code> statement in the <code>trivial_assertion</code> test. When you run <code>cargo test</code>, you see that the test is marked as timed out after 5 minutes. The timeout duration is <a href="https://github.com/rust-osdev/bootimage#configuration">configurable</a> through a <code>test-timeout</code> key in the Cargo.toml:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;"># in Cargo.toml
 
@@ -566,7 +566,7 @@ Error: panicked at &#39;assertion failed: `(left == right)`
     assert_eq!(</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
 }
 </span></pre>
-<p>The <code>cargo xtest</code> output now looks like this:</p>
+<p>The <code>cargo test</code> output now looks like this:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#dcdcdc;">Running 1 tests
 blog_os::trivial_assertion...	[ok]
@@ -644,16 +644,18 @@ blog_os::trivial_assertion...	[ok]
 </span></pre>
 <p>Since integration tests are separate executables, we need to provide all the crate attributes (<code>no_std</code>, <code>no_main</code>, <code>test_runner</code>, etc.) again. We also need to create a new entry point function <code>_start</code>, which calls the test entry point function <code>test_main</code>. We don't need any <code>cfg(test)</code> attributes because integration test executables are never built in non-test mode.</p>
 <p>We use the <a href="https://doc.rust-lang.org/core/macro.unimplemented.html"><code>unimplemented</code></a> macro that always panics as a placeholder for the <code>test_runner</code> function and just <code>loop</code> in the <code>panic</code> handler for now. Ideally, we want to implement these functions exactly as we did in our <code>main.rs</code> using the <code>serial_println</code> macro and the <code>exit_qemu</code> function. The problem is that we don't have access to these functions since tests are built completely separately of our <code>main.rs</code> executable.</p>
-<p>If you run <code>cargo xtest</code> at this stage, you will get an endless loop because the panic handler loops endlessly. You need to use the <code>Ctrl+c</code> keyboard shortcut for exiting QEMU.</p>
+<p>If you run <code>cargo test</code> at this stage, you will get an endless loop because the panic handler loops endlessly. You need to use the <code>Ctrl+c</code> keyboard shortcut for exiting QEMU.</p>
 <h3 id="create-a-library"><a class="zola-anchor" href="#create-a-library" aria-label="Anchor link for: create-a-library">🔗</a>Create a Library</h3>
 <p>To make the required functions available to our integration test, we need to split off a library from our <code>main.rs</code>, which can be included by other crates and integration test executables. To do this, we create a new <code>src/lib.rs</code> file:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// src/lib.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
+
+</span><span style="color:#569cd6;">extern crate</span><span style="color:#dcdcdc;"> rlibc;
 </span></pre>
-<p>Like the <code>main.rs</code>, the <code>lib.rs</code> is a special file that is automatically recognized by cargo. The library is a separate compilation unit, so we need to specify the <code>#![no_std]</code> attribute again.</p>
-<p>To make our library work with <code>cargo xtest</code>, we need to also add the test functions and attributes:</p>
+<p>Like the <code>main.rs</code>, the <code>lib.rs</code> is a special file that is automatically recognized by cargo. The library is a separate compilation unit, so we need to specify the <code>#![no_std]</code> attribute and the <code>extern crate rlibc</code> statement again.</p>
+<p>To make our library work with <code>cargo test</code>, we need to also add the test functions and attributes:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
 
@@ -694,7 +696,7 @@ blog_os::trivial_assertion...	[ok]
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
 
-</span><span style="color:#608b4e;">/// Entry point for `cargo xtest`
+</span><span style="color:#608b4e;">/// Entry point for `cargo test`
 </span><span style="color:#dcdcdc;">#[cfg(test)]
 #[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
@@ -776,7 +778,7 @@ blog_os::trivial_assertion...	[ok]
 }
 </span></pre>
 <p>The library is usable like a normal external crate. It is called like our crate, which is <code>blog_os</code> in our case. The above code uses the <code>blog_os::test_runner</code> function in the <code>test_runner</code> attribute and the <code>blog_os::test_panic_handler</code> function in our <code>cfg(test)</code> panic handler. It also imports the <code>println</code> macro to make it available to our <code>_start</code> and <code>panic</code> functions.</p>
-<p>At this point, <code>cargo xrun</code> and <code>cargo xtest</code> should work again. Of course, <code>cargo xtest</code> still loops endlessly (you can exit with <code>ctrl+c</code>). Let's fix this by using the required library functions in our integration test.</p>
+<p>At this point, <code>cargo run</code> and <code>cargo test</code> should work again. Of course, <code>cargo test</code> still loops endlessly (you can exit with <code>ctrl+c</code>). Let's fix this by using the required library functions in our integration test.</p>
 <h3 id="completing-the-integration-test"><a class="zola-anchor" href="#completing-the-integration-test" aria-label="Anchor link for: completing-the-integration-test">🔗</a>Completing the Integration Test</h3>
 <p>Like our <code>src/main.rs</code>, our <code>tests/basic_boot.rs</code> executable can import types from our new library. This allows us to import the missing components to complete our test.</p>
 <pre style="background-color:#1e1e1e;">
@@ -790,7 +792,7 @@ blog_os::trivial_assertion...	[ok]
 }
 </span></pre>
 <p>Instead of reimplementing the test runner, we use the <code>test_runner</code> function from our library. For our <code>panic</code> handler, we call the <code>blog_os::test_panic_handler</code> function like we did in our <code>main.rs</code>.</p>
-<p>Now <code>cargo xtest</code> exits normally again. When you run it, you see that it builds and runs the tests for our <code>lib.rs</code>, <code>main.rs</code>, and <code>basic_boot.rs</code> separately after each other. For the <code>main.rs</code> and the <code>basic_boot</code> integration test, it reports &quot;Running 0 tests&quot; since these files don't have any functions annotated with <code>#[test_case]</code>.</p>
+<p>Now <code>cargo test</code> exits normally again. When you run it, you see that it builds and runs the tests for our <code>lib.rs</code>, <code>main.rs</code>, and <code>basic_boot.rs</code> separately after each other. For the <code>main.rs</code> and the <code>basic_boot</code> integration test, it reports &quot;Running 0 tests&quot; since these files don't have any functions annotated with <code>#[test_case]</code>.</p>
 <p>We can now add tests to our <code>basic_boot.rs</code>. For example, we can test that <code>println</code> works without panicking, like we did in the vga buffer tests:</p>
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in tests/basic_boot.rs
@@ -802,7 +804,7 @@ blog_os::trivial_assertion...	[ok]
     println!(</span><span style="color:#d69d85;">&quot;test_println output&quot;</span><span style="color:#dcdcdc;">);
 }
 </span></pre>
-<p>When we run <code>cargo xtest</code> now, we see that it finds and executes the test function.</p>
+<p>When we run <code>cargo test</code> now, we see that it finds and executes the test function.</p>
 <p>The test might seem a bit useless right now since it's almost identical to one of the VGA buffer tests. However, in the future the <code>_start</code> functions of our <code>main.rs</code> and <code>lib.rs</code> might grow and call various initialization routines before running the <code>test_main</code> function, so that the two tests are executed in very different environments.</p>
 <p>By testing <code>println</code> in a <code>basic_boot</code> environment without calling any initialization routines in <code>_start</code>, we can ensure that <code>println</code> works right after booting. This is important because we rely on it e.g. for printing panic messages.</p>
 <h3 id="future-tests"><a class="zola-anchor" href="#future-tests" aria-label="Anchor link for: future-tests">🔗</a>Future Tests</h3>
@@ -872,7 +874,7 @@ blog_os::trivial_assertion...	[ok]
 }
 </span></pre>
 <p>The test uses the <code>assert_eq</code> to assert that <code>0</code> and <code>1</code> are equal. This of course fails, so that our test panics as desired. Note that we need to manually print the function name using <code>serial_print!</code> here because we don't use the <code>Testable</code> trait.</p>
-<p>When we run the test through <code>cargo xtest --test should_panic</code> we see that it is successful because the test panicked as expected. When we comment out the assertion and run the test again, we see that it indeed fails with the <em>&quot;test did not panic&quot;</em> message.</p>
+<p>When we run the test through <code>cargo test --test should_panic</code> we see that it is successful because the test panicked as expected. When we comment out the assertion and run the test again, we see that it indeed fails with the <em>&quot;test did not panic&quot;</em> message.</p>
 <p>A significant drawback of this approach is that it only works for a single test function. With multiple <code>#[test_case]</code> functions, only the first function is executed because the execution cannot continue after the panic handler has been called. I currently don't know of a good way to solve this problem, so let me know if you have an idea!</p>
 <h3 id="no-harness-tests"><a class="zola-anchor" href="#no-harness-tests" aria-label="Anchor link for: no-harness-tests">🔗</a>No Harness Tests</h3>
 <p>For integration tests that only have a single test function (like our <code>should_panic</code> test), the test runner isn't really needed. For cases like this, we can disable the test runner completely and run our test directly in the <code>_start</code> function.</p>
@@ -915,7 +917,7 @@ blog_os::trivial_assertion...	[ok]
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
 </span></pre>
-<p>We now call the <code>should_fail</code> function directly from our <code>_start</code> function and exit with a failure exit code if it returns. When we run <code>cargo xtest --test should_panic</code> now, we see that the test behaves exactly as before.</p>
+<p>We now call the <code>should_fail</code> function directly from our <code>_start</code> function and exit with a failure exit code if it returns. When we run <code>cargo test --test should_panic</code> now, we see that the test behaves exactly as before.</p>
 <p>Apart from creating <code>should_panic</code> tests, disabling the <code>harness</code> attribute can also be useful for complex integration tests, for example when the individual test functions have side effects and need to be run in a specified order.</p>
 <h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>Summary</h2>
 <p>Testing is a very useful technique to ensure that certain components have a desired behavior. Even if they cannot show the absence of bugs, they're still an useful tool for finding them and especially for avoiding regressions.</p>

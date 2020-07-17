@@ -240,7 +240,7 @@ Secondary ATA ----&gt; |____________|   Parallel Port 1----&gt; |____________|
 </span><span style="color:#dcdcdc;">}
 </span></pre>
 <p>We use the <a href="https://docs.rs/pic8259_simple/0.2.0/pic8259_simple/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> function to perform the PIC initialization. Like the <code>ChainedPics::new</code> function, this function is also unsafe because it can cause undefined behavior if the PIC is misconfigured.</p>
-<p>If all goes well we should continue to see the &quot;It did not crash&quot; message when executing <code>cargo xrun</code>.</p>
+<p>If all goes well we should continue to see the &quot;It did not crash&quot; message when executing <code>cargo run</code>.</p>
 <h2 id="enabling-interrupts"><a class="zola-anchor" href="#enabling-interrupts" aria-label="Anchor link for: enabling-interrupts">🔗</a>Enabling Interrupts</h2>
 <p>Until now nothing happened because interrupts are still disabled in the CPU configuration. This means that the CPU does not listen to the interrupt controller at all, so no interrupts can reach the CPU. Let's change that:</p>
 <pre style="background-color:#1e1e1e;">
@@ -253,7 +253,7 @@ Secondary ATA ----&gt; |____________|   Parallel Port 1----&gt; |____________|
     x86_64::instructions::interrupts::enable();     </span><span style="color:#608b4e;">// new
 </span><span style="color:#dcdcdc;">}
 </span></pre>
-<p>The <code>interrupts::enable</code> function of the <code>x86_64</code> crate executes the special <code>sti</code> instruction (“set interrupts”) to enable external interrupts. When we try <code>cargo xrun</code> now, we see that a double fault occurs:</p>
+<p>The <code>interrupts::enable</code> function of the <code>x86_64</code> crate executes the special <code>sti</code> instruction (“set interrupts”) to enable external interrupts. When we try <code>cargo run</code> now, we see that a double fault occurs:</p>
 <p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT because of hardware timer" /></p>
 <p>The reason for this double fault is that the hardware timer (the <a href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a> to be exact) is enabled by default, so we start receiving timer interrupts as soon as we enable interrupts. Since we didn't define a handler function for it yet, our double fault handler is invoked.</p>
 <h2 id="handling-timer-interrupts"><a class="zola-anchor" href="#handling-timer-interrupts" aria-label="Anchor link for: handling-timer-interrupts">🔗</a>Handling Timer Interrupts</h2>
@@ -324,7 +324,7 @@ lazy_static! {
 </span></pre>
 <p>The <code>notify_end_of_interrupt</code> figures out whether the primary or secondary PIC sent the interrupt and then uses the <code>command</code> and <code>data</code> ports to send an EOI signal to respective controllers. If the secondary PIC sent the interrupt both PICs need to be notified because the secondary PIC is connected to an input line of the primary PIC.</p>
 <p>We need to be careful to use the correct interrupt vector number, otherwise we could accidentally delete an important unsent interrupt or cause our system to hang. This is the reason that the function is unsafe.</p>
-<p>When we now execute <code>cargo xrun</code> we see dots periodically appearing on the screen:</p>
+<p>When we now execute <code>cargo run</code> we see dots periodically appearing on the screen:</p>
 <p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
 <h3 id="configuring-the-timer"><a class="zola-anchor" href="#configuring-the-timer" aria-label="Anchor link for: configuring-the-timer">🔗</a>Configuring the Timer</h3>
 <p>The hardware timer that we use is called the <em>Progammable Interval Timer</em> or PIT for short. Like the name says, it is possible to configure the interval between two interrupts. We won't go into details here because we will switch to the <a href="https://wiki.osdev.org/APIC_timer">APIC timer</a> soon, but the OSDev wiki has an extensive article about the <a href="https://wiki.osdev.org/Programmable_Interval_Timer">configuring the PIT</a>.</p>
@@ -409,9 +409,9 @@ lazy_static! {
 </span></pre>
 <p>Note that disabling interrupts shouldn't be a general solution. The problem is that it increases the worst case interrupt latency, i.e. the time until the system reacts to an interrupt. Therefore interrupts should be only disabled for a very short time.</p>
 <h2 id="fixing-a-race-condition"><a class="zola-anchor" href="#fixing-a-race-condition" aria-label="Anchor link for: fixing-a-race-condition">🔗</a>Fixing a Race Condition</h2>
-<p>If you run <code>cargo xtest</code> you might see the <code>test_println_output</code> test failing:</p>
+<p>If you run <code>cargo test</code> you might see the <code>test_println_output</code> test failing:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo xtest --lib
+<span style="color:#dcdcdc;">&gt; cargo test --lib
 […]
 Running 4 tests
 test_breakpoint_exception...[ok]
@@ -464,7 +464,7 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 <li>To avoid another deadlock, we disable interrupts for the tests duration. Otherwise the test might get interrupted while the writer is still locked.</li>
 <li>Since the timer interrupt handler can still run before the test, we print an additional newline <code>\n</code> before printing the string <code>s</code>. This way, we avoid test failure when the timer handler already printed some <code>.</code> characters to the current line.</li>
 </ul>
-<p>With the above changes, <code>cargo xtest</code> now deterministically succeeds again.</p>
+<p>With the above changes, <code>cargo test</code> now deterministically succeeds again.</p>
 <p>This was a very harmless race condition that only caused a test failure. As you can imagine, other race conditions can be much more difficult to debug due to their non-deterministic nature. Luckily, Rust prevents us from data races, which are the most serious class of race conditions since they can cause all kinds of undefined behavior, including system crashes and silent memory corruptions.</p>
 <h2 id="the-hlt-instruction"><a class="zola-anchor" href="#the-hlt-instruction" aria-label="Anchor link for: the-hlt-instruction">🔗</a>The <code>hlt</code> Instruction</h2>
 <p>Until now we used a simple empty loop statement at the end of our <code>_start</code> and <code>panic</code> functions. This causes the CPU to spin endlessly and thus works as expected. But it is also very inefficient, because the CPU continues to run at full speed even though there's no work to do. You can see this problem in your task manager when you run your kernel: The QEMU process needs close to 100% CPU the whole time.</p>
@@ -504,7 +504,7 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 <pre style="background-color:#1e1e1e;">
 <span style="color:#608b4e;">// in src/lib.rs
 
-/// Entry point for `cargo xtest`
+/// Entry point for `cargo test`
 </span><span style="color:#dcdcdc;">#[cfg(test)]
 #[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
