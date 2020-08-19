@@ -173,11 +173,11 @@
 <p><img src="https://os.phil-opp.com/heap-allocation/call-stack-return.svg" alt="The call stack containing only the local variables of outer" /></p>
 <p>We see that the local variables of <code>inner</code> only live until the function returns. The Rust compiler enforces these lifetimes and throws an error when we use a value too long, for example when we try to return a reference to a local variable:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">inner(i: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">) -&gt; </span><span style="color:#569cd6;">&amp;&#39;static u32 </span><span style="color:#dcdcdc;">{
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> z </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">[</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">];
+<code><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">inner(i: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">) -&gt; </span><span style="color:#569cd6;">&amp;&#39;static u32 </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> z = [</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">];
     </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">z[i]
 }
-</span></pre>
+</span></code></pre>
 <p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=6186a0f3a54f468e1de8894996d12819">run the example on the playground</a>)</p>
 <p>While returning a reference makes no sense in this example, there are cases where we want a variable to live longer than the function. We already saw such a case in our kernel when we tried to <a href="https://os.phil-opp.com/cpu-exceptions/#loading-the-idt">load an interrupt descriptor table</a> and had to use a <code>static</code> variable to extend the lifetime.</p>
 <h3 id="static-variables"><a class="zola-anchor" href="#static-variables" aria-label="Anchor link for: static-variables">🔗</a>Static Variables</h3>
@@ -212,23 +212,23 @@
 <h3 id="allocations-in-rust"><a class="zola-anchor" href="#allocations-in-rust" aria-label="Anchor link for: allocations-in-rust">🔗</a>Allocations in Rust</h3>
 <p>Instead of letting the programmer manually call <code>allocate</code> and <code>deallocate</code>, the Rust standard library provides abstraction types that call these functions implicitly. The most important type is <a href="https://doc.rust-lang.org/std/boxed/index.html"><strong><code>Box</code></strong></a>, which is an abstraction for a heap-allocated value. It provides a <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a> constructor function that takes a value, calls <code>allocate</code> with the size of the value, and then moves the value to the newly allocated slot on the heap. To free the heap memory again, the <code>Box</code> type implements the <a href="https://doc.rust-lang.org/book/ch15-03-drop.html"><code>Drop</code> trait</a> to call <code>deallocate</code> when it goes out of scope:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">{
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> z </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Box::new([</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">,</span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">,</span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">]);
+<code><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> z = Box::new([</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">,</span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">,</span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">]);
     […]
 } </span><span style="color:#608b4e;">// z goes out of scope and `deallocate` is called
-</span></pre>
+</span></code></pre>
 <p>This pattern has the strange name <a href="https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization"><em>resource acquisition is initialization</em></a> (or <em>RAII</em> for short). It originated in C++, where it is used to implement a similar abstraction type called <a href="https://en.cppreference.com/w/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a>.</p>
 <p>Such a type alone does not suffice to prevent all use-after-free bugs since programmers can still hold on to references after the <code>Box</code> goes out of scope and the corresponding heap memory slot is deallocated:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">{
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> z </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Box::new([</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">,</span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">,</span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">]);
+<code><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x = {
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> z = Box::new([</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">,</span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">,</span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">]);
     </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">z[</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">]
 }; </span><span style="color:#608b4e;">// z goes out of scope and `deallocate` is called
 </span><span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, x);
-</span></pre>
+</span></code></pre>
 <p>This is where Rust's ownership comes in. It assigns an abstract <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">lifetime</a> to each reference, which is the scope in which the reference is valid. In the above example, the <code>x</code> reference is taken from the <code>z</code> array, so it becomes invalid after <code>z</code> goes out of scope. When you <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">run the above example on the playground</a> you see that the Rust compiler indeed throws an error:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error[E0597]: `z[_]` does not live long enough
+<code><span style="color:#dcdcdc;">error[E0597]: `z[_]` does not live long enough
  --&gt; src/main.rs:4:9
   |
 2 |     let x = {
@@ -238,7 +238,7 @@
   |         ^^^^^ borrowed value does not live long enough
 5 |     }; // z goes out of scope and `deallocate` is called
   |     - `z[_]` dropped here while still borrowed
-</span></pre>
+</span></code></pre>
 <p>The terminology can be a bit confusing at first. Taking a reference to a value is called <em>borrowing</em> the value since it's similar to a borrow in real life: You have temporary access to an object but need to return it sometime and you must not destroy it. By checking that all borrows end before an object is destroyed, the Rust compiler can guarantee that no use-after-free situation can occur.</p>
 <p>Rust's ownership system goes even further and does not only prevent use-after-free bugs, but provides complete <a href="https://en.wikipedia.org/wiki/Memory_safety"><em>memory safety</em></a> like garbage collected languages like Java or Python do. Additionally, it guarantees <a href="https://en.wikipedia.org/wiki/Thread_safety"><em>thread safety</em></a> and is thus even safer than those languages in multi-threaded code. And most importantly, all these checks happen at compile time, so there is no runtime overhead compared to hand written memory management in C.</p>
 <h3 id="use-cases"><a class="zola-anchor" href="#use-cases" aria-label="Anchor link for: use-cases">🔗</a>Use Cases</h3>
@@ -249,26 +249,26 @@
 <h2 id="the-allocator-interface"><a class="zola-anchor" href="#the-allocator-interface" aria-label="Anchor link for: the-allocator-interface">🔗</a>The Allocator Interface</h2>
 <p>The first step in implementing a heap allocator is to add a dependency on the built-in <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> crate. Like the <a href="https://doc.rust-lang.org/core/"><code>core</code></a> crate, it is a subset of the standard library that additionally contains the allocation and collection types. To add the dependency on <code>alloc</code>, we add the following to our <code>lib.rs</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 
 </span><span style="color:#569cd6;">extern crate</span><span style="color:#dcdcdc;"> alloc;
-</span></pre>
+</span></code></pre>
 <p>Contrary to normal dependencies, we don't need to modify the <code>Cargo.toml</code>. The reason is that the <code>alloc</code> crate ships with the Rust compiler as part of the standard library, so the compiler already knows about the crate. By adding this <code>extern crate</code> statement, we specify that the compiler should try to include it. (Historically, all dependencies needed an <code>extern crate</code> statement, which is now optional).</p>
 <p>Since we are compiling for a custom target, we can't use the precompiled version of <code>alloc</code> that is shipped with the Rust installation. Instead, we have to tell cargo to recompile the crate from source. We can do that, by adding it to the <code>unstable.build-std</code> array in our <code>.cargo/config.toml</code> file:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in .cargo/config.toml
+<code><span style="color:#608b4e;"># in .cargo/config.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">unstable</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">build-std </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;core&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;compiler_builtins&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;alloc&quot;</span><span style="color:#dcdcdc;">]
-</span></pre>
+</span></code></pre>
 <p>Now the compiler will recompile and include the <code>alloc</code> crate in our kernel.</p>
 <p>The reason that the <code>alloc</code> crate is disabled by default in <code>#[no_std]</code> crates is that it has additional requirements. We can see these requirements as errors when we try to compile our project now:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: no global memory allocator found but one is required; link to std or add
+<code><span style="color:#dcdcdc;">error: no global memory allocator found but one is required; link to std or add
        #[global_allocator] to a static item that implements the GlobalAlloc trait.
 
 error: `#[alloc_error_handler]` function required, but not found
-</span></pre>
+</span></code></pre>
 <p>The first error occurs because the <code>alloc</code> crate requires an heap allocator, which is an object that provides the <code>allocate</code> and <code>deallocate</code> functions. In Rust, heap allocators are described by the <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait, which is mentioned in the error message. To set the heap allocator for the crate, the <code>#[global_allocator]</code> attribute must be applied to a <code>static</code> variable that implements the <code>GlobalAlloc</code> trait.</p>
 <p>The second error occurs because calls to <code>allocate</code> can fail, most commonly when there is no more memory available. Our program must be able to react to this case, which is what the <code>#[alloc_error_handler]</code> function is for.</p>
 <p>We will describe these traits and attributes in detail in the following sections.</p>
@@ -276,7 +276,7 @@ error: `#[alloc_error_handler]` function required, but not found
 <p>The <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait defines the functions that a heap allocator must provide. The trait is special because it is almost never used directly by the programmer. Instead, the compiler will automatically insert the appropriate calls to the trait methods when using the allocation and collection types of <code>alloc</code>.</p>
 <p>Since we will need to implement the trait for all our allocator types, it is worth taking a closer look at its declaration:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">pub unsafe trait </span><span style="color:#dcdcdc;">GlobalAlloc {
+<code><span style="color:#569cd6;">pub unsafe trait </span><span style="color:#dcdcdc;">GlobalAlloc {
     </span><span style="color:#569cd6;">unsafe fn </span><span style="color:#dcdcdc;">alloc(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8</span><span style="color:#dcdcdc;">;
     </span><span style="color:#569cd6;">unsafe fn </span><span style="color:#dcdcdc;">dealloc(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span style="color:#dcdcdc;">, layout: Layout);
 
@@ -288,7 +288,7 @@ error: `#[alloc_error_handler]` function required, but not found
         new_size: </span><span style="color:#569cd6;">usize
     </span><span style="color:#dcdcdc;">) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span style="color:#dcdcdc;">{ </span><span style="color:#569cd6;">... </span><span style="color:#dcdcdc;">}
 }
-</span></pre>
+</span></code></pre>
 <p>It defines the two required methods <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> and <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>, which correspond to the <code>allocate</code> and <code>deallocate</code> functions we used in our examples:</p>
 <ul>
 <li>The <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> method takes a <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> instance as argument, which describes the desired size and alignment that the allocated memory should have. It returns a <a href="https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html#dereferencing-a-raw-pointer">raw pointer</a> to the first byte of the allocated memory block. Instead of an explicit error value, the <code>alloc</code> method returns a null pointer to signal an allocation error. This is a bit non-idiomatic, but it has the advantage that wrapping existing system allocators is easy, since they use the same convention.</li>
@@ -308,13 +308,13 @@ error: `#[alloc_error_handler]` function required, but not found
 <h3 id="a-dummyallocator"><a class="zola-anchor" href="#a-dummyallocator" aria-label="Anchor link for: a-dummyallocator">🔗</a>A <code>DummyAllocator</code></h3>
 <p>Now that we know what an allocator type should provide, we can create a simple dummy allocator. For that we create a new <code>allocator</code> module:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 
 </span><span style="color:#569cd6;">pub mod </span><span style="color:#dcdcdc;">allocator;
-</span></pre>
+</span></code></pre>
 <p>Our dummy allocator does the absolute minimum to implement the trait and always return an error when <code>alloc</code> is called. It looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/allocator.rs
+<code><span style="color:#608b4e;">// in src/allocator.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">alloc::alloc::{GlobalAlloc, Layout};
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::ptr::null_mut;
@@ -330,26 +330,26 @@ error: `#[alloc_error_handler]` function required, but not found
         panic!(</span><span style="color:#d69d85;">&quot;dealloc should be never called&quot;</span><span style="color:#dcdcdc;">)
     }
 }
-</span></pre>
+</span></code></pre>
 <p>The struct does not need any fields, so we create it as a <a href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">zero sized type</a>. As mentioned above, we always return the null pointer from <code>alloc</code>, which corresponds to an allocation error. Since the allocator never returns any memory, a call to <code>dealloc</code> should never occur. For this reason we simply panic in the <code>dealloc</code> method. The <code>alloc_zeroed</code> and <code>realloc</code> methods have default implementations, so we don't need to provide implementations for them.</p>
 <p>We now have a simple allocator, but we still have to tell the Rust compiler that it should use this allocator. This is where the <code>#[global_allocator]</code> attribute comes in.</p>
 <h3 id="the-global-allocator-attribute"><a class="zola-anchor" href="#the-global-allocator-attribute" aria-label="Anchor link for: the-global-allocator-attribute">🔗</a>The <code>#[global_allocator]</code> Attribute</h3>
 <p>The <code>#[global_allocator]</code> attribute tells the Rust compiler which allocator instance it should use as the global heap allocator. The attribute is only applicable to a <code>static</code> that implements the <code>GlobalAlloc</code> trait. Let's register an instance of our <code>Dummy</code> allocator as the global allocator:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/allocator.rs
+<code><span style="color:#608b4e;">// in src/allocator.rs
 
 </span><span style="color:#dcdcdc;">#[global_allocator]
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span style="color:#dcdcdc;">: Dummy </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> Dummy;
-</span></pre>
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span style="color:#dcdcdc;">: Dummy = Dummy;
+</span></code></pre>
 <p>Since the <code>Dummy</code> allocator is a <a href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">zero sized type</a>, we don't need to specify any fields in the initialization expression.</p>
 <p>When we now try to compile it, the first error should be gone. Let's fix the remaining second error:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: `#[alloc_error_handler]` function required, but not found
-</span></pre><h3 id="the-alloc-error-handler-attribute"><a class="zola-anchor" href="#the-alloc-error-handler-attribute" aria-label="Anchor link for: the-alloc-error-handler-attribute">🔗</a>The <code>#[alloc_error_handler]</code> Attribute</h3>
+<code><span style="color:#dcdcdc;">error: `#[alloc_error_handler]` function required, but not found
+</span></code></pre><h3 id="the-alloc-error-handler-attribute"><a class="zola-anchor" href="#the-alloc-error-handler-attribute" aria-label="Anchor link for: the-alloc-error-handler-attribute">🔗</a>The <code>#[alloc_error_handler]</code> Attribute</h3>
 <p>As we learned when discussing the <code>GlobalAlloc</code> trait, the <code>alloc</code> function can signal an allocation error by returning a null pointer. The question is: how should the Rust runtime react to such an allocation failure? This is where the <code>#[alloc_error_handler]</code> attribute comes in. It specifies a function that is called when an allocation error occurs, similar to how our panic handler is called when a panic occurs.</p>
 <p>Let's add such a function to fix the compilation error:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 
 </span><span style="color:#dcdcdc;">#![feature(alloc_error_handler)] </span><span style="color:#608b4e;">// at the top of the file
 
@@ -357,11 +357,11 @@ error: `#[alloc_error_handler]` function required, but not found
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">alloc_error_handler(layout: alloc::alloc::Layout) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     panic!(</span><span style="color:#d69d85;">&quot;allocation error: {:?}&quot;</span><span style="color:#dcdcdc;">, layout)
 }
-</span></pre>
+</span></code></pre>
 <p>The <code>alloc_error_handler</code> function is still unstable, so we need a feature gate to enable it. The function receives a single argument: the <code>Layout</code> instance that was passed to <code>alloc</code> when the allocation failure occurred. There's nothing we can do to resolve the failure, so we just panic with a message that contains the <code>Layout</code> instance.</p>
 <p>With this function, the compilation errors should be fixed. Now we can use the allocation and collection types of <code>alloc</code>, for example we can use a <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> to allocate a value on the heap:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#569cd6;">extern crate</span><span style="color:#dcdcdc;"> alloc;
 
@@ -370,7 +370,7 @@ error: `#[alloc_error_handler]` function required, but not found
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     </span><span style="color:#608b4e;">// […] print &quot;Hello World!&quot;, call `init`, create `mapper` and `frame_allocator`
 
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Box::new(</span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x = Box::new(</span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
 
     </span><span style="color:#608b4e;">// […] call `test_main` in test mode
 
@@ -378,7 +378,7 @@ error: `#[alloc_error_handler]` function required, but not found
     blog_os::hlt_loop();
 }
 
-</span></pre>
+</span></code></pre>
 <p>Note that we need to specify the <code>extern crate alloc</code> statement in our <code>main.rs</code> too. This is required because the <code>lib.rs</code> and <code>main.rs</code> part are treated as separate crates. However, we don't need to create another <code>#[global_allocator]</code> static because the global allocator applies to all crates in the project. In fact, specifying an additional allocator in another crate would be an error.</p>
 <p>When we run the above code, we see that our <code>alloc_error_handler</code> function is called:</p>
 <p><img src="https://os.phil-opp.com/heap-allocation/qemu-dummy-output.png" alt="QEMU printing &quot;panicked at `allocation error: Layout { size_: 4, align_: 4 }, src/lib.rs:89:5&quot;" /></p>
@@ -387,15 +387,15 @@ error: `#[alloc_error_handler]` function required, but not found
 <p>Before we can create a proper allocator, we first need to create a heap memory region from which the allocator can allocate memory. To do this, we need to define a virtual memory range for the heap region and then map this region to physical frames. See the <a href="https://os.phil-opp.com/paging-introduction/"><em>&quot;Introduction To Paging&quot;</em></a> post for an overview of virtual memory and page tables.</p>
 <p>The first step is to define a virtual memory region for the heap. We can choose any virtual address range that we like, as long as it is not already used for a different memory region. Let's define it as the memory starting at address <code>0x_4444_4444_0000</code> so that we can easily recognize a heap pointer later:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/allocator.rs
+<code><span style="color:#608b4e;">// in src/allocator.rs
 
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_START</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">usize = </span><span style="color:#b5cea8;">0x_4444_4444_0000</span><span style="color:#dcdcdc;">;
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_SIZE</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">usize = </span><span style="color:#b5cea8;">100 </span><span style="color:#569cd6;">* </span><span style="color:#b5cea8;">1024</span><span style="color:#dcdcdc;">; </span><span style="color:#608b4e;">// 100 KiB
-</span></pre>
+</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_START</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">usize </span><span style="color:#dcdcdc;">= </span><span style="color:#b5cea8;">0x_4444_4444_0000</span><span style="color:#dcdcdc;">;
+</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_SIZE</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">usize </span><span style="color:#dcdcdc;">= </span><span style="color:#b5cea8;">100 </span><span style="color:#dcdcdc;">* </span><span style="color:#b5cea8;">1024</span><span style="color:#dcdcdc;">; </span><span style="color:#608b4e;">// 100 KiB
+</span></code></pre>
 <p>We set the heap size to 100 KiB for now. If we need more space in the future, we can simply increase it.</p>
 <p>If we tried to use this heap region now, a page fault would occur since the virtual memory region is not mapped to physical memory yet. To resolve this, we create an <code>init_heap</code> function that maps the heap pages using the <a href="https://os.phil-opp.com/paging-implementation/#using-offsetpagetable"><code>Mapper</code> API</a> that we introduced in the <a href="https://os.phil-opp.com/paging-implementation/"><em>&quot;Paging Implementation&quot;</em></a> post:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/allocator.rs
+<code><span style="color:#608b4e;">// in src/allocator.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::{
     structures::paging::{
@@ -408,19 +408,19 @@ error: `#[alloc_error_handler]` function required, but not found
     mapper: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> impl Mapper&lt;Size4KiB&gt;,
     frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> impl FrameAllocator&lt;Size4KiB&gt;,
 ) -&gt; Result&lt;(), MapToError&lt;Size4KiB&gt;&gt; {
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> page_range </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_start </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">VirtAddr::new(</span><span style="color:#b4cea8;">HEAP_START </span><span style="color:#569cd6;">as u64</span><span style="color:#dcdcdc;">);
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_end </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> heap_start </span><span style="color:#569cd6;">+ </span><span style="color:#b4cea8;">HEAP_SIZE </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">1</span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">;
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_start_page </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Page::containing_address(heap_start);
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_end_page </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Page::containing_address(heap_end);
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> page_range = {
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_start = VirtAddr::new(</span><span style="color:#b4cea8;">HEAP_START </span><span style="color:#569cd6;">as u64</span><span style="color:#dcdcdc;">);
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_end = heap_start + </span><span style="color:#b4cea8;">HEAP_SIZE </span><span style="color:#dcdcdc;">- </span><span style="color:#b5cea8;">1</span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">;
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_start_page = Page::containing_address(heap_start);
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_end_page = Page::containing_address(heap_end);
         Page::range_inclusive(heap_start_page, heap_end_page)
     };
 
     </span><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> page </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> page_range {
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> frame </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> frame_allocator
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> frame = frame_allocator
             .allocate_frame()
             .ok_or(MapToError::FrameAllocationFailed)</span><span style="color:#569cd6;">?</span><span style="color:#dcdcdc;">;
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> flags </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">PageTableFlags::</span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span style="color:#dcdcdc;">PageTableFlags::</span><span style="color:#b4cea8;">WRITABLE</span><span style="color:#dcdcdc;">;
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> flags = PageTableFlags::</span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span style="color:#dcdcdc;">PageTableFlags::</span><span style="color:#b4cea8;">WRITABLE</span><span style="color:#dcdcdc;">;
         </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
             mapper.map_to(page, frame, flags, frame_allocator)</span><span style="color:#569cd6;">?</span><span style="color:#dcdcdc;">.flush()
         };
@@ -428,7 +428,7 @@ error: `#[alloc_error_handler]` function required, but not found
 
     Ok(())
 }
-</span></pre>
+</span></code></pre>
 <p>The function takes mutable references to a <a href="https://docs.rs/x86_64/0.11.1/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> and a <a href="https://docs.rs/x86_64/0.11.1/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a> instance, both limited to 4KiB pages by using <a href="https://docs.rs/x86_64/0.11.1/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a> as generic parameter. The return value of the function is a <a href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a> with the unit type <code>()</code> as success variant and a <a href="https://docs.rs/x86_64/0.11.1/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a> as error variant, which is the error type returned by the <a href="https://docs.rs/x86_64/0.11.1/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> method. Reusing the error type makes sense here because the <code>map_to</code> method is the main source of errors in this function.</p>
 <p>The implementation can be broken down into two parts:</p>
 <ul>
@@ -452,7 +452,7 @@ error: `#[alloc_error_handler]` function required, but not found
 </ul>
 <p>The final step is to call this function from our <code>kernel_main</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::allocator; </span><span style="color:#608b4e;">// new import
@@ -461,9 +461,9 @@ error: `#[alloc_error_handler]` function required, but not found
     println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;!&quot;</span><span style="color:#dcdcdc;">);
     blog_os::init();
 
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> phys_mem_offset </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">VirtAddr::new(boot_info.physical_memory_offset);
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> mapper </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{ memory::init(phys_mem_offset) };
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> mapper = </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ memory::init(phys_mem_offset) };
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
         BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">boot_info.memory_map)
     };
 
@@ -471,14 +471,14 @@ error: `#[alloc_error_handler]` function required, but not found
     </span><span style="color:#dcdcdc;">allocator::init_heap(</span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> frame_allocator)
         .expect(</span><span style="color:#d69d85;">&quot;heap initialization failed&quot;</span><span style="color:#dcdcdc;">);
 
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Box::new(</span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x = Box::new(</span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
 
     </span><span style="color:#608b4e;">// […] call `test_main` in test mode
 
     </span><span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     blog_os::hlt_loop();
 }
-</span></pre>
+</span></code></pre>
 <p>We show the full function for context here. The only new lines are the <code>blog_os::allocator</code> import and the call to <code>allocator::init_heap</code> function. In case the <code>init_heap</code> function returns an error, we panic using the <a href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>Result::expect</code></a> method since there is currently no sensible way for us to handle this error.</p>
 <p>We now have a mapped heap memory region that is ready to be used. The <code>Box::new</code> call still uses our old <code>Dummy</code> allocator, so you will still see the &quot;out of memory&quot; error when you run it. Let's fix this by using a proper allocator.</p>
 <h2 id="using-an-allocator-crate"><a class="zola-anchor" href="#using-an-allocator-crate" aria-label="Anchor link for: using-an-allocator-crate">🔗</a>Using an Allocator Crate</h2>
@@ -486,24 +486,24 @@ error: `#[alloc_error_handler]` function required, but not found
 <p>A simple allocator crate for <code>no_std</code> applications is the <a href="https://github.com/phil-opp/linked-list-allocator/"><code>linked_list_allocator</code></a> crate. It's name comes from the fact that it uses a linked list data structure to keep track of deallocated memory regions. See the next post for a more detailed explanation of this approach.</p>
 <p>To use the crate, we first need to add a dependency on it in our <code>Cargo.toml</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">linked_list_allocator </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.8.0&quot;
-</span></pre>
+</span></code></pre>
 <p>Then we can replace our dummy allocator with the allocator provided by the crate:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/allocator.rs
+<code><span style="color:#608b4e;">// in src/allocator.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">linked_list_allocator::LockedHeap;
 
 #[global_allocator]
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span style="color:#dcdcdc;">: LockedHeap </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">LockedHeap::empty();
-</span></pre>
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span style="color:#dcdcdc;">: LockedHeap = LockedHeap::empty();
+</span></code></pre>
 <p>The struct is named <code>LockedHeap</code> because it uses the <a href="https://docs.rs/spinning_top/0.1.0/spinning_top/type.Spinlock.html"><code>spinning_top::Spinlock</code></a> type for synchronization. This is required because multiple threads could access the <code>ALLOCATOR</code> static at the same time. As always when using a spinlock or a mutex, we need to be careful to not accidentally cause a deadlock. This means that we shouldn't perform any allocations in interrupt handlers, since they can run at an arbitrary time and might interrupt an in-progress allocation.</p>
 <p>Setting the <code>LockedHeap</code> as global allocator is not enough. The reason is that we use the <a href="https://docs.rs/linked_list_allocator/0.8.0/linked_list_allocator/struct.LockedHeap.html#method.empty"><code>empty</code></a> constructor function, which creates an allocator without any backing memory. Like our dummy allocator, it always returns an error on <code>alloc</code>. To fix this, we need to initialize the allocator after creating the heap:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/allocator.rs
+<code><span style="color:#608b4e;">// in src/allocator.rs
 
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init_heap(
     mapper: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> impl Mapper&lt;Size4KiB&gt;,
@@ -518,11 +518,11 @@ error: `#[alloc_error_handler]` function required, but not found
 
     Ok(())
 }
-</span></pre>
+</span></code></pre>
 <p>We use the <a href="https://docs.rs/lock_api/0.3.3/lock_api/struct.Mutex.html#method.lock"><code>lock</code></a> method on the inner spinlock of the <code>LockedHeap</code> type to get an exclusive reference to the wrapped <a href="https://docs.rs/linked_list_allocator/0.8.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a> instance, on which we then call the <a href="https://docs.rs/linked_list_allocator/0.8.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> method with the heap bounds as arguments. It is important that we initialize the heap <em>after</em> mapping the heap pages, since the <a href="https://docs.rs/linked_list_allocator/0.8.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> function already tries to write to the heap memory.</p>
 <p>After initializing the heap, we can now use all allocation and collection types of the built-in <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> crate without error:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">alloc::{boxed::Box, vec, vec::Vec, rc::Rc};
 
@@ -530,19 +530,19 @@ error: `#[alloc_error_handler]` function required, but not found
     </span><span style="color:#608b4e;">// […] initialize interrupts, mapper, frame_allocator, heap
 
     // allocate a number on the heap
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_value </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Box::new(</span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_value = Box::new(</span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
     println!(</span><span style="color:#d69d85;">&quot;heap_value at </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, heap_value);
 
     </span><span style="color:#608b4e;">// create a dynamically sized vector
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> vec </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Vec::new();
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> vec = Vec::new();
     </span><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">500 </span><span style="color:#dcdcdc;">{
         vec.push(i);
     }
     println!(</span><span style="color:#d69d85;">&quot;vec at </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, vec.as_slice());
 
     </span><span style="color:#608b4e;">// create a reference counted vector -&gt; will be freed when count reaches 0
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> reference_counted </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Rc::new(vec![</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">]);
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> cloned_reference </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> reference_counted.clone();
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> reference_counted = Rc::new(vec![</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">]);
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> cloned_reference = reference_counted.clone();
     println!(</span><span style="color:#d69d85;">&quot;current reference count is </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, Rc::strong_count(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">cloned_reference));
     core::mem::drop(reference_counted);
     println!(</span><span style="color:#d69d85;">&quot;reference count is </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> now&quot;</span><span style="color:#dcdcdc;">, Rc::strong_count(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">cloned_reference));
@@ -551,7 +551,7 @@ error: `#[alloc_error_handler]` function required, but not found
     </span><span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     blog_os::hlt_loop();
 }
-</span></pre>
+</span></code></pre>
 <p>This code example shows some uses of the <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>, <a href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a>, and <a href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a> types. For the <code>Box</code> and <code>Vec</code> types we print the underlying heap pointers using the <a href="https://doc.rust-lang.org/core/fmt/trait.Pointer.html"><code>{:p}</code> formatting specifier</a>. For showcasing <code>Rc</code>, we create a reference counted heap value and use the <a href="https://doc.rust-lang.org/alloc/rc/struct.Rc.html#method.strong_count"><code>Rc::strong_count</code></a> function to print the current reference count, before and after dropping an instance (using <a href="https://doc.rust-lang.org/core/mem/fn.drop.html"><code>core::mem::drop</code></a>).</p>
 <p>When we run it, we see the following:</p>
 <p><img src="https://os.phil-opp.com/heap-allocation/qemu-alloc-showcase.png" alt="QEMU printing ` heap_value at 0x444444440000 vec at 0x4444444408000 current reference count is 2 reference count is 1 now " /></p>
@@ -570,7 +570,7 @@ error: `#[alloc_error_handler]` function required, but not found
 <h2 id="adding-a-test"><a class="zola-anchor" href="#adding-a-test" aria-label="Anchor link for: adding-a-test">🔗</a>Adding a Test</h2>
 <p>To ensure that we don't accidentally break our new allocation code, we should add an integration test for it. We start by creating a new <code>tests/heap_allocation.rs</code> file with the following content:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/heap_allocation.rs
+<code><span style="color:#608b4e;">// in tests/heap_allocation.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 #![no_main]
@@ -593,11 +593,11 @@ entry_point!(main);
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     blog_os::test_panic_handler(info)
 }
-</span></pre>
+</span></code></pre>
 <p>We reuse the <code>test_runner</code> and <code>test_panic_handler</code> functions from our <code>lib.rs</code>. Since we want to test allocations, we enable the <code>alloc</code> crate through the <code>extern crate alloc</code> statement. For more information about the test boilerplate check out the <a href="https://os.phil-opp.com/testing/"><em>Testing</em></a> post.</p>
 <p>The implementation of the <code>main</code> function looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/heap_allocation.rs
+<code><span style="color:#608b4e;">// in tests/heap_allocation.rs
 
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span style="color:#dcdcdc;"> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::allocator;
@@ -605,9 +605,9 @@ entry_point!(main);
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::VirtAddr;
 
     blog_os::init();
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> phys_mem_offset </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">VirtAddr::new(boot_info.physical_memory_offset);
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> mapper </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{ memory::init(phys_mem_offset) };
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> mapper = </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ memory::init(phys_mem_offset) };
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
         BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">boot_info.memory_map)
     };
     allocator::init_heap(</span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> frame_allocator)
@@ -616,65 +616,65 @@ entry_point!(main);
     test_main();
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>It is very similar to the <code>kernel_main</code> function in our <code>main.rs</code>, with the differences that we don't invoke <code>println</code>, don't include any example allocations, and call <code>test_main</code> unconditionally.</p>
 <p>Now we're ready to add a few test cases. First, we add a test that performs some simple allocations using <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> and checks the allocated values, to ensure that basic allocations work:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/heap_allocation.rs
+<code><span style="color:#608b4e;">// in tests/heap_allocation.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::{serial_print, serial_println};
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">alloc::boxed::Box;
 
 #[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">simple_allocation() {
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_value_1 </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Box::new(</span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_value_2 </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Box::new(</span><span style="color:#b5cea8;">13</span><span style="color:#dcdcdc;">);
-    assert_eq!(</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">heap_value_1, </span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
-    assert_eq!(</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">heap_value_2, </span><span style="color:#b5cea8;">13</span><span style="color:#dcdcdc;">);
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_value_1 = Box::new(</span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> heap_value_2 = Box::new(</span><span style="color:#b5cea8;">13</span><span style="color:#dcdcdc;">);
+    assert_eq!(*heap_value_1, </span><span style="color:#b5cea8;">41</span><span style="color:#dcdcdc;">);
+    assert_eq!(*heap_value_2, </span><span style="color:#b5cea8;">13</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>Most importantly, this test verifies that no allocation error occurs.</p>
 <p>Next, we iteratively build a large vector, to test both large allocations and multiple allocations (due to reallocations):</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/heap_allocation.rs
+<code><span style="color:#608b4e;">// in tests/heap_allocation.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">alloc::vec::Vec;
 
 #[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">large_vec() {
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> n </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">1000</span><span style="color:#dcdcdc;">;
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> vec </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Vec::new();
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> n = </span><span style="color:#b5cea8;">1000</span><span style="color:#dcdcdc;">;
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> vec = Vec::new();
     </span><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#dcdcdc;">n {
         vec.push(i);
     }
-    assert_eq!(vec.iter().sum::&lt;</span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">&gt;(), (n </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;"> n </span><span style="color:#569cd6;">/ </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">);
+    assert_eq!(vec.iter().sum::&lt;</span><span style="color:#569cd6;">u64</span><span style="color:#dcdcdc;">&gt;(), (n - </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">) * n / </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>We verify the sum by comparing it with the formula for the <a href="https://en.wikipedia.org/wiki/1_%2B_2_%2B_3_%2B_4_%2B_%E2%8B%AF#Partial_sums">n-th partial sum</a>. This gives us some confidence that the allocated values are all correct.</p>
 <p>As a third test, we create ten thousand allocations after each other:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/heap_allocation.rs
+<code><span style="color:#608b4e;">// in tests/heap_allocation.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::allocator::</span><span style="color:#b4cea8;">HEAP_SIZE</span><span style="color:#dcdcdc;">;
 
 #[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">many_boxes() {
     </span><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">HEAP_SIZE </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Box::new(i);
-        assert_eq!(</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">x, i);
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> x = Box::new(i);
+        assert_eq!(*x, i);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>This test ensures that the allocator reuses freed memory for subsequent allocations since it would run out of memory otherwise. This might seem like an obvious requirement for an allocator, but there are allocator designs that don't do this. An example is the bump allocator design that will be explained in the next post.</p>
 <p>Let's run our new integration test:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo test --test heap_allocation
+<code><span style="color:#dcdcdc;">&gt; cargo test --test heap_allocation
 […]
 Running 3 tests
 simple_allocation... [ok]
 large_vec... [ok]
 many_boxes... [ok]
-</span></pre>
+</span></code></pre>
 <p>All three tests succeeded! You can also invoke <code>cargo test</code> (without <code>--test</code> argument) to run all unit and integration tests.</p>
 <h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>Summary</h2>
 <p>This post gave an introduction to dynamic memory and explained why and where it is needed. We saw how Rust's borrow checker prevents common vulnerabilities and learned how Rust's allocation API works.</p>

@@ -87,12 +87,12 @@
 <h2 id="preparation"><a class="zola-anchor" href="#preparation" aria-label="Anchor link for: preparation">🔗</a>Preparation</h2>
 <p>We still have a really tiny stack of 64 bytes, which won't suffice for this post. So we increase it to 16kB (four pages) in <code>boot.asm</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">section .bss
+<code><span style="color:#dcdcdc;">section .bss
 ...
 stack_bottom:
     resb </span><span style="color:#b4cea8;">4096 </span><span style="color:#dcdcdc;">* </span><span style="color:#b4cea8;">4
 </span><span style="color:#dcdcdc;">stack_top:
-</span></pre><h2 id="the-multiboot-information-structure"><a class="zola-anchor" href="#the-multiboot-information-structure" aria-label="Anchor link for: the-multiboot-information-structure">🔗</a>The Multiboot Information Structure</h2>
+</span></code></pre><h2 id="the-multiboot-information-structure"><a class="zola-anchor" href="#the-multiboot-information-structure" aria-label="Anchor link for: the-multiboot-information-structure">🔗</a>The Multiboot Information Structure</h2>
 <p>When a Multiboot compliant bootloader loads a kernel, it passes a pointer to a boot information structure in the <code>ebx</code> register. We can use it to get information about available memory and loaded kernel sections.</p>
 <p>First, we need to pass this pointer to our kernel as an argument to <code>rust_main</code>. To find out how arguments are passed to functions, we can look at the <a href="https://en.wikipedia.org/wiki/X86_calling_conventions#System_V_AMD64_ABI">calling convention of Linux</a>:</p>
 <blockquote>
@@ -100,32 +100,32 @@ stack_bottom:
 </blockquote>
 <p>So to pass the pointer to our kernel, we need to move it to <code>rdi</code> before calling the kernel. Since we're not using the <code>rdi</code>/<code>edi</code> register in our bootstrap code, we can simply set the <code>edi</code> register right after booting (in <code>boot.asm</code>):</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">start:
+<code><span style="color:#dcdcdc;">start:
     </span><span style="color:#569cd6;">mov </span><span style="color:#dcdcdc;">esp, stack_top
     </span><span style="color:#569cd6;">mov </span><span style="color:#dcdcdc;">edi, ebx</span><span style="color:#608b4e;">       ; Move Multiboot info pointer to edi
-</span></pre>
+</span></code></pre>
 <p>Now we can add the argument to our <code>rust_main</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">pub extern fn </span><span style="color:#dcdcdc;">rust_main(multiboot_information_address: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">) { </span><span style="color:#569cd6;">... </span><span style="color:#dcdcdc;">}
-</span></pre>
+<code><span style="color:#569cd6;">pub extern fn </span><span style="color:#dcdcdc;">rust_main(multiboot_information_address: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">) { </span><span style="color:#569cd6;">... </span><span style="color:#dcdcdc;">}
+</span></code></pre>
 <p>Instead of writing an own Multiboot module, we use the <a href="https://docs.rs/multiboot2">multiboot2</a> crate. It gives us some basic information about mapped kernel sections and available memory. I just wrote it for this blog post since I could not find any other Multiboot 2 crate. It's still incomplete, but it does its job.</p>
 <p>So let's add a dependency on the git repository:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
 ...
 </span><span style="color:#569cd6;">multiboot2 </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.1.0&quot;
-</span></pre><pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+</span></code></pre><pre style="background-color:#1e1e1e;">
+<code><span style="color:#608b4e;">// in src/lib.rs
 </span><span style="color:#569cd6;">extern crate</span><span style="color:#dcdcdc;"> multiboot2;
-</span></pre>
+</span></code></pre>
 <p>Now we can use it to print available memory areas.</p>
 <h3 id="available-memory"><a class="zola-anchor" href="#available-memory" aria-label="Anchor link for: available-memory">🔗</a>Available Memory</h3>
 <p>The boot information structure consists of various <em>tags</em>. See section 3.4 of the Multiboot specification (<a href="https://nongnu.askapache.com/grub/phcoder/multiboot.pdf">PDF</a>) for a complete list. The <em>memory map</em> tag contains a list of all available RAM areas. Special areas such as the VGA text buffer at <code>0xb8000</code> are not available. Note that some of the available memory is already used by our kernel and by the multiboot information structure itself.</p>
 <p>To print all available memory areas, we can use the <code>multiboot2</code> crate in our <code>rust_main</code> as follows:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> boot_info </span><span style="color:#569cd6;">= unsafe</span><span style="color:#dcdcdc;">{ multiboot2::load(multiboot_information_address) };
-</span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> memory_map_tag </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> boot_info.memory_map_tag()
+<code><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> boot_info = </span><span style="color:#569cd6;">unsafe</span><span style="color:#dcdcdc;">{ multiboot2::load(multiboot_information_address) };
+</span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> memory_map_tag = boot_info.memory_map_tag()
     .expect(</span><span style="color:#d69d85;">&quot;Memory map tag required&quot;</span><span style="color:#dcdcdc;">);
 
 println!(</span><span style="color:#d69d85;">&quot;memory areas:&quot;</span><span style="color:#dcdcdc;">);
@@ -133,30 +133,30 @@ println!(</span><span style="color:#d69d85;">&quot;memory areas:&quot;</span><sp
     println!(</span><span style="color:#d69d85;">&quot;    start: 0x</span><span style="color:#b4cea8;">{:x}</span><span style="color:#d69d85;">, length: 0x</span><span style="color:#b4cea8;">{:x}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">,
         area.base_addr, area.length);
 }
-</span></pre>
+</span></code></pre>
 <p>The <code>load</code> function is <code>unsafe</code> because it relies on a valid address. Since the memory tag is not required by the Multiboot specification, the <code>memory_map_tag()</code> function returns an <code>Option</code>. The <code>memory_areas()</code> function returns the desired memory area iterator.</p>
 <p>The output looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">Hello World!
+<code><span style="color:#dcdcdc;">Hello World!
 memory areas:
     start: 0x0, length: 0x9fc00
     start: 0x100000, length: 0x7ee0000
-</span></pre>
+</span></code></pre>
 <p>So we have one area from <code>0x0</code> to <code>0x9fc00</code>, which is a bit below the 1MiB mark. The second, bigger area starts at 1MiB and contains the rest of available memory. The area from <code>0x9fc00</code> to 1MiB is not available since it contains for example the VGA text buffer at <code>0xb8000</code>. This is the reason for putting our kernel at 1MiB and not somewhere below.</p>
 <p>If you give QEMU more than 4GiB of memory by passing <code>-m 5G</code>, you get another unusable area below the 4GiB mark. This memory is normally mapped to some hardware devices. See the <a href="https://wiki.osdev.org/Memory_Map_(x86)">OSDev Wiki</a> for more information.</p>
 <h3 id="handling-panics"><a class="zola-anchor" href="#handling-panics" aria-label="Anchor link for: handling-panics">🔗</a>Handling Panics</h3>
 <p>We used <code>expect</code> in the code above, which will panic if there is no memory map tag. But our current panic handler just loops without printing any error message. Of course we could replace <code>expect</code> by a <code>match</code>, but we should fix the panic handler nonetheless:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#[lang </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;panic_fmt&quot;</span><span style="color:#dcdcdc;">]
+<code><span style="color:#dcdcdc;">#[lang </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;panic_fmt&quot;</span><span style="color:#dcdcdc;">]
 #[no_mangle]
 </span><span style="color:#569cd6;">pub extern fn </span><span style="color:#dcdcdc;">panic_fmt() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     println!(</span><span style="color:#d69d85;">&quot;PANIC&quot;</span><span style="color:#dcdcdc;">);
     </span><span style="color:#569cd6;">loop</span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>Now we get a <code>PANIC</code> message. But we can do even better. The <code>panic_fmt</code> function has actually some arguments:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#[lang </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;panic_fmt&quot;</span><span style="color:#dcdcdc;">]
+<code><span style="color:#dcdcdc;">#[lang </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;panic_fmt&quot;</span><span style="color:#dcdcdc;">]
 #[no_mangle]
 </span><span style="color:#569cd6;">pub extern fn </span><span style="color:#dcdcdc;">panic_fmt(fmt: core::fmt::Arguments, file: </span><span style="color:#569cd6;">&amp;&#39;static str</span><span style="color:#dcdcdc;">,
     line: </span><span style="color:#569cd6;">u32</span><span style="color:#dcdcdc;">) -&gt; </span><span style="color:#569cd6;">!
@@ -165,13 +165,13 @@ memory areas:
     println!(</span><span style="color:#d69d85;">&quot;    </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, fmt);
     </span><span style="color:#569cd6;">loop</span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>Be careful with these arguments as the compiler does not check the function signature for <code>lang_items</code>.</p>
 <p>Now we get the panic message and the causing source line. You can try it by inserting a <code>panic</code> somewhere.</p>
 <h3 id="kernel-elf-sections"><a class="zola-anchor" href="#kernel-elf-sections" aria-label="Anchor link for: kernel-elf-sections">🔗</a>Kernel ELF Sections</h3>
 <p>To read and print the sections of our kernel ELF file, we can use the <em>Elf-sections</em> tag:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> elf_sections_tag </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> boot_info.elf_sections_tag()
+<code><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> elf_sections_tag = boot_info.elf_sections_tag()
     .expect(</span><span style="color:#d69d85;">&quot;Elf-sections tag required&quot;</span><span style="color:#dcdcdc;">);
 
 println!(</span><span style="color:#d69d85;">&quot;kernel sections:&quot;</span><span style="color:#dcdcdc;">);
@@ -179,12 +179,12 @@ println!(</span><span style="color:#d69d85;">&quot;kernel sections:&quot;</span>
     println!(</span><span style="color:#d69d85;">&quot;    addr: 0x</span><span style="color:#b4cea8;">{:x}</span><span style="color:#d69d85;">, size: 0x</span><span style="color:#b4cea8;">{:x}</span><span style="color:#d69d85;">, flags: 0x</span><span style="color:#b4cea8;">{:x}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">,
         section.addr, section.size, section.flags);
 }
-</span></pre>
+</span></code></pre>
 <p>This should print out the start address and size of all kernel sections. If the section is writable, the <code>0x1</code> bit is set in <code>flags</code>. The <code>0x4</code> bit marks an executable section and the <code>0x2</code> bit indicates that the section was loaded in memory. For example, the <code>.text</code> section is executable but not writable and the <code>.data</code> section just the opposite.</p>
 <p>But when we execute it, tons of really small sections are printed. We can use the <code>objdump -h build/kernel-x86_64.bin</code> command to list the sections with name. There seem to be over 200 sections and many of them start with <code>.text.*</code> or <code>.data.rel.ro.local.*</code>. This is because the Rust compiler puts e.g. each function in its own <code>.text</code> subsection. That way, unused functions are removed when the linker omits unused sections.</p>
 <p>To merge these subsections, we need to update our linker script:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">ENTRY(start)
+<code><span style="color:#dcdcdc;">ENTRY(start)
 
 SECTIONS {
     . = 1M;
@@ -207,7 +207,7 @@ SECTIONS {
         *(.data.rel.ro.local*) *(.data.rel.ro .data.rel.ro.*)
     }
 }
-</span></pre>
+</span></code></pre>
 <p>These lines are taken from the default linker script of <code>ld</code>, which can be obtained through <code>ld ‑verbose</code>. The <code>.text</code> <em>output</em> section contains now all <code>.text.*</code> <em>input</em> sections of the static library (and the same applies for the <code>.rodata</code> and <code>.data.rel.ro</code> sections).</p>
 <p>Now there are only 12 sections left and we get a much more useful output:</p>
 <p><img src="https://os.phil-opp.com/allocating-frames/qemu-memory-areas-and-kernel-sections.png" alt="qemu output" /></p>
@@ -215,21 +215,21 @@ SECTIONS {
 <h3 id="start-and-end-of-kernel"><a class="zola-anchor" href="#start-and-end-of-kernel" aria-label="Anchor link for: start-and-end-of-kernel">🔗</a>Start and End of Kernel</h3>
 <p>We can now use the ELF section tag to calculate the start and end address of our loaded kernel:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> kernel_start </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> elf_sections_tag.sections().map(|s| s.addr)
+<code><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> kernel_start = elf_sections_tag.sections().map(|s| s.addr)
     .min().unwrap();
-</span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> kernel_end </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> elf_sections_tag.sections().map(|s| s.addr </span><span style="color:#569cd6;">+</span><span style="color:#dcdcdc;"> s.size)
+</span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> kernel_end = elf_sections_tag.sections().map(|s| s.addr + s.size)
     .max().unwrap();
-</span></pre>
+</span></code></pre>
 <p>The other used memory area is the Multiboot Information structure:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> multiboot_start </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> multiboot_information_address;
-</span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> multiboot_end </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> multiboot_start </span><span style="color:#569cd6;">+ </span><span style="color:#dcdcdc;">(boot_info.total_size </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">);
-</span></pre>
+<code><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> multiboot_start = multiboot_information_address;
+</span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> multiboot_end = multiboot_start + (boot_info.total_size </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">);
+</span></code></pre>
 <p>Printing these numbers gives us:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">kernel_start: 0x100000, kernel_end: 0x11a168
+<code><span style="color:#dcdcdc;">kernel_start: 0x100000, kernel_end: 0x11a168
 multiboot_start: 0x11d400, multiboot_end: 0x11d9c8
-</span></pre>
+</span></code></pre>
 <p>So the kernel starts at 1MiB (like expected) and is about 105 KiB in size. The multiboot information structure was placed at <code>0x11d400</code> by GRUB and needs 1480 bytes. Of course your numbers could be a bit different due to different versions of Rust or GRUB (or some differences in the source code).</p>
 <h2 id="a-frame-allocator"><a class="zola-anchor" href="#a-frame-allocator" aria-label="Anchor link for: a-frame-allocator">🔗</a>A frame allocator</h2>
 <p>When using paging, the physical memory is split into equally sized chunks (normally 4096 bytes) Such a chunk is called &quot;physical page&quot; or &quot;frame&quot;. These frames can be mapped to any virtual page through page tables. For more information about paging take a peek at the <a href="https://os.phil-opp.com/page-tables/">next post</a>.</p>
@@ -243,34 +243,34 @@ multiboot_start: 0x11d400, multiboot_end: 0x11d9c8
 <h3 id="a-memory-module"><a class="zola-anchor" href="#a-memory-module" aria-label="Anchor link for: a-memory-module">🔗</a>A Memory Module</h3>
 <p>First we create a memory module with a <code>Frame</code> type (<code>src/memory/mod.rs</code>):</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+<code><span style="color:#dcdcdc;">#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 </span><span style="color:#569cd6;">pub struct </span><span style="color:#dcdcdc;">Frame {
     number: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">,
 }
-</span></pre>
+</span></code></pre>
 <p>(Don't forget to add the <code>mod memory</code> line to <code>src/lib.rs</code>.) Instead of e.g. the start address, we just store the frame number. We use <code>usize</code> here since the number of frames depends on the memory size. The long <code>derive</code> line makes frames printable and comparable.</p>
 <p>To make it easy to get the corresponding frame for a physical address, we add a <code>containing_address</code> method:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PAGE_SIZE</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">usize = </span><span style="color:#b5cea8;">4096</span><span style="color:#dcdcdc;">;
+<code><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PAGE_SIZE</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">usize </span><span style="color:#dcdcdc;">= </span><span style="color:#b5cea8;">4096</span><span style="color:#dcdcdc;">;
 
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">Frame {
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">containing_address(address: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">) -&gt; Frame {
-        Frame{ number: address </span><span style="color:#569cd6;">/ </span><span style="color:#b4cea8;">PAGE_SIZE </span><span style="color:#dcdcdc;">}
+        Frame{ number: address / </span><span style="color:#b4cea8;">PAGE_SIZE </span><span style="color:#dcdcdc;">}
     }
 }
-</span></pre>
+</span></code></pre>
 <p>We also add a <code>FrameAllocator</code> trait:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">pub trait </span><span style="color:#dcdcdc;">FrameAllocator {
+<code><span style="color:#569cd6;">pub trait </span><span style="color:#dcdcdc;">FrameAllocator {
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">allocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) -&gt; Option&lt;Frame&gt;;
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">deallocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self, frame: Frame);
 }
-</span></pre>
+</span></code></pre>
 <p>This allows us to create another, more advanced frame allocator in the future.</p>
 <h3 id="the-allocator"><a class="zola-anchor" href="#the-allocator" aria-label="Anchor link for: the-allocator">🔗</a>The Allocator</h3>
 <p>Now we can put everything together and create the actual frame allocator. Therefor we create a <code>src/memory/area_frame_allocator.rs</code> submodule. The allocator struct looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">memory::{Frame, FrameAllocator};
+<code><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">memory::{Frame, FrameAllocator};
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">multiboot2::{MemoryAreaIter, MemoryArea};
 
 </span><span style="color:#569cd6;">pub struct </span><span style="color:#dcdcdc;">AreaFrameAllocator {
@@ -282,11 +282,11 @@ multiboot_start: 0x11d400, multiboot_end: 0x11d9c8
     multiboot_start: Frame,
     multiboot_end: Frame,
 }
-</span></pre>
+</span></code></pre>
 <p>The <code>next_free_frame</code> field is a simple counter that is increased every time we return a frame. It's initialized to <code>0</code> and every frame below it counts as used. The <code>current_area</code> field holds the memory area that contains <code>next_free_frame</code>. If <code>next_free_frame</code> leaves this area, we will look for the next one in <code>areas</code>. When there are no areas left, all frames are used and <code>current_area</code> becomes <code>None</code>. The <code>{kernel, multiboot}_{start, end}</code> fields are used to avoid returning already used fields.</p>
 <p>To implement the <code>FrameAllocator</code> trait, we need to implement the allocation and deallocation methods:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">FrameAllocator </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">AreaFrameAllocator {
+<code><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">FrameAllocator </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">AreaFrameAllocator {
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">allocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) -&gt; Option&lt;Frame&gt; {
         </span><span style="color:#608b4e;">// TODO (see below)
     </span><span style="color:#dcdcdc;">}
@@ -295,38 +295,38 @@ multiboot_start: 0x11d400, multiboot_end: 0x11d9c8
         </span><span style="color:#608b4e;">// TODO (see below)
     </span><span style="color:#dcdcdc;">}
 }
-</span></pre>
+</span></code></pre>
 <p>The <code>allocate_frame</code> method looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in `allocate_frame` in `impl FrameAllocator for AreaFrameAllocator`
+<code><span style="color:#608b4e;">// in `allocate_frame` in `impl FrameAllocator for AreaFrameAllocator`
 
-</span><span style="color:#569cd6;">if let </span><span style="color:#dcdcdc;">Some(area) </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.current_area {
+</span><span style="color:#569cd6;">if let </span><span style="color:#dcdcdc;">Some(area) = self.current_area {
     </span><span style="color:#608b4e;">// &quot;Clone&quot; the frame to return it if it&#39;s free. Frame doesn&#39;t
     // implement Clone, but we can construct an identical frame.
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> frame </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> Frame{ number: self.next_free_frame.number };
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> frame = Frame{ number: self.next_free_frame.number };
 
     </span><span style="color:#608b4e;">// the last frame of the current area
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> current_area_last_frame </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> address </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> area.base_addr </span><span style="color:#569cd6;">+</span><span style="color:#dcdcdc;"> area.length </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">;
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> current_area_last_frame = {
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> address = area.base_addr + area.length - </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">;
         Frame::containing_address(address </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">)
     };
 
-    </span><span style="color:#569cd6;">if</span><span style="color:#dcdcdc;"> frame </span><span style="color:#569cd6;">&gt;</span><span style="color:#dcdcdc;"> current_area_last_frame {
+    </span><span style="color:#569cd6;">if</span><span style="color:#dcdcdc;"> frame &gt; current_area_last_frame {
         </span><span style="color:#608b4e;">// all frames of current area are used, switch to next area
         </span><span style="color:#dcdcdc;">self.choose_next_area();
-    } </span><span style="color:#569cd6;">else if</span><span style="color:#dcdcdc;"> frame </span><span style="color:#569cd6;">&gt;= </span><span style="color:#dcdcdc;">self.kernel_start </span><span style="color:#569cd6;">&amp;&amp;</span><span style="color:#dcdcdc;"> frame </span><span style="color:#569cd6;">&lt;= </span><span style="color:#dcdcdc;">self.kernel_end {
+    } </span><span style="color:#569cd6;">else if</span><span style="color:#dcdcdc;"> frame &gt;= self.kernel_start </span><span style="color:#569cd6;">&amp;&amp;</span><span style="color:#dcdcdc;"> frame &lt;= self.kernel_end {
         </span><span style="color:#608b4e;">// `frame` is used by the kernel
-        </span><span style="color:#dcdcdc;">self.next_free_frame </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> Frame {
-            number: self.kernel_end.number </span><span style="color:#569cd6;">+ </span><span style="color:#b5cea8;">1
+        </span><span style="color:#dcdcdc;">self.next_free_frame = Frame {
+            number: self.kernel_end.number + </span><span style="color:#b5cea8;">1
         </span><span style="color:#dcdcdc;">};
-    } </span><span style="color:#569cd6;">else if</span><span style="color:#dcdcdc;"> frame </span><span style="color:#569cd6;">&gt;= </span><span style="color:#dcdcdc;">self.multiboot_start </span><span style="color:#569cd6;">&amp;&amp;</span><span style="color:#dcdcdc;"> frame </span><span style="color:#569cd6;">&lt;= </span><span style="color:#dcdcdc;">self.multiboot_end {
+    } </span><span style="color:#569cd6;">else if</span><span style="color:#dcdcdc;"> frame &gt;= self.multiboot_start </span><span style="color:#569cd6;">&amp;&amp;</span><span style="color:#dcdcdc;"> frame &lt;= self.multiboot_end {
         </span><span style="color:#608b4e;">// `frame` is used by the multiboot information structure
-        </span><span style="color:#dcdcdc;">self.next_free_frame </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> Frame {
-            number: self.multiboot_end.number </span><span style="color:#569cd6;">+ </span><span style="color:#b5cea8;">1
+        </span><span style="color:#dcdcdc;">self.next_free_frame = Frame {
+            number: self.multiboot_end.number + </span><span style="color:#b5cea8;">1
         </span><span style="color:#dcdcdc;">};
     } </span><span style="color:#569cd6;">else </span><span style="color:#dcdcdc;">{
         </span><span style="color:#608b4e;">// frame is unused, increment `next_free_frame` and return it
-        </span><span style="color:#dcdcdc;">self.next_free_frame.number </span><span style="color:#569cd6;">+= </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">;
+        </span><span style="color:#dcdcdc;">self.next_free_frame.number += </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">;
         </span><span style="color:#569cd6;">return </span><span style="color:#dcdcdc;">Some(frame);
     }
     </span><span style="color:#608b4e;">// `frame` was not valid, try it again with the updated `next_free_frame`
@@ -334,30 +334,30 @@ multiboot_start: 0x11d400, multiboot_end: 0x11d9c8
 } </span><span style="color:#569cd6;">else </span><span style="color:#dcdcdc;">{
     None </span><span style="color:#608b4e;">// no free frames left
 </span><span style="color:#dcdcdc;">}
-</span></pre>
+</span></code></pre>
 <p>The <code>choose_next_area</code> method isn't part of the trait and thus goes into a new <code>impl AreaFrameAllocator</code> block:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in `impl AreaFrameAllocator`
+<code><span style="color:#608b4e;">// in `impl AreaFrameAllocator`
 
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">choose_next_area(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) {
-    self.current_area </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.areas.clone().filter(|area| {
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> address </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> area.base_addr </span><span style="color:#569cd6;">+</span><span style="color:#dcdcdc;"> area.length </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">;
-        Frame::containing_address(address </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">&gt;= </span><span style="color:#dcdcdc;">self.next_free_frame
+    self.current_area = self.areas.clone().filter(|area| {
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> address = area.base_addr + area.length - </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">;
+        Frame::containing_address(address </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">) &gt;= self.next_free_frame
     }).min_by_key(|area| area.base_addr);
 
-    </span><span style="color:#569cd6;">if let </span><span style="color:#dcdcdc;">Some(area) </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">self.current_area {
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> start_frame </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Frame::containing_address(area.base_addr </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">);
-        </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.next_free_frame </span><span style="color:#569cd6;">&lt;</span><span style="color:#dcdcdc;"> start_frame {
-            self.next_free_frame </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> start_frame;
+    </span><span style="color:#569cd6;">if let </span><span style="color:#dcdcdc;">Some(area) = self.current_area {
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> start_frame = Frame::containing_address(area.base_addr </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">);
+        </span><span style="color:#569cd6;">if </span><span style="color:#dcdcdc;">self.next_free_frame &lt; start_frame {
+            self.next_free_frame = start_frame;
         }
     }
 }
-</span></pre>
+</span></code></pre>
 <p>This function chooses the area with the minimal base address that still has free frames, i.e. <code>next_free_frame</code> is smaller than its last frame. Note that we need to clone the iterator because the <a href="https://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.min_by_key">min_by_key</a> function consumes it. If there are no areas with free frames left, <code>min_by_key</code> automatically returns the desired <code>None</code>.</p>
 <p>If the <code>next_free_frame</code> is below the new <code>current_area</code>, it needs to be updated to the area's start frame. Else, the <code>allocate_frame</code> call could return an unavailable frame.</p>
 <p>We don't have a data structure to store free frames, so we can't implement <code>deallocate_frame</code> reasonably. Thus we use the <code>unimplemented</code> macro, which just panics when the method is called:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">FrameAllocator </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">AreaFrameAllocator {
+<code><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">FrameAllocator </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">AreaFrameAllocator {
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">allocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span style="color:#dcdcdc;">self) -&gt; Option&lt;Frame&gt; {
         </span><span style="color:#608b4e;">// described above
     </span><span style="color:#dcdcdc;">}
@@ -366,14 +366,14 @@ multiboot_start: 0x11d400, multiboot_end: 0x11d9c8
         unimplemented!()
     }
 }
-</span></pre>
+</span></code></pre>
 <p>Now we only need a constructor function to make the allocator usable:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">new(kernel_start: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">, kernel_end: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">,
+<code><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">new(kernel_start: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">, kernel_end: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">,
       multiboot_start: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">, multiboot_end: </span><span style="color:#569cd6;">usize</span><span style="color:#dcdcdc;">,
       memory_areas: MemoryAreaIter) -&gt; AreaFrameAllocator
 {
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> allocator </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> AreaFrameAllocator {
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> allocator = AreaFrameAllocator {
         next_free_frame: Frame::containing_address(</span><span style="color:#b5cea8;">0</span><span style="color:#dcdcdc;">),
         current_area: None,
         areas: memory_areas,
@@ -385,29 +385,29 @@ multiboot_start: 0x11d400, multiboot_end: 0x11d9c8
     allocator.choose_next_area();
     allocator
 }
-</span></pre>
+</span></code></pre>
 <p>Note that we call <code>choose_next_area</code> manually here because <code>allocate_frame</code> returns <code>None</code> as soon as <code>current_area</code> is <code>None</code>. So by calling <code>choose_next_area</code> we initialize it to the area with the minimal base address.</p>
 <h3 id="testing-it"><a class="zola-anchor" href="#testing-it" aria-label="Anchor link for: testing-it">🔗</a>Testing it</h3>
 <p>In order to test it in main, we need to <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/crates-and-modules.html#re-exporting-with-pub-use">re-export</a> the <code>AreaFrameAllocator</code> in the <code>memory</code> module. Then we can create a new allocator:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">memory::AreaFrameAllocator::new(
+<code><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> frame_allocator = memory::AreaFrameAllocator::new(
     kernel_start </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">, kernel_end </span><span style="color:#569cd6;">as usize</span><span style="color:#dcdcdc;">, multiboot_start,
     multiboot_end, memory_map_tag.memory_areas());
-</span></pre>
+</span></code></pre>
 <p>Now we can test it by adding some frame allocations:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, frame_allocator.allocate_frame());
-</span></pre>
+<code><span style="color:#dcdcdc;">println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, frame_allocator.allocate_frame());
+</span></code></pre>
 <p>You will see that the frame number starts at <code>0</code> and increases steadily, but the kernel and Multiboot frames are left out (you need to allocate many frames to see this since the kernel starts at frame 256).</p>
 <p>The following <code>for</code> loop allocates all frames and prints out the total number of allocated frames:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">.. </span><span style="color:#dcdcdc;">{
-    </span><span style="color:#569cd6;">if let </span><span style="color:#dcdcdc;">None </span><span style="color:#569cd6;">=</span><span style="color:#dcdcdc;"> frame_allocator.allocate_frame() {
+<code><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">.. </span><span style="color:#dcdcdc;">{
+    </span><span style="color:#569cd6;">if let </span><span style="color:#dcdcdc;">None = frame_allocator.allocate_frame() {
         println!(</span><span style="color:#d69d85;">&quot;allocated </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> frames&quot;</span><span style="color:#dcdcdc;">, i);
         </span><span style="color:#569cd6;">break</span><span style="color:#dcdcdc;">;
     }
 }
-</span></pre>
+</span></code></pre>
 <p>You can try different amounts of memory by passing e.g. <code>-m 500M</code> to QEMU. To compare these numbers, <a href="https://www.wolframalpha.com/input/?i=%2832605+*+4096%29+bytes+in+MiB">WolframAlpha</a> can be very helpful.</p>
 <h2 id="conclusion"><a class="zola-anchor" href="#conclusion" aria-label="Anchor link for: conclusion">🔗</a>Conclusion</h2>
 <p>Now we have a working frame allocator. It is a bit rudimentary and cannot free frames, but it also is very fast since it reuses the Multiboot memory map and does not need any costly initialization. A future post will build upon this allocator and add a stack-like data structure for freed frames.</p>

@@ -134,24 +134,24 @@
 <h3 id="catching-breakpoints"><a class="zola-anchor" href="#catching-breakpoints" aria-label="Anchor link for: catching-breakpoints">🔗</a>Catching Breakpoints</h3>
 <p>Let's start by defining a handler function for the breakpoint exception:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts/mod.rs
+<code><span style="color:#608b4e;">// in src/interrupts/mod.rs
 
 </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">breakpoint_handler(stack_frame: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">ExceptionStackFrame) -&gt; </span><span style="color:#569cd6;">!
 </span><span style="color:#dcdcdc;">{
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> stack_frame </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#569cd6;">&amp;*</span><span style="color:#dcdcdc;">stack_frame };
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> stack_frame = </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">*stack_frame };
     println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">EXCEPTION: BREAKPOINT at </span><span style="color:#b4cea8;">{:#x}</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">,
         stack_frame.instruction_pointer, stack_frame);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>We print an error message and also output the instruction pointer and the rest of the stack frame. Note that this function does <em>not</em> return yet, since our <code>handler!</code> macro still requires a diverging function.</p>
 <p>We need to register our new handler function in the interrupt descriptor table (IDT):</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts/mod.rs
+<code><span style="color:#608b4e;">// in src/interrupts/mod.rs
 
 </span><span style="color:#dcdcdc;">lazy_static! {
-    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">: idt::Idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">idt::Idt::new();
+    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">: idt::Idt = {
+        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt = idt::Idt::new();
 
         idt.set_handler(</span><span style="color:#b5cea8;">0</span><span style="color:#dcdcdc;">, handler!(divide_by_zero_handler));
         idt.set_handler(</span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">, handler!(breakpoint_handler)); </span><span style="color:#608b4e;">// new
@@ -161,12 +161,12 @@
         idt
     };
 }
-</span></pre>
+</span></code></pre>
 <p>We set the IDT entry with number 3 since it's the vector number of the breakpoint exception.</p>
 <h4 id="testing-it"><a class="zola-anchor" href="#testing-it" aria-label="Anchor link for: testing-it">🔗</a>Testing it</h4>
 <p>In order to test it, we insert an <code>int3</code> instruction in our <code>rust_main</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 </span><span style="color:#569cd6;">...
 </span><span style="color:#dcdcdc;">#[macro_use] </span><span style="color:#608b4e;">// needed for the `int!` macro
 </span><span style="color:#569cd6;">extern crate</span><span style="color:#dcdcdc;"> x86_64;
@@ -183,7 +183,7 @@
     println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>When we execute <code>make run</code>, we see the following:</p>
 <p><img src="https://os.phil-opp.com/returning-from-exceptions/qemu-breakpoint-handler.png" alt="QEMU showing EXCEPTION: BREAKPOINT at 0x110970 and a dump of the exception stack frame" /></p>
 <p>It works! Now we “just” need to return from the breakpoint handler somehow so that we see the <code>It did not crash</code> message again.</p>
@@ -202,19 +202,19 @@
 <p>The situation is a bit different for the breakpoint exception, since it needs no resolution. Restarting the <code>int3</code> instruction wouldn't make sense, since it would cause a new breakpoint exception and we would enter an endless loop. For this reason the hardware designers decided that the stored <code>rip</code> should point to the next instruction after the <code>int3</code> instruction.</p>
 <p>Let's check this for our breakpoint handler. Remember, the handler printed the following message (see the image above):</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">EXCEPTION: BREAKPOINT at 0x110970
-</span></pre>
+<code><span style="color:#dcdcdc;">EXCEPTION: BREAKPOINT at 0x110970
+</span></code></pre>
 <p>So let's disassemble the instruction at <code>0x110970</code> and its predecessor:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; objdump -d build/kernel-x86_64.bin | grep -B1 &quot;110970:&quot;
+<code><span style="color:#dcdcdc;">&gt; objdump -d build/kernel-x86_64.bin | grep -B1 &quot;110970:&quot;
 11096f:	cc                   	int3
 110970:	48 c7 01 2a 00 00 00 	movq   $0x2a,(%rcx)
-</span></pre>
+</span></code></pre>
 <p>We see that <code>0x110970</code> indeed points to the next instruction after <code>int3</code>. So we can simply jump to the stored instruction pointer when we want to return from the breakpoint exception.</p>
 <h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h3>
 <p>Let's update our <code>handler!</code> macro to support non-diverging exception handlers:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts/mod.rs
+<code><span style="color:#608b4e;">// in src/interrupts/mod.rs
 
 </span><span style="color:#dcdcdc;">macro_rules! handler {
     ($name: ident) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{{
@@ -238,11 +238,11 @@
         wrapper
     }}
 }
-</span></pre>
+</span></code></pre>
 <p>When an exception handler returns from the <code>call</code> instruction, we use the <code>iretq</code> instruction to continue the interrupted program. Note that we need to undo the stack pointer alignment before, so that <code>rsp</code> points to the end of the exception stack frame again.</p>
 <p>We've changed the handler function type, so we need to adjust our existing exception handlers:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">// in src/interrupts/mod.rs
+<code><span style="color:#dcdcdc;">// in src/interrupts/mod.rs
 
 extern &quot;C&quot; fn divide_by_zero_handler(
 -   stack_frame: &amp;ExceptionStackFrame) -&gt; ! {...}
@@ -258,7 +258,7 @@ extern &quot;C&quot; fn breakpoint_handler(
     println!(...);
 -   loop {}
 }
-</span></pre>
+</span></code></pre>
 <p>Note that we also removed the <code>loop {}</code> at the end of our <code>breakpoint_handler</code> so that it no longer diverges. The <code>divide_by_zero_handler</code> and the <code>invalid_opcode_handler</code> still diverge (albeit the new function type would allow a return).</p>
 <h3 id="testing"><a class="zola-anchor" href="#testing" aria-label="Anchor link for: testing">🔗</a>Testing</h3>
 <p>Let's try our new <code>iretq</code> logic:</p>
@@ -268,19 +268,19 @@ extern &quot;C&quot; fn breakpoint_handler(
 <p>Let's debug it using GDB. For that we execute <code>make debug</code> in one terminal (which starts QEMU with the <code>-s -S</code> flags) and then <code>make gdb</code> (which starts and connects GDB) in a second terminal. For more information about GDB debugging, check out our <a href="https://os.phil-opp.com/set-up-gdb/">Set Up GDB</a> guide.</p>
 <p>First we want to check if our <code>iretq</code> was successful. Therefore we set a breakpoint on the <code>println!(&quot;It did not crash line!&quot;)</code> statement in <code>src/lib.rs</code>. Let's assume that it's on line 61:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">(gdb) break blog_os/src/lib.rs:61
+<code><span style="color:#dcdcdc;">(gdb) break blog_os/src/lib.rs:61
 Breakpoint 1 at 0x110a95: file /home/.../blog_os/src/lib.rs, line 61.
-</span></pre>
+</span></code></pre>
 <p>This line is after the <code>int3</code> instruction, so we know that the <code>iretq</code> succeeded when the breakpoint is hit. To test this, we continue the execution:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">(gdb) continue
+<code><span style="color:#dcdcdc;">(gdb) continue
 Continuing.
 
 Breakpoint 1, blog_os::rust_main (multiboot_information_address=1539136)
     at /home/.../blog_os/src/lib.rs:61
 61	    println!(&quot;It did not crash!&quot;);
 
-</span></pre>
+</span></code></pre>
 <p>It worked! So our kernel successfully returned from the <code>int3</code> instruction, which means that the <code>iretq</code> itself works.</p>
 <p>However, when we <code>continue</code> the execution again, we get the page fault. So the exception occurs somewhere in the <code>println</code> logic. This means that it occurs in code generated by the compiler (and not e.g. in inline assembly). But the compiler should never access <code>0x1</code>, so how is this happening?</p>
 <p>The answer is that we've used the wrong <em>calling convention</em> for our exception handlers. Thus, we violate some compiler invariants so that the code that works fine without intermediate exceptions starts to violate memory safety when it's executed after a breakpoint exception.</p>
@@ -319,14 +319,14 @@ Breakpoint 1, blog_os::rust_main (multiboot_information_address=1539136)
 <p>So our exception handler erroneously assumes that the scratch registers were saved by the caller. But the caller (<code>rust_main</code>) couldn't save any registers since it didn't know that an exception occurs. So nobody saves <code>rax</code> and the other scratch registers, which leads to the page fault.</p>
 <p>The problem is that we use a calling convention with caller-saved registers for our exception handlers. Instead, we need a calling convention means that preserves <em>all registers</em>. In other words, all registers must be callee-saved:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;all-registers-callee-saved&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">exception_handler() {</span><span style="color:#569cd6;">...</span><span style="color:#dcdcdc;">}
-</span></pre>
+<code><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;all-registers-callee-saved&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">exception_handler() {</span><span style="color:#569cd6;">...</span><span style="color:#dcdcdc;">}
+</span></code></pre>
 <p>Unfortunately, Rust does not support such a calling convention. It was <a href="https://github.com/rust-lang/rfcs/pull/1275">proposed once</a>, but did not get accepted for various reasons. The primary reason was that such calling conventions can be simulated by writing a naked wrapper function.</p>
 <p>(Remember: <a href="https://github.com/rust-lang/rfcs/blob/master/text/1201-naked-fns.md">Naked functions</a> are functions without prologue and can contain only inline assembly. They were discussed in the <a href="https://os.phil-opp.com/better-exception-messages/#naked-functions">previous post</a>.)</p>
 <h3 id="a-naked-wrapper-function"><a class="zola-anchor" href="#a-naked-wrapper-function" aria-label="Anchor link for: a-naked-wrapper-function">🔗</a>A naked wrapper function</h3>
 <p>Such a naked wrapper function might look like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#[naked]
+<code><span style="color:#dcdcdc;">#[naked]
 </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">calling_convention_wrapper() {
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
         asm!(</span><span style="color:#d69d85;">&quot;
@@ -352,13 +352,13 @@ Breakpoint 1, blog_os::rust_main (multiboot_information_address=1539136)
         &quot; </span><span style="color:#dcdcdc;">:::: </span><span style="color:#d69d85;">&quot;intel&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;volatile&quot;</span><span style="color:#dcdcdc;">);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>This wrapper function saves all <em>scratch</em> registers to the stack before calling the exception handler and restores them afterwards. Note that we <code>pop</code> the registers in reverse order.</p>
 <p>We don't need to backup <em>preserved</em> registers since they are callee-saved in the C calling convention. Thus, the compiler already takes care of preserving their values.</p>
 <h3 id="fixing-our-handler-macro"><a class="zola-anchor" href="#fixing-our-handler-macro" aria-label="Anchor link for: fixing-our-handler-macro">🔗</a>Fixing our Handler Macro</h3>
 <p>Let's update our handler macro to fix the calling convention problem. Therefore we need to backup and restore all scratch registers. For that we create two new macros:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts/mod.rs
+<code><span style="color:#608b4e;">// in src/interrupts/mod.rs
 
 </span><span style="color:#dcdcdc;">macro_rules! save_scratch_registers {
     () </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{
@@ -389,11 +389,11 @@ macro_rules! restore_scratch_registers {
             &quot; </span><span style="color:#dcdcdc;">:::: </span><span style="color:#d69d85;">&quot;intel&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;volatile&quot;</span><span style="color:#dcdcdc;">);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>We need to declare these macros <em>above</em> our <code>handler</code> macro, since macros are only available after their declaration.</p>
 <p>Now we can use these macros to fix our <code>handler!</code> macro:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts/mod.rs
+<code><span style="color:#608b4e;">// in src/interrupts/mod.rs
 
 </span><span style="color:#dcdcdc;">macro_rules! handler {
     ($name: ident) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{{
@@ -420,7 +420,7 @@ macro_rules! restore_scratch_registers {
         wrapper
     }}
 }
-</span></pre>
+</span></code></pre>
 <p>It's important that we save the registers first, before we modify any of them. After the <code>call</code> instruction (but before <code>iretq</code>) we restore the registers again. Because we're now changing <code>rsp</code> (by pushing the register values) before we load it into <code>rdi</code>, we would get a wrong exception stack frame pointer. Therefore we need to adjust it by adding the number of bytes we push. We push 9 registers that are 8 bytes each, so <code>9 * 8</code> bytes in total.</p>
 <p>Note that we no longer need to manually align the stack pointer, because we're pushing an uneven number of registers in <code>save_scratch_registers</code>. Thus the stack pointer already has the required 16-byte alignment.</p>
 <h3 id="testing-it-again"><a class="zola-anchor" href="#testing-it-again" aria-label="Anchor link for: testing-it-again">🔗</a>Testing it again</h3>
@@ -447,7 +447,7 @@ macro_rules! restore_scratch_registers {
 <p>The Rust compiler (and LLVM) assume that the <code>x86_64-unknown-linux-gnu</code> target supports only MMX and SSE, so we don't need to save the <code>ymm0</code> through <code>ymm15</code>. But we need to save <code>xmm0</code> through <code>xmm15</code> and also <code>mm0</code> through <code>mm7</code>. There is a special instruction to do this: <a href="https://www.felixcloutier.com/x86/fxsave">fxsave</a>. This instruction saves the floating point and multimedia state to a given address. It needs <em>512 bytes</em> to store that state.</p>
 <p>In order to save/restore the multimedia registers, we <em>could</em> add new macros:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">macro_rules! save_multimedia_registers {
+<code><span style="color:#dcdcdc;">macro_rules! save_multimedia_registers {
     () </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{
         asm!(</span><span style="color:#d69d85;">&quot;sub rsp, 512
               fxsave [rsp]
@@ -462,7 +462,7 @@ macro_rules! restore_multimedia_registers {
             &quot; </span><span style="color:#dcdcdc;">:::: </span><span style="color:#d69d85;">&quot;intel&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;volatile&quot;</span><span style="color:#dcdcdc;">);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>First, we reserve the 512 bytes on the stack and then we use <code>fxsave</code> to backup the multimedia registers. In order to restore them later, we use the <a href="https://www.felixcloutier.com/x86/fxrstor">fxrstor</a> instruction. Note that <code>fxsave</code> and <code>fxrstor</code> require a 16 byte aligned memory address.</p>
 <p>However, <em>we won't do it that way</em>. The problem is the large amount of memory required. We will reuse the same code when we handle hardware interrupts in a future post. So for each mouse click, pressed key, or arrived network package we need to write 512 bytes to memory. This would be a huge performance problem.</p>
 <p>Fortunately, there exists an alternative solution.</p>
@@ -477,7 +477,7 @@ macro_rules! restore_multimedia_registers {
 <p>In order to disable the multimedia extensions for our kernel, we need to compile for a custom target. We want a target that is equal to <code>x86_64-unknown-linux-gnu</code>, but without MMX and SSE support. Rust allows us to specify such a target using a JSON configuration file.</p>
 <p>A minimal target specification that describes the <code>x86_64-unknown-linux-gnu</code> target looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">{
+<code><span style="color:#dcdcdc;">{
   </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;x86_64-unknown-linux-gnu&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#d69d85;">&quot;data-layout&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;e-m:e-i64:64-f80:128-n8:16:32:64-S128&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#d69d85;">&quot;target-endian&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;little&quot;</span><span style="color:#dcdcdc;">,
@@ -486,13 +486,13 @@ macro_rules! restore_multimedia_registers {
   </span><span style="color:#d69d85;">&quot;arch&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;x86_64&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#d69d85;">&quot;os&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;none&quot;
 </span><span style="color:#dcdcdc;">}
-</span></pre>
+</span></code></pre>
 <p>The <code>llvm-target</code> field specifies the target triple that is passed to LLVM. We want to derive a 64-bit Linux target, so we choose <code>x86_64-unknown-linux-gnu</code>. The <code>data-layout</code> field is also passed to LLVM and specifies how data should be laid out in memory. It consists of various specifications separated by a <code>-</code> character. For example, the <code>e</code> means little endian and <code>S128</code> specifies that the stack should be 128 bits (= 16 byte) aligned. The format is described in detail in the <a href="https://llvm.org/docs/LangRef.html#data-layout">LLVM documentation</a> but there shouldn't be a reason to change this string.</p>
 <p>The other fields are used for conditional compilation. This allows crate authors to use <code>cfg</code> variables to write special code for depending on the OS or the architecture. There isn't any up-to-date documentation about these fields but the <a href="https://github.com/rust-lang/rust/blob/c772948b687488a087356cb91432425662e034b9/src/librustc_back/target/mod.rs#L194-L214">corresponding source code</a> is quite readable.</p>
 <h4 id="disabling-mmx-and-sse"><a class="zola-anchor" href="#disabling-mmx-and-sse" aria-label="Anchor link for: disabling-mmx-and-sse">🔗</a>Disabling MMX and SSE</h4>
 <p>In order to disable the multimedia extensions, we create a new target named <code>x86_64-blog_os</code>. To describe this target, we create a file named <code>x86_64-blog_os.json</code> in the project root with the following content:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">{
+<code><span style="color:#dcdcdc;">{
   </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;x86_64-unknown-linux-gnu&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#d69d85;">&quot;data-layout&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;e-m:e-i64:64-f80:128-n8:16:32:64-S128&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#d69d85;">&quot;target-endian&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;little&quot;</span><span style="color:#dcdcdc;">,
@@ -502,22 +502,22 @@ macro_rules! restore_multimedia_registers {
   </span><span style="color:#d69d85;">&quot;os&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;none&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#d69d85;">&quot;features&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;-mmx,-sse&quot;
 </span><span style="color:#dcdcdc;">}
-</span></pre>
+</span></code></pre>
 <p>It's equal to <code>x86_64-unknown-linux-gnu</code> target but has one additional option: <code>&quot;features&quot;: &quot;-mmx,-sse&quot;</code>. So we added two target <em>features</em>: <code>-mmx</code> and <code>-sse</code>. The minus prefix defines that our target does <em>not</em> support this feature. So by specifying <code>-mmx</code> and <code>-sse</code>, we disable the default <code>mmx</code> and <code>sse</code> features.</p>
 <p>In order to compile for the new target, we need to adjust our Makefile:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;"># in `Makefile`
+<code><span style="color:#dcdcdc;"># in `Makefile`
 
  arch ?= x86_64
 -target ?= $(arch)-unknown-linux-gnu
 +target ?= $(arch)-blog_os
 ...
-</span></pre>
+</span></code></pre>
 <p>The new target name (<code>x86_64-blog_os</code>) is the file name of the JSON configuration file without the <code>.json</code> extension.</p>
 <h3 id="cross-compilation"><a class="zola-anchor" href="#cross-compilation" aria-label="Anchor link for: cross-compilation">🔗</a>Cross compilation</h3>
 <p>Let's try if our kernel still works with the new target:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; make run
+<code><span style="color:#dcdcdc;">&gt; make run
 Compiling raw-cpuid v2.0.1
 Compiling rlibc v0.1.5
 Compiling x86 v0.7.1
@@ -530,49 +530,49 @@ Build failed, waiting for other jobs to finish...
 ...
 Makefile:52: recipe for target &#39;cargo&#39; failed
 make: *** [cargo] Error 101
-</span></pre>
+</span></code></pre>
 <p>It doesn't compile anymore. The error tells us that the Rust compiler no longer finds the core library.</p>
 <p>The <a href="https://doc.rust-lang.org/nightly/core/index.html">core library</a> is implicitly linked to all <code>no_std</code> crates and contains things such as <code>Result</code>, <code>Option</code>, and iterators. We've used that library without problems since <a href="https://os.phil-opp.com/set-up-rust/">the very beginning</a>, so why is it no longer available?</p>
 <p>The problem is that the core library is distributed together with the Rust compiler as a <em>precompiled</em> library. So it is only valid for the host triple, which is <code>x86_64-unknown-linux-gnu</code> in our case. If we want to compile code for other targets, we need to recompile <code>core</code> for these targets first.</p>
 <h4 id="xargo"><a class="zola-anchor" href="#xargo" aria-label="Anchor link for: xargo">🔗</a>Xargo</h4>
 <p>That's where <a href="https://github.com/japaric/xargo">xargo</a> comes in. It is a wrapper for cargo that eases cross compilation. We can install it by executing:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo install xargo
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo install xargo
+</span></code></pre>
 <p>Xargo depends on the rust source code, which we can install with <code>rustup component add rust-src</code>.</p>
 <p>Xargo is “a drop-in replacement for cargo”, so every cargo command also works with <code>xargo</code>. You can do e.g. <code>xargo --help</code>, <code>xargo clean</code>, or <code>xargo doc</code>. However, the <code>build</code> command gains additional functionality: <code>xargo build</code> will automatically cross compile the <code>core</code> library when compiling for custom targets.</p>
 <p>That's exactly what we want, so we change one letter in our Makefile:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;"># in `Makefile`
+<code><span style="color:#dcdcdc;"># in `Makefile`
 ...
 
 cargo:
 -	@cargo build --target $(target)
 +	@xargo build --target $(target)
 ...
-</span></pre>
+</span></code></pre>
 <p>Now the build goes through <code>xargo</code>, which should fix the compilation error. Let's try it out:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; make run
+<code><span style="color:#dcdcdc;">&gt; make run
 Compiling core v0.0.0 (file:///home/…/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/src/libcore)
 LLVM ERROR: SSE register return with SSE disabled
 error: Could not compile `core`.
-</span></pre>
+</span></code></pre>
 <p>Well, we get a different error now, so it seems like we're making progress :). It seems like there is a “SSE register return” although SSE is disabled. But what's an “SSE register return”?</p>
 <h3 id="sse-register-return"><a class="zola-anchor" href="#sse-register-return" aria-label="Anchor link for: sse-register-return">🔗</a>SSE Register Return</h3>
 <p>Remember when we discussed calling conventions above? The calling convention defines which registers are used for return values. Well, the <a href="https://refspecs.linuxbase.org/elf/gabi41.pdf">System V ABI</a> defines that <code>xmm0</code> should be used for returning floating point values. So somewhere in the <code>core</code> library a function returns a float and LLVM doesn't know what to do. The ABI says “use <code>xmm0</code>” but the target specification says “don't use <code>xmm</code> registers”.</p>
 <p>In order to fix this problem, we need to change our float ABI. The idea is to avoid normal hardware-supported floats and use a pure software implementation instead. We can do so by enabling the <code>soft-float</code> feature for our target. For that, we edit <code>x86_64-blog_os.json</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">{
+<code><span style="color:#dcdcdc;">{
   </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;x86_64-unknown-linux-gnu&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#ff3333;">...
   </span><span style="color:#d69d85;">&quot;features&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;-mmx,-sse,+soft-float&quot;
 </span><span style="color:#dcdcdc;">}
-</span></pre>
+</span></code></pre>
 <p>The plus prefix tells LLVM to enable the <code>soft-float</code> feature.</p>
 <p>Let's try <code>make run</code> again:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; make run
+<code><span style="color:#dcdcdc;">&gt; make run
    Compiling core v0.0.0 (file:///…/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/src/libcore)
     Finished release [optimized] target(s) in 21.95 secs
    Compiling spin v0.4.5
@@ -597,18 +597,18 @@ error[E0463]: can&#39;t find crate for `alloc`
    | ^^^^^^^^^^^^^^^^^^^ can&#39;t find crate
 
 error: aborting due to previous error
-</span></pre>
+</span></code></pre>
 <p>We see that <code>xargo</code> now compiles the <code>core</code> crate in release mode. Then it starts the normal cargo build. Cargo then recompiles all dependencies, since it needs to generate different code for the new target.</p>
 <p>However, the build still fails. The reason is that xargo only installs <code>core</code> by default, but we also need the <code>alloc</code> crate. We can enable it by creating a file named <code>Xargo.toml</code> with the following contents:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># Xargo.toml
+<code><span style="color:#608b4e;"># Xargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">target.x86_64-blog_os.dependencies</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">alloc </span><span style="color:#dcdcdc;">= {}
-</span></pre>
+</span></code></pre>
 <p>Now xargo compiles <code>alloc</code>, too:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; make run
+<code><span style="color:#dcdcdc;">&gt; make run
    Compiling core v0.0.0 (file:///…/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/src/libcore)
    Compiling std_unicode v0.0.0 (file:///…/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/src/libstd_unicode)
    Compiling alloc v0.0.0 (file:///…/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/src/liballoc)
@@ -618,11 +618,11 @@ warning: unused variable: `allocator` […]
 warning: unused variable: `frame` […]
 
     Finished debug [unoptimized + debuginfo] target(s) in 1.75 secs
-</span></pre>
+</span></code></pre>
 <p>It worked! Now we have a kernel that never touches the multimedia registers! We can verify this by executing:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; objdump -d build/kernel-x86_64.bin | grep &quot;mm[0-9]&quot;
-</span></pre>
+<code><span style="color:#dcdcdc;">&gt; objdump -d build/kernel-x86_64.bin | grep &quot;mm[0-9]&quot;
+</span></code></pre>
 <p>If the command produces no output, our kernel uses neither MMX (<code>mm0</code> – <code>mm7</code>) nor SSE (<code>xmm0</code> – <code>xmm15</code>) registers.</p>
 <p>So now our return-from-exception logic works without problems in <em>most</em> cases. However, there is still a pitfall hidden in the C calling convention, which might cause hideous bugs in some rare cases.</p>
 <h2 id="the-red-zone"><a class="zola-anchor" href="#the-red-zone" aria-label="Anchor link for: the-red-zone">🔗</a>The Red Zone</h2>
@@ -636,7 +636,7 @@ warning: unused variable: `frame` […]
 <h3 id="adjusting-our-exception-handler"><a class="zola-anchor" href="#adjusting-our-exception-handler" aria-label="Anchor link for: adjusting-our-exception-handler">🔗</a>Adjusting our Exception Handler?</h3>
 <p>The problem is that the <a href="https://refspecs.linuxbase.org/elf/gabi41.pdf">System V ABI</a> demands that the red zone <em>“shall not be modified by signal or interrupt handlers.”</em> Our current exception handlers do not respect this. We could try to fix it by subtracting 128 from the stack pointer before pushing anything:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">sub </span><span style="color:#dcdcdc;">rsp, </span><span style="color:#b4cea8;">128
+<code><span style="color:#569cd6;">sub </span><span style="color:#dcdcdc;">rsp, </span><span style="color:#b4cea8;">128
 </span><span style="color:#dcdcdc;">save_scratch_registers()
 ...
 </span><span style="color:#569cd6;">call </span><span style="color:#dcdcdc;">...
@@ -645,24 +645,24 @@ restore_scratch_registers()
 </span><span style="color:#569cd6;">add </span><span style="color:#dcdcdc;">rsp, </span><span style="color:#b4cea8;">128
 
 </span><span style="color:#569cd6;">iretq
-</span></pre>
+</span></code></pre>
 <p><em>This will not work.</em> The problem is that the CPU pushes the exception stack frame before even calling our handler function. So the CPU itself will clobber the red zone and there is nothing we can do about that. So our only chance is to disable the red zone.</p>
 <h3 id="disabling-the-red-zone"><a class="zola-anchor" href="#disabling-the-red-zone" aria-label="Anchor link for: disabling-the-red-zone">🔗</a>Disabling the Red Zone</h3>
 <p>The red zone is a property of our target, so in order to disable it we edit our <code>x86_64-blog_os.json</code> a last time:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">{
+<code><span style="color:#dcdcdc;">{
   </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;x86_64-unknown-linux-gnu&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#ff3333;">...
   </span><span style="color:#d69d85;">&quot;features&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#d69d85;">&quot;-mmx,-sse,+soft-float&quot;</span><span style="color:#dcdcdc;">,
   </span><span style="color:#d69d85;">&quot;disable-redzone&quot;</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">true
 </span><span style="color:#dcdcdc;">}
-</span></pre>
+</span></code></pre>
 <p>We add one additional option at the end: <code>&quot;disable-redzone&quot;: true</code>. As you might guess, this option disables the red zone optimization.</p>
 <p>Now we have a red zone free kernel!</p>
 <h2 id="exceptions-with-error-codes"><a class="zola-anchor" href="#exceptions-with-error-codes" aria-label="Anchor link for: exceptions-with-error-codes">🔗</a>Exceptions with Error Codes</h2>
 <p>We're now able to correctly return from exceptions without error codes. However, we still can't return from exceptions that push an error code (e.g. page faults). Let's fix that by updating our <code>handler_with_error_code</code> macro:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts/mod.rs
+<code><span style="color:#608b4e;">// in src/interrupts/mod.rs
 
 </span><span style="color:#dcdcdc;">macro_rules! handler_with_error_code {
     ($name: ident) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{{
@@ -683,19 +683,19 @@ restore_scratch_registers()
         wrapper
     }}
 }
-</span></pre>
+</span></code></pre>
 <p>First, we change the type of the handler function: no more <code>-&gt; !</code>, so it no longer needs to diverge. We also add an <code>iretq</code> instruction at the end.</p>
 <p>Now we can make our <code>page_fault_handler</code> non-diverging:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">// in src/interrupts/mod.rs
+<code><span style="color:#dcdcdc;">// in src/interrupts/mod.rs
 
  extern &quot;C&quot; fn page_fault_handler(stack_frame: &amp;ExceptionStackFrame,
 -   error_code: u64) -&gt; ! { ... }
 +   error_code: u64) { ... }
-</span></pre>
+</span></code></pre>
 <p>However, now we have the same problem as above: The handler function will overwrite the scratch registers and cause bugs when returning. Let's fix this by invoking <code>save_scratch_registers</code> at the beginning:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts/mod.rs
+<code><span style="color:#608b4e;">// in src/interrupts/mod.rs
 
 </span><span style="color:#dcdcdc;">macro_rules! handler_with_error_code {
     ($name: ident) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{{
@@ -720,14 +720,14 @@ restore_scratch_registers()
         wrapper
     }}
 }
-</span></pre>
+</span></code></pre>
 <p>Now we backup the scratch registers to the stack right at the beginning and restore them just before the <code>iretq</code>. Like in the <code>handler</code> macro, we now need to add <code>10*8</code> to <code>rdi</code> in order to get the correct exception stack frame pointer (<code>save_scratch_registers</code> pushes nine 8 byte registers, plus the error code). We also need to undo the stack pointer alignment after the <code>call</code> <sup class="footnote-reference"><a href="#fn-stack-alignment">2</a></sup>.</p>
 <div class="footnote-definition" id="fn-stack-alignment"><sup class="footnote-definition-label">2</sup>
 <p>The stack alignment is actually wrong here, since we additionally pushed an uneven number of registers. However, the <code>pop rsi</code> is wrong too, since the error code is no longer at the top of the stack. When we fix that problem, the stack alignment becomes correct again. So I left it in to keep things simple.</p>
 </div>
 <p>Now we have one last bug: We <code>pop</code> the error code into <code>rsi</code>, but the error code is no longer at the top of the stack (since <code>save_scratch_registers</code> pushed 9 registers on top of it). So we need to do it differently:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts/mod.rs
+<code><span style="color:#608b4e;">// in src/interrupts/mod.rs
 
 </span><span style="color:#dcdcdc;">macro_rules! handler_with_error_code {
     ($name: ident) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{{
@@ -753,26 +753,26 @@ restore_scratch_registers()
         wrapper
     }}
 }
-</span></pre>
+</span></code></pre>
 <p>Instead of using <code>pop</code>, we're calculating the error code address manually (<code>save_scratch_registers</code> pushes nine 8 byte registers) and load it into <code>rsi</code> using a <code>mov</code>. So now the error code stays on the stack. But <code>iretq</code> doesn't handle the error code, so we need to pop it before invoking <code>iretq</code>.</p>
 <p>Phew! That was a lot of fiddling with assembly. Let's test if it still works.</p>
 <h3 id="testing-1"><a class="zola-anchor" href="#testing-1" aria-label="Anchor link for: testing-1">🔗</a>Testing</h3>
 <p>First, we test if the exception stack frame pointer and the error code are still correct:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in rust_main in src/lib.rs
+<code><span style="color:#608b4e;">// in rust_main in src/lib.rs
 
 </span><span style="color:#569cd6;">...
 unsafe </span><span style="color:#dcdcdc;">{ int!(</span><span style="color:#b5cea8;">3</span><span style="color:#dcdcdc;">) };
 
 </span><span style="color:#608b4e;">// provoke a page fault
-</span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ </span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">(</span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u64</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">42</span><span style="color:#dcdcdc;">; }
+</span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ *(</span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u64</span><span style="color:#dcdcdc;">) = </span><span style="color:#b5cea8;">42</span><span style="color:#dcdcdc;">; }
 
 println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
 </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
-</span></pre>
+</span></code></pre>
 <p>This should cause the following error message:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">EXCEPTION: PAGE FAULT while accessing 0xdeadbeaf
+<code><span style="color:#dcdcdc;">EXCEPTION: PAGE FAULT while accessing 0xdeadbeaf
 error code: CAUSED_BY_WRITE
 ExceptionStackFrame {
     instruction_pointer: 1114753,
@@ -781,7 +781,7 @@ ExceptionStackFrame {
     stack_pointer: 1171104,
     stack_segment: 16
 }
-</span></pre>
+</span></code></pre>
 <p>The error code should still be <code>CAUSED_BY_WRITE</code> and the exception stack frame values should also be correct (e.g. <code>code_segment</code> should be 8 and <code>stack_segment</code> should be 16).</p>
 <h4 id="returning-from-page-faults"><a class="zola-anchor" href="#returning-from-page-faults" aria-label="Anchor link for: returning-from-page-faults">🔗</a>Returning from Page Faults</h4>
 <p>Let's see what happens if we comment out the trailing <code>loop</code> in our page fault handler:</p>

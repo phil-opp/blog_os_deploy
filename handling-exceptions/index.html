@@ -134,7 +134,7 @@
 <h2 id="an-idt-type"><a class="zola-anchor" href="#an-idt-type" aria-label="Anchor link for: an-idt-type">🔗</a>An IDT Type</h2>
 <p>Instead of creating our own IDT type, we will use the <a href="https://docs.rs/x86_64/0.1.1/x86_64/structures/idt/struct.Idt.html"><code>Idt</code> struct</a> of the <code>x86_64</code> crate, which looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#[repr(C)]
+<code><span style="color:#dcdcdc;">#[repr(C)]
 </span><span style="color:#569cd6;">pub struct </span><span style="color:#dcdcdc;">Idt {
     </span><span style="color:#569cd6;">pub </span><span style="color:#dcdcdc;">divide_by_zero: IdtEntry&lt;HandlerFunc&gt;,
     </span><span style="color:#569cd6;">pub </span><span style="color:#dcdcdc;">debug: IdtEntry&lt;HandlerFunc&gt;,
@@ -159,12 +159,12 @@
     </span><span style="color:#569cd6;">pub </span><span style="color:#dcdcdc;">interrupts: [IdtEntry&lt;HandlerFunc&gt;; 224],
     </span><span style="color:#608b4e;">// some fields omitted
 </span><span style="color:#dcdcdc;">}
-</span></pre>
+</span></code></pre>
 <p>The fields have the type <a href="https://docs.rs/x86_64/0.1.1/x86_64/structures/idt/struct.IdtEntry.html"><code>IdtEntry&lt;F&gt;</code></a>, which is a struct that represents the fields of an IDT entry (see the table above). The type parameter <code>F</code> defines the expected handler function type. We see that some entries require a <a href="https://docs.rs/x86_64/0.1.1/x86_64/structures/idt/type.HandlerFunc.html"><code>HandlerFunc</code></a> and some entries require a <a href="https://docs.rs/x86_64/0.1.1/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>. The page fault even has its own special type: <a href="https://docs.rs/x86_64/0.1.1/x86_64/structures/idt/type.PageFaultHandlerFunc.html"><code>PageFaultHandlerFunc</code></a>.</p>
 <p>Let's look at the <code>HandlerFunc</code> type first:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">HandlerFunc </span><span style="color:#569cd6;">= extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn</span><span style="color:#dcdcdc;">(</span><span style="color:#569cd6;">_</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> ExceptionStackFrame);
-</span></pre>
+<code><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">HandlerFunc </span><span style="color:#dcdcdc;">= </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn</span><span style="color:#dcdcdc;">(</span><span style="color:#569cd6;">_</span><span style="color:#dcdcdc;">: </span><span style="color:#569cd6;">&amp;mut</span><span style="color:#dcdcdc;"> ExceptionStackFrame);
+</span></code></pre>
 <p>It's a <a href="https://doc.rust-lang.org/book/type-aliases.html">type alias</a> for an <code>extern &quot;x86-interrupt&quot; fn</code> type. The <code>extern</code> keyword defines a function with a <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/ffi.html#foreign-calling-conventions">foreign calling convention</a> and is often used to communicate with C code (<code>extern &quot;C&quot; fn</code>). But what is the <code>x86-interrupt</code> calling convention?</p>
 <h2 id="the-interrupt-calling-convention"><a class="zola-anchor" href="#the-interrupt-calling-convention" aria-label="Anchor link for: the-interrupt-calling-convention">🔗</a>The Interrupt Calling Convention</h2>
 <p>Exceptions are quite similar to function calls: The CPU jumps to the first instruction of the called function and executes it. Afterwards, if the function is not diverging, the CPU jumps to the return address and continues the execution of the parent function.</p>
@@ -217,32 +217,32 @@
 <h2 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h2>
 <p>Now that we've understood the theory, it's time to handle CPU exceptions in our kernel. We start by creating a new <code>interrupts</code> module:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 </span><span style="color:#569cd6;">...
 mod </span><span style="color:#dcdcdc;">interrupts;
 </span><span style="color:#569cd6;">...
-</span></pre>
+</span></code></pre>
 <p>In the new module, we create an <code>init</code> function, that creates a new <code>Idt</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/interrupts.rs
+<code><span style="color:#608b4e;">// in src/interrupts.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::structures::idt::Idt;
 
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Idt::new();
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt = Idt::new();
 }
-</span></pre>
+</span></code></pre>
 <p>Now we can add handler functions. We start by adding a handler for the <a href="https://wiki.osdev.org/Exceptions#Breakpoint">breakpoint exception</a>. The breakpoint exception is the perfect exception to test exception handling. Its only purpose is to temporary pause a program when the breakpoint instruction <code>int3</code> is executed.</p>
 <p>The breakpoint exception is commonly used in debuggers: When the user sets a breakpoint, the debugger overwrites the corresponding instruction with the <code>int3</code> instruction so that the CPU throws the breakpoint exception when it reaches that line. When the user wants to continue the program, the debugger replaces the <code>int3</code> instruction with the original instruction again and continues the program. For more details, see the <a href="https://eli.thegreenplace.net/2011/01/27/how-debuggers-work-part-2-breakpoints">&quot;<em>How debuggers work</em>&quot;</a> series.</p>
 <p>For our use case, we don't need to overwrite any instructions (it wouldn't even be possible since we <a href="https://os.phil-opp.com/remap-the-kernel/#using-the-correct-flags">set the page table flags</a> to read-only). Instead, we just want to print a message when the breakpoint instruction is executed and then continue the program.</p>
 <p>So let's create a simple <code>breakpoint_handler</code> function and add it to our IDT:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">/// in src/interrupts.rs
+<code><span style="color:#608b4e;">/// in src/interrupts.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::structures::idt::ExceptionStackFrame;
 
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Idt::new();
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt = Idt::new();
     idt.breakpoint.set_handler_fn(breakpoint_handler);
 }
 
@@ -251,11 +251,11 @@ mod </span><span style="color:#dcdcdc;">interrupts;
 {
     println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: BREAKPOINT</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, stack_frame);
 }
-</span></pre>
+</span></code></pre>
 <p>Our handler just outputs a message and pretty-prints the exception stack frame.</p>
 <p>When we try to compile it, the following error occurs:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: x86-interrupt ABI is experimental and subject to change (see issue #40180)
+<code><span style="color:#dcdcdc;">error: x86-interrupt ABI is experimental and subject to change (see issue #40180)
   --&gt; src/interrupts.rs:8:1
    |
 8  |   extern &quot;x86-interrupt&quot; fn breakpoint_handler(
@@ -267,20 +267,20 @@ mod </span><span style="color:#dcdcdc;">interrupts;
    | |_^ ...ending here
    |
    = help: add #![feature(abi_x86_interrupt)] to the crate attributes to enable
-</span></pre>
+</span></code></pre>
 <p>This error occurs because the <code>x86-interrupt</code> calling convention is still unstable. To use it anyway, we have to explicitly enable it by adding <code>#![feature(abi_x86_interrupt)]</code> on the top of our <code>lib.rs</code>.</p>
 <h3 id="loading-the-idt"><a class="zola-anchor" href="#loading-the-idt" aria-label="Anchor link for: loading-the-idt">🔗</a>Loading the IDT</h3>
 <p>In order that the CPU uses our new interrupt descriptor table, we need to load it using the <a href="https://www.felixcloutier.com/x86/lgdt:lidt"><code>lidt</code></a> instruction. The <code>Idt</code> struct of the <code>x86_64</code> provides a <a href="https://docs.rs/x86_64/0.1.1/x86_64/structures/idt/struct.Idt.html#method.load"><code>load</code></a> method function for that. Let's try to use it:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
-    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Idt::new();
+<code><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
+    </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt = Idt::new();
     idt.breakpoint.set_handler_fn(breakpoint_handler);
     idt.load();
 }
-</span></pre>
+</span></code></pre>
 <p>When we try to compile it now, the following error occurs:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: `idt` does not live long enough
+<code><span style="color:#dcdcdc;">error: `idt` does not live long enough
   --&gt; src/interrupts/mod.rs:43:5
    |
 43 |     idt.load();
@@ -289,53 +289,53 @@ mod </span><span style="color:#dcdcdc;">interrupts;
    | - borrowed value only lives until here
    |
    = note: borrowed value must be valid for the static lifetime...
-</span></pre>
+</span></code></pre>
 <p>So the <code>load</code> methods expects a <code>&amp;'static self</code>, that is a reference that is valid for the complete runtime of the program. The reason is that the CPU will access this table on every interrupt until we load a different IDT. So using a shorter lifetime than <code>'static</code> could lead to use-after-free bugs.</p>
 <p>In fact, this is exactly what happens here. Our <code>idt</code> is created on the stack, so it is only valid inside the <code>init</code> function. Afterwards the stack memory is reused for other functions, so the CPU would interpret random stack memory as IDT. Luckily, the <code>Idt::load</code> method encodes this lifetime requirement in its function definition, so that the Rust compiler is able to prevent this possible bug at compile time.</p>
 <p>In order to fix this problem, we need to store our <code>idt</code> at a place where it has a <code>'static</code> lifetime. To achieve this, we could either allocate our IDT on the heap using <code>Box</code> and then convert it to a <code>'static</code> reference or we can store the IDT as a <code>static</code>. Let's try the latter:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">static </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">: Idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Idt::new();
+<code><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">: Idt = Idt::new();
 
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
     </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">.breakpoint.set_handler_fn(breakpoint_handler);
     </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">.load();
 }
-</span></pre>
+</span></code></pre>
 <p>There are two problems with this. First, statics are immutable, so we can't modify the breakpoint entry from our <code>init</code> function. Second, the <code>Idt::new</code> function is not a <a href="https://github.com/rust-lang/rfcs/blob/master/text/0911-const-fn.md"><code>const</code> function</a>, so it can't be used to initialize a <code>static</code>. We could solve this problem by using a <a href="https://doc.rust-lang.org/1.30.0/book/second-edition/ch19-01-unsafe-rust.html#accessing-or-modifying-a-mutable-static-variable"><code>static mut</code></a> of type <code>Option&lt;Idt&gt;</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">: Option&lt;Idt&gt; </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">None;
+<code><span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">: Option&lt;Idt&gt; = None;
 
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let </span><span style="color:#b4cea8;">IDT </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Some(Idt::new());
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> idt </span><span style="color:#569cd6;">= </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">.as_mut_ref().unwrap();
+        </span><span style="color:#569cd6;">let </span><span style="color:#b4cea8;">IDT </span><span style="color:#dcdcdc;">= Some(Idt::new());
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> idt = </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">.as_mut_ref().unwrap();
         idt.breakpoint.set_handler_fn(breakpoint_handler);
         idt.load();
     }
 }
-</span></pre>
+</span></code></pre>
 <p>This variant compiles without errors but it's far from idiomatic. <code>static mut</code>s are very prone to data races, so we need an <a href="https://doc.rust-lang.org/1.30.0/book/second-edition/ch19-01-unsafe-rust.html#unsafe-superpowers"><code>unsafe</code> block</a> on each access. Also, we need to explicitly <code>unwrap</code> the <code>IDT</code> on each use, since might be <code>None</code>.</p>
 <h4 id="lazy-statics-to-the-rescue"><a class="zola-anchor" href="#lazy-statics-to-the-rescue" aria-label="Anchor link for: lazy-statics-to-the-rescue">🔗</a>Lazy Statics to the Rescue</h4>
 <p>The one-time initialization of statics with non-const functions is a common problem in Rust. Fortunately, there already exists a good solution in a crate named <a href="https://docs.rs/lazy_static/0.2.4/lazy_static/">lazy_static</a>. This crate provides a <code>lazy_static!</code> macro that defines a lazily initialized <code>static</code>. Instead of computing its value at compile time, the <code>static</code> laziliy initializes itself when it's accessed the first time. Thus, the initialization happens at runtime so that arbitrarily complex initialization code is possible.</p>
 <p>Let's add the <code>lazy_static</code> crate to our project:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 
 </span><span style="color:#dcdcdc;">#[macro_use]
 </span><span style="color:#569cd6;">extern crate</span><span style="color:#dcdcdc;"> lazy_static;
-</span></pre><pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+</span></code></pre><pre style="background-color:#1e1e1e;">
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies.lazy_static</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">version </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.2.4&quot;
 </span><span style="color:#569cd6;">features </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;spin_no_std&quot;</span><span style="color:#dcdcdc;">]
-</span></pre>
+</span></code></pre>
 <p>We need the <code>spin_no_std</code> feature, since we don't link the standard library. We also need the <code>#[macro_use]</code> attribute on the <code>extern crate</code> line to import the <code>lazy_static!</code> macro.</p>
 <p>Now we can create our static IDT using <code>lazy_static</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">lazy_static! {
-    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">: Idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Idt::new();
+<code><span style="color:#dcdcdc;">lazy_static! {
+    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">: Idt = {
+        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> idt = Idt::new();
         idt.breakpoint.set_handler_fn(breakpoint_handler);
         idt
     };
@@ -344,7 +344,7 @@ mod </span><span style="color:#dcdcdc;">interrupts;
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">init() {
     </span><span style="color:#b4cea8;">IDT</span><span style="color:#dcdcdc;">.load();
 }
-</span></pre>
+</span></code></pre>
 <p>Note how this solution requires no <code>unsafe</code> blocks or <code>unwrap</code> calls.</p>
 <blockquote>
 <h5 id="aside-how-does-the-lazy-static-macro-work"><a class="zola-anchor" href="#aside-how-does-the-lazy-static-macro-work" aria-label="Anchor link for: aside-how-does-the-lazy-static-macro-work">🔗</a>Aside: How does the <code>lazy_static!</code> macro work?</h5>
@@ -353,7 +353,7 @@ mod </span><span style="color:#dcdcdc;">interrupts;
 <h3 id="testing-it"><a class="zola-anchor" href="#testing-it" aria-label="Anchor link for: testing-it">🔗</a>Testing it</h3>
 <p>Now we should be able to handle breakpoint exceptions! Let's try it in our <code>rust_main</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">rust_main(...) {
     </span><span style="color:#569cd6;">...
@@ -368,7 +368,7 @@ mod </span><span style="color:#dcdcdc;">interrupts;
     println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span style="color:#dcdcdc;">);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>When we run it in QEMU now (using <code>make run</code>), we see the following:</p>
 <p><img src="https://os.phil-opp.com/handling-exceptions/qemu-breakpoint-exception.png" alt="QEMU printing EXCEPTION: BREAKPOINT and the exception stack frame" /></p>
 <p>It works! The CPU successfully invokes our breakpoint handler, which prints the message, and then returns back to the <code>rust_main</code> function, where the <code>It did not crash!</code> message is printed.</p>
@@ -377,14 +377,14 @@ mod </span><span style="color:#dcdcdc;">interrupts;
 </blockquote>
 <p>We see that the exception stack frame tells us the instruction and stack pointers at the time when the exception occurred. This information is very useful when debugging unexpected exceptions. For example, we can look at the corresponding assembly line using <code>objdump</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; objdump -d build/kernel-x86_64.bin | grep -B5 &quot;1140a6:&quot;
+<code><span style="color:#dcdcdc;">&gt; objdump -d build/kernel-x86_64.bin | grep -B5 &quot;1140a6:&quot;
 00000000001140a0 &lt;x86_64::instructions::interrupts::int3::h015bf61815bb8afe&gt;:
   1140a0:	55                   	push   %rbp
   1140a1:	48 89 e5             	mov    %rsp,%rbp
   1140a4:	50                   	push   %rax
   1140a5:	cc                   	int3
   1140a6:	48 83 c4 08          	add    $0x8,%rsp
-</span></pre>
+</span></code></pre>
 <p>The <code>-d</code> flags disassembles the <code>code</code> section and <code>-C</code> flag makes function names more readable by <a href="https://en.wikipedia.org/wiki/Name_mangling">demangling</a> them. The <code>-B</code> flag of <code>grep</code> specifies the number of preceding lines that should be shown (5 in our case).</p>
 <p>We clearly see the <code>int3</code> exception that caused the breakpoint exception at address <code>1140a5</code>. Wait… the stored instruction pointer was <code>1140a6</code>, which is a normal <code>add</code> operation. What's happening here?</p>
 <h3 id="faults-aborts-and-traps"><a class="zola-anchor" href="#faults-aborts-and-traps" aria-label="Anchor link for: faults-aborts-and-traps">🔗</a>Faults, Aborts, and Traps</h3>

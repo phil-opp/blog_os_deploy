@@ -173,53 +173,53 @@
 <p>Rust 所有的 crate 在預設情況下都會連結<a href="https://doc.rust-lang.org/std/">標準函式庫</a>，而標準函式庫會依賴作業系統的功能，像式執行緒、檔案系統或是網路。它也會依賴 C 語言的標準函式庫 <code>libc</code>，因為其與作業系統緊密相關。既然我們的計劃是編寫自己的作業系統，我們就得用到 <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/using-rust-without-the-standard-library.html"><code>no_std</code> 屬性</a>來停止標準函式庫的自動引用（automatic inclusion）。</p>
 <p>我們先從建立一個新的 cargo 專案開始，最簡單的辦法是輸入下面的命令：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo new blog_os --bin --edition 2018
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo new blog_os --bin --edition 2018
+</span></code></pre>
 <p>我將專案命名為 <code>blog_os</code>，當然讀者也可以自己的名稱。<code>--bin</code> 選項說明我們將要建立一個執行檔（而不是一個函式庫），<code>--edition 2018</code> 選項指明我們的 crate 想使用 Rust <a href="https://doc.rust-lang.org/nightly/edition-guide/rust-2018/index.html">2018 版本</a>。當我們執行這行指令的時候，cargo 會為我們建立以下目錄結構：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">blog_os
+<code><span style="color:#dcdcdc;">blog_os
 ├── Cargo.toml
 └── src
     └── main.rs
-</span></pre>
+</span></code></pre>
 <p><code>Cargo.toml</code> 包含 crate 的設置，像是 crate 的名稱、作者、<a href="https://semver.org/lang/zh-TW/">語意化版本</a>以及依賴套件。<code>src/main.rs</code> 檔案則包含 crate 的根模組（root module）以及我們的 <code>main</code> 函式。您可以用 <code>cargo build</code> 編譯您的 crate 然後在 <code>target/debug</code> 目錄下運行編譯過後的 <code>blog_os</code> 執行檔。</p>
 <h3 id="no-std-shu-xing"><a class="zola-anchor" href="#no-std-shu-xing" aria-label="Anchor link for: no-std-shu-xing">🔗</a>no_std 屬性</h3>
 <p>現在我們的 crate 背後依然有和標準函式庫連結。讓我們加上 <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/using-rust-without-the-standard-library.html"><code>no_std</code> 屬性</a> 來停用：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// main.rs
+<code><span style="color:#608b4e;">// main.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">main() {
     println!(</span><span style="color:#d69d85;">&quot;Hello, world!&quot;</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>當我們嘗試用 <code>cargo build</code> 編譯時會出現以下錯誤訊息：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: cannot find macro `println!` in this scope
+<code><span style="color:#dcdcdc;">error: cannot find macro `println!` in this scope
  --&gt; src/main.rs:4:5
   |
 4 |     println!(&quot;Hello, world!&quot;);
   |     ^^^^^^^
-</span></pre>
+</span></code></pre>
 <p>出現這個錯誤的原因是因為 <a href="https://doc.rust-lang.org/std/macro.println.html"><code>println</code> 巨集（macro）</a>是標準函式庫的一部份，而我們不再包含它，所以我們無法再輸出東西來。這也是理所當然因為 <code>println</code> 會寫到<a href="https://en.wikipedia.org/wiki/Standard_streams#Standard_output_.28stdout.29">標準輸出</a>，而這是一個由作業系統提供的特殊檔案描述符。</p>
 <p>所以讓我們移除這行程式碼，然後用空的 main 函式再試一次：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// main.rs
+<code><span style="color:#608b4e;">// main.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">main() {}
-</span></pre><pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo build
+</span></code></pre><pre style="background-color:#1e1e1e;">
+<code><span style="color:#dcdcdc;">&gt; cargo build
 error: `#[panic_handler]` function required, but not found
 error: language item required, but not found: `eh_personality`
-</span></pre>
+</span></code></pre>
 <p>現在編譯氣告訴我們缺少 <code>#[panic_handler]</code> 函式以及 <em>language item</em>。</p>
 <h2 id="shi-zuo-panic-chu-li-han-shi"><a class="zola-anchor" href="#shi-zuo-panic-chu-li-han-shi" aria-label="Anchor link for: shi-zuo-panic-chu-li-han-shi">🔗</a>實作 panic 處理函式</h2>
 <p><code>panic_handler</code> 屬性定義了當 <a href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a> 發生時編譯器需要呼叫的函式。在標準函式庫中有自己的 panic 處理函式，但在 <code>no_std</code> 的環境中我們得定義我們自己的：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// main.rs
+<code><span style="color:#608b4e;">// main.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
 
@@ -228,7 +228,7 @@ error: language item required, but not found: `eh_personality`
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(_info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p><a href="https://doc.rust-lang.org/nightly/core/panic/struct.PanicInfo.html"><code>PanicInfo</code> parameter</a> 包含 panic 發生時的檔案、行數以及可選的錯誤訊息。這個函式不會返回，所以它被標記為<a href="https://doc.rust-lang.org/1.30.0/book/first-edition/functions.html#diverging-functions">發散函式</a>，只會返回<a href="https://doc.rust-lang.org/nightly/std/primitive.never.html">“never” 型態</a> <code>!</code>。現在我們什麼事可以做，所以我們只需寫一個無限迴圈。</p>
 <h2 id="eh-personality-language-item"><a class="zola-anchor" href="#eh-personality-language-item" aria-label="Anchor link for: eh-personality-language-item">🔗</a>eh_personality Language Item</h2>
 <p>Language item 是一些編譯器需求的特殊函式或類型。舉例來說，Rust 的 [<code>Copy</code>] trait 就是一個 language item，告訴編譯器哪些類型擁有[<em>複製的語意</em>][<code>Copy</code>]。當我們搜尋 <code>Copy</code> trait 的[實作][copy code]時，我們會發現一個特殊的 <code>#[lang = &quot;copy&quot;]</code> 屬性將它定義為一個 language item。</p>
@@ -237,18 +237,18 @@ error: language item required, but not found: `eh_personality`
 <h3 id="ting-yong-hui-su"><a class="zola-anchor" href="#ting-yong-hui-su" aria-label="Anchor link for: ting-yong-hui-su">🔗</a>停用回溯</h3>
 <p>在某些狀況下回溯可能並不是我們要的功能，因此 Rust 提供了<a href="https://github.com/rust-lang/rust/pull/32900">在 panic 時中止</a>的選項。這個選項能停用回溯標誌訊息的產生，也因此能縮小生成的二進制檔案大小。我們能用許多方式開啟這個選項，而最簡單的方式就是把以下幾行設置加入我們的 <code>Cargo.toml</code>：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">[</span><span style="color:#808080;">profile.dev</span><span style="color:#dcdcdc;">]
+<code><span style="color:#dcdcdc;">[</span><span style="color:#808080;">profile.dev</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">panic </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;abort&quot;
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">profile.release</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">panic </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;abort&quot;
-</span></pre>
+</span></code></pre>
 <p>這些選項能將　<code>dev</code> 設置（用於 <code>cargo build</code>）和 <code>release</code> 設置（用於 <code>cargo build --release</code>）的 panic 策略設為 <code>abort</code>。現在編譯器不會再要求我們提供 <code>eh_personality</code> language item。</p>
 <p>現在我們已經修復了上面的錯誤，但是如果我們嘗試編譯的話，又會出現一個新的錯誤：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo build
+<code><span style="color:#dcdcdc;">&gt; cargo build
 error: requires `start` lang_item
-</span></pre>
+</span></code></pre>
 <p>我們的程式缺少 <code>start</code> 這個用來定義入口點（entry point）的 language item。</p>
 <h2 id="start-shu-xing"><a class="zola-anchor" href="#start-shu-xing" aria-label="Anchor link for: start-shu-xing">🔗</a><code>start</code> 屬性</h2>
 <p>我們通常會認為執行一個程式時，首先被呼叫的是 <code>main</code> 函式。但是大多數語言都擁有一個<a href="https://en.wikipedia.org/wiki/Runtime_system">執行時系統</a>，它通常負責垃圾回收（garbage collection）像是 Java 或軟體執行緒（software threads）像是 Go 的 goroutines。這個執行時系統需要在 main 函式前啟動，因為它需要讓先進行初始化。</p>
@@ -257,7 +257,7 @@ error: requires `start` lang_item
 <h3 id="zhong-xie-ru-kou-dian"><a class="zola-anchor" href="#zhong-xie-ru-kou-dian" aria-label="Anchor link for: zhong-xie-ru-kou-dian">🔗</a>重寫入口點</h3>
 <p>為了告訴 Rust 編譯器我們不要使用一般的入口點呼叫順序，我們先加上 <code>#![no_main]</code> 屬性。</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#![no_std]
+<code><span style="color:#dcdcdc;">#![no_std]
 #![no_main]
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
@@ -267,14 +267,14 @@ error: requires `start` lang_item
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(_info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>您可能會注意到我們移除了 <code>main</code> 函式，原因是因為既然沒有了底層的執行時系統呼叫，那麼 <code>main</code> 也沒必要存在。我們要重寫作業系統的入口點，定義為 <code>_start</code> 函式：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#[no_mangle]
+<code><span style="color:#dcdcdc;">#[no_mangle]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">_start() -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>我們使用 <code>no_mangle</code> 屬性來停用<a href="https://en.wikipedia.org/wiki/Name_mangling">名字修飾</a>，確保 Rust 編譯器輸出的函式名稱會是 <code>_start</code>。沒有這個屬性的話，編譯器會產生符號像是 <code>_ZN3blog_os4_start7hb173fedf945531caE</code> 來讓每個函式的名稱都是獨一無二的。我們會需要這項屬性的原因是因為我們接下來希望連結器能夠呼叫入口點函式的名稱。</p>
 <p>我們還將函式標記為 <code>extern &quot;C&quot;</code> 來告訴編譯器這個函式應當使用 <a href="https://en.wikipedia.org/wiki/Calling_convention">C 的調用約定</a>，而不是 Rust 的調用約定。而函式名稱選用 <code>_start</code> 的原因是因為這是大多數系統的預設入口點名稱。</p>
 <p><code>!</code> 返回型態代表這個函式是發散函式，它不允許返回。這是必要的因為入口點不會被任何函式呼叫，只會直接由作業系統或啟動程式（bootloader）執行。所以取代返回值的是入口點需要執行作業系統的 <a href="https://en.wikipedia.org/wiki/Exit_(system_call)"><code>exit</code> 系統呼叫</a>。在我們的例子中，關閉機器似乎是個理想的動作，因為獨立的二進制檔案返回後也沒什麼事可做。現在我們先寫一個無窮迴圈來滿足需求。</p>
@@ -286,24 +286,24 @@ error: requires `start` lang_item
 <p>Rust 在預設情況下會嘗試編譯出符合你目前系統環境的可執行檔。舉例來說，如果你正在 <code>x86_64</code> 上使用 Windows，那麼 Rust 就會嘗試編譯出 <code>.exe</code>，一個使用 <code>x86_64</code> 指令集的 Windows 執行檔。這樣的環境稱之為主機系統（host system）。</p>
 <p>為了描述不同環境，Rust 使用 <a href="https://clang.llvm.org/docs/CrossCompilation.html#target-triple"><em>target triple</em></a> 的字串。要查看目前系統的 target triple，你可以執行 <code>rustc --version --verbose</code>：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">rustc 1.35.0-nightly (474e7a648 2019-04-07)
+<code><span style="color:#dcdcdc;">rustc 1.35.0-nightly (474e7a648 2019-04-07)
 binary: rustc
 commit-hash: 474e7a6486758ea6fc761893b1a49cd9076fb0ab
 commit-date: 2019-04-07
 host: x86_64-unknown-linux-gnu
 release: 1.35.0-nightly
 LLVM version: 8.0
-</span></pre>
+</span></code></pre>
 <p>上面的輸出訊息來自 <code>x86_64</code> 上的 Linux 系統，我們可以看到 <code>host</code> 的 target triple 為 <code>x86_64-unknown-linux-gnu</code>，分別代表 CPU 架構 (<code>x86_64</code>)、供應商 (<code>unknown</code>) 以及作業系統 (<code>linux</code>) 和 <a href="https://en.wikipedia.org/wiki/Application_binary_interface">ABI</a> (<code>gnu</code>)。</p>
 <p>在依據主機的 triple 編譯時，Rust 編譯器和連結器理所當然地會認為預設是底層的作業系統並使用 C 執行時系統，這便是造成錯誤的原因。要避免這項錯誤，我們可以選擇編譯出沒有底層作業系統的不同環境。</p>
 <p>其中一個裸機環境的例子是 <code>thumbv7em-none-eabihf</code> target triple，它描述了<a href="https://en.wikipedia.org/wiki/Embedded_system">嵌入式</a> <a href="https://en.wikipedia.org/wiki/ARM_architecture">ARM</a> 系統。其中的細節目前並不重要，我們現在只需要知道沒有底層作業系統的 target triple 是用 <code>none</code> 描述的。想要編譯這樣的目標的話，我們需要將它新增至 rustup：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">rustup target add thumbv7em-none-eabihf
-</span></pre>
+<code><span style="color:#dcdcdc;">rustup target add thumbv7em-none-eabihf
+</span></code></pre>
 <p>這會下載一份該系統的標準（以及 core）函式庫，現在我們可以用此目標建立我們的獨立執行檔了：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo build --target thumbv7em-none-eabihf
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo build --target thumbv7em-none-eabihf
+</span></code></pre>
 <p>我們傳入 <code>--target</code> <a href="https://en.wikipedia.org/wiki/Cross_compiler">交叉編譯</a>我們在裸機系統的執行檔。因為目標系統沒有作業系統，連結器不會嘗試連結 C 執行時系統並成功建立，不會產生任何連結器錯誤。</p>
 <p>這將會是我們到時候用來建立自己的作業系統核心的方法。不過我們不會用到 <code>thumbv7em-none-eabihf</code>，我們將會使用<a href="https://doc.rust-lang.org/rustc/targets/custom.html">自訂目標</a>來描述一個 <code>x86_64</code> 的裸機環境。</p>
 <h3 id="lian-jie-qi-yin-shu"><a class="zola-anchor" href="#lian-jie-qi-yin-shu" aria-label="Anchor link for: lian-jie-qi-yin-shu">🔗</a>連結器引數</h3>
@@ -314,7 +314,7 @@ LLVM version: 8.0
 <h4 id="linux"><a class="zola-anchor" href="#linux" aria-label="Anchor link for: linux">🔗</a>Linux</h4>
 <p>以下是 Linux 上會出現的（簡化過）連結器錯誤：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: linking with `cc` failed: exit code: 1
+<code><span style="color:#dcdcdc;">error: linking with `cc` failed: exit code: 1
   |
   = note: &quot;cc&quot; […]
   = note: /usr/lib/gcc/../x86_64-linux-gnu/Scrt1.o: In function `_start&#39;:
@@ -324,85 +324,85 @@ LLVM version: 8.0
           /usr/lib/gcc/../x86_64-linux-gnu/Scrt1.o: In function `_start&#39;:
           (.text+0x25): undefined reference to `__libc_start_main&#39;
           collect2: error: ld returned 1 exit status
-</span></pre>
+</span></code></pre>
 <p>問題的原因是因為連結器在一開始包含了 C 的執行時系統，而且剛好也叫做 <code>_start</code>。它需要一些 C 標準函式庫 <code>libc</code> 提供的符號，但我們用 <code>no_std</code> 來停用它了，所以連結器無法找出引用來源。我們可以用 <code>-nostartfiles</code> 來告訴連結器一開始不必連結 C 的執行時系統。</p>
 <p>要傳入的其中一個方法是透過 cargo 的 <code>cargo rustc</code> 命令，此命令行為和  <code>cargo build</code> 一樣，不過允許傳入一些選項到 Rust 底層的編譯器 <code>rustc</code>。<code>rustc</code> 有 <code>-C link-arg</code> 的選項會繼續將引數傳到連結器，這樣一來我們的指令會長得像這樣：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo rustc -- -C link-arg=-nostartfiles
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo rustc -- -C link-arg=-nostartfiles
+</span></code></pre>
 <p>現在我們的 crate 便能產生出 Linux 上的獨立執行檔了！</p>
 <p>我們不必再指明入口點的函式名稱，因為連結器預設會尋找 <code>_start</code> 函式。</p>
 <h4 id="windows"><a class="zola-anchor" href="#windows" aria-label="Anchor link for: windows">🔗</a>Windows</h4>
 <p>在 Windows 上會出現不一樣的（簡化過）連結器錯誤：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: linking with `link.exe` failed: exit code: 1561
+<code><span style="color:#dcdcdc;">error: linking with `link.exe` failed: exit code: 1561
   |
   = note: &quot;C:\\Program Files (x86)\\…\\link.exe&quot; […]
   = note: LINK : fatal error LNK1561: entry point must be defined
-</span></pre>
+</span></code></pre>
 <p>&quot;entry point must be defined&quot; 錯誤表示連結器找不到入口點，在 Windows 上預設的入口點名稱會<a href="https://docs.microsoft.com/en-us/cpp/build/reference/entry-entry-point-symbol">依據使用的子系統</a>。如果是 <code>CONSOLE</code> 子系統的話，連結器會尋找 <code>mainCRTStartup</code> 函式名稱；而 <code>WINDOWS</code> 子系統的話則會尋找 <code>WinMainCRTStartup</code> 函式名稱。要覆蓋預設的選項並讓連結器尋找我們的 <code>_start</code> 函式的話，我們可以傳入 <code>/ENTRY</code> 引數給連結器：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo rustc -- -C link-arg=/ENTRY:_start
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo rustc -- -C link-arg=/ENTRY:_start
+</span></code></pre>
 <p>從引數格式來看我們可以清楚理解 Windows 連結器與 Linux 連結器是完全不同的程式。</p>
 <p>現在會出現另一個連結器錯誤：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: linking with `link.exe` failed: exit code: 1221
+<code><span style="color:#dcdcdc;">error: linking with `link.exe` failed: exit code: 1221
   |
   = note: &quot;C:\\Program Files (x86)\\…\\link.exe&quot; […]
   = note: LINK : fatal error LNK1221: a subsystem can&#39;t be inferred and must be
           defined
-</span></pre>
+</span></code></pre>
 <p>此錯誤出現的原因是因為 Windows 執行檔可以使用不同的<a href="https://docs.microsoft.com/en-us/cpp/build/reference/entry-entry-point-symbol">子系統</a>。一般的程式會依據入口點名稱來決定：如果入口點名稱為 <code>main</code>　則會使用 <code>CONSOLE</code> 子系統；如果入口點名稱為 <code>WinMain</code> 則會使用 <code>WINDOWS</code> 子系統。由於我們的函式 <code>_start</code> 名稱不一樣，我們必須指明子系統：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo rustc -- -C link-args=&quot;/ENTRY:_start /SUBSYSTEM:console&quot;
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo rustc -- -C link-args=&quot;/ENTRY:_start /SUBSYSTEM:console&quot;
+</span></code></pre>
 <p>我們使用 <code>CONSOLE</code> 子系統不過 <code>WINDOWS</code> 一樣也可以。與其輸入好多次 <code>-C link-arg</code> ，我們可以用 <code>-C link-args</code> 來傳入許多引數。</p>
 <p>使用此命令後，我們的執行檔應當能成功在 Windows 上建立。</p>
 <h4 id="macos"><a class="zola-anchor" href="#macos" aria-label="Anchor link for: macos">🔗</a>macOS</h4>
 <p>以下是 Linux 上會出現的（簡化過）連結器錯誤：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: linking with `cc` failed: exit code: 1
+<code><span style="color:#dcdcdc;">error: linking with `cc` failed: exit code: 1
   |
   = note: &quot;cc&quot; […]
   = note: ld: entry point (_main) undefined. for architecture x86_64
           clang: error: linker command failed with exit code 1 […]
-</span></pre>
+</span></code></pre>
 <p>此錯誤訊息告訴我們連結器無法找到入口點函式 <code>main</code>，基於某些原因 macOS 上的函式都會加上前綴 <code>_</code>。為了設定入口點為我們的函式 <code>_start</code>，我們傳入 <code>-e</code> 連結器引數：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo rustc -- -C link-args=&quot;-e __start&quot;
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo rustc -- -C link-args=&quot;-e __start&quot;
+</span></code></pre>
 <p><code>-e</code> 表示肉口點的函式名稱，然後由於 macOS 上所有的函式都會加上前綴 <code>_</code>，我們需要設置入口點為 <code>__start</code> 而不是 <code>_start</code>。</p>
 <p>接下來會出現另一個連結器錯誤：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: linking with `cc` failed: exit code: 1
+<code><span style="color:#dcdcdc;">error: linking with `cc` failed: exit code: 1
   |
   = note: &quot;cc&quot; […]
   = note: ld: dynamic main executables must link with libSystem.dylib
           for architecture x86_64
           clang: error: linker command failed with exit code 1 […]
-</span></pre>
+</span></code></pre>
 <p>macOS <a href="https://developer.apple.com/library/archive/qa/qa1118/_index.html">官方並不支援靜態連結執行檔</a>且要求程式預設要連結到 <code>libSystem</code> 函式庫。要覆蓋這個設定並連結靜態執行檔，我們傳入 <code>-static</code> 給連結器：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo rustc -- -C link-args=&quot;-e __start -static&quot;
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo rustc -- -C link-args=&quot;-e __start -static&quot;
+</span></code></pre>
 <p>但這樣還不夠，我們會遇到第三個連結器錯誤：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">error: linking with `cc` failed: exit code: 1
+<code><span style="color:#dcdcdc;">error: linking with `cc` failed: exit code: 1
   |
   = note: &quot;cc&quot; […]
   = note: ld: library not found for -lcrt0.o
           clang: error: linker command failed with exit code 1 […]
-</span></pre>
+</span></code></pre>
 <p>這錯誤出現的原因是因為 macOS 的程式預設都會連結到 <code>crt0</code> (“C runtime zero”)。這和我們在 Linux 上遇到的類似，所以也可以用 <code>-nostartfiles</code> 連結器引數來解決：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo rustc -- -C link-args=&quot;-e __start -static -nostartfiles&quot;
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo rustc -- -C link-args=&quot;-e __start -static -nostartfiles&quot;
+</span></code></pre>
 <p>現在我們的程式應當能成功在 macOS 上建立。</p>
 <h4 id="tong-yi-jian-gou-ming-ling"><a class="zola-anchor" href="#tong-yi-jian-gou-ming-ling" aria-label="Anchor link for: tong-yi-jian-gou-ming-ling">🔗</a>統一建構命令</h4>
 <p>現在我們得依據主機平台來使用不同的建構命令，這樣感覺不是很理想。我們可以建立個檔案 <code>.cargo/config</code> 來解決，裡面會包含平台相關的引數：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in .cargo/config
+<code><span style="color:#608b4e;"># in .cargo/config
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;linux&quot;)&#39;</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">rustflags </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;-C&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;link-arg=-nostartfiles&quot;</span><span style="color:#dcdcdc;">]
@@ -412,7 +412,7 @@ LLVM version: 8.0
 
 [</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;macos&quot;)&#39;</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">rustflags </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;-C&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;link-args=-e __start -static -nostartfiles&quot;</span><span style="color:#dcdcdc;">]
-</span></pre>
+</span></code></pre>
 <p><code>rustflags</code> 包含的引數會自動加到 <code>rustc</code> 如果條件符合的話。想了解更多關於 <code>.cargo/config</code> 的資訊請參考[官方文件]<a href="https://doc.rust-lang.org/cargo/reference/config.html">official documentation</a>。</p>
 <p>這樣一來我們就能同時在三個平台只用 <code>cargo build</code> 來建立了。</p>
 <h4 id="ni-gai-zhe-mo-zuo-ma"><a class="zola-anchor" href="#ni-gai-zhe-mo-zuo-ma" aria-label="Anchor link for: ni-gai-zhe-mo-zuo-ma">🔗</a>你該這麼作嗎？</h4>
@@ -423,7 +423,7 @@ LLVM version: 8.0
 <p>一個最小的 Rust 獨立執行檔會看起來像這樣：</p>
 <p><code>src/main.rs</code>：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#![no_std] </span><span style="color:#608b4e;">// 不連結標準函式庫
+<code><span style="color:#dcdcdc;">#![no_std] </span><span style="color:#608b4e;">// 不連結標準函式庫
 </span><span style="color:#dcdcdc;">#![no_main] </span><span style="color:#608b4e;">// 停用 Rust 層級的入口點
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::panic::PanicInfo;
@@ -440,10 +440,10 @@ LLVM version: 8.0
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(_info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p><code>Cargo.toml</code>：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">[</span><span style="color:#808080;">package</span><span style="color:#dcdcdc;">]
+<code><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">name </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;crate_name&quot;
 </span><span style="color:#569cd6;">version </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.1.0&quot;
 </span><span style="color:#569cd6;">authors </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;Author Name &lt;author@example.com&gt;&quot;</span><span style="color:#dcdcdc;">]
@@ -455,20 +455,20 @@ LLVM version: 8.0
 # `cargo build --release` 時需要的設置
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">profile.release</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">panic </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;abort&quot; </span><span style="color:#608b4e;"># 停用 panic 時堆疊回溯
-</span></pre>
+</span></code></pre>
 <p>要建構出此執行檔，我們需要選擇一個裸機目標來編譯像是 <code>thumbv7em-none-eabihf</code>：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">cargo build --target thumbv7em-none-eabihf
-</span></pre>
+<code><span style="color:#dcdcdc;">cargo build --target thumbv7em-none-eabihf
+</span></code></pre>
 <p>不然我們也可以用主機系統來編譯，不過要加上額外的連結器引數：</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># Linux
+<code><span style="color:#608b4e;"># Linux
 </span><span style="color:#dcdcdc;">cargo rustc</span><span style="color:#569cd6;"> --</span><span style="color:#dcdcdc;"> -C link-arg=-nostartfiles
 </span><span style="color:#608b4e;"># Windows
 </span><span style="color:#dcdcdc;">cargo rustc -- -C link-args=</span><span style="color:#d69d85;">&quot;/ENTRY:_start /SUBSYSTEM:console&quot;
 </span><span style="color:#608b4e;"># macOS
 </span><span style="color:#dcdcdc;">cargo rustc -- -C link-args=</span><span style="color:#d69d85;">&quot;-e __start -static -nostartfiles&quot;
-</span></pre>
+</span></code></pre>
 <p>注意這只是最小的 Rust 獨立執行檔範例，它還是會仰賴一些事情發生，像是當 <code>_start</code> 函式呼叫時堆疊已經初始化完畢。<strong>所以如果想真的使用這樣的執行檔的話還需要更多步驟。</strong></p>
 <h2 id="jie-xia-lai-ni"><a class="zola-anchor" href="#jie-xia-lai-ni" aria-label="Anchor link for: jie-xia-lai-ni">🔗</a>接下來呢？</h2>
 <p><a href="https://os.phil-opp.com/minimal-rust-kernel/">下一篇文章</a> 將會講解如何將我們的獨立執行檔轉成最小的作業系統核心。這包含建立自訂目標、用啟動程式組合我們的執行檔，還有學習如何輸出一些東西到螢幕上。</p>

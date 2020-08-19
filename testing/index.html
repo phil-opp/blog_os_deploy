@@ -198,17 +198,17 @@
 <p>Unfortunately it's a bit more complicated for <code>no_std</code> applications such as our kernel. The problem is that Rust's test framework implicitly uses the built-in <a href="https://doc.rust-lang.org/test/index.html"><code>test</code></a> library, which depends on the standard library. This means that we can't use the default test framework for our <code>#[no_std]</code> kernel.</p>
 <p>We can see this when we try to run <code>cargo test</code> in our project:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo test
+<code><span style="color:#dcdcdc;">&gt; cargo test
    Compiling blog_os v0.1.0 (/…/blog_os)
 error[E0463]: can&#39;t find crate for `test`
-</span></pre>
+</span></code></pre>
 <p>Since the <code>test</code> crate depends on the standard library, it is not available for our bare metal target. While porting the <code>test</code> crate to a <code>#[no_std]</code> context <a href="https://github.com/japaric/utest">is possible</a>, it is highly unstable and requires some hacks such as redefining the <code>panic</code> macro.</p>
 <h3 id="custom-test-frameworks"><a class="zola-anchor" href="#custom-test-frameworks" aria-label="Anchor link for: custom-test-frameworks">🔗</a>Custom Test Frameworks</h3>
 <p>Fortunately, Rust supports replacing the default test framework through the unstable <a href="https://doc.rust-lang.org/unstable-book/language-features/custom-test-frameworks.html"><code>custom_test_frameworks</code></a> feature. This feature requires no external libraries and thus also works in <code>#[no_std]</code> environments. It works by collecting all functions annotated with a <code>#[test_case]</code> attribute and then invoking a user-specified runner function with the list of tests as argument. Thus it gives the implementation maximal control over the test process.</p>
 <p>The disadvantage compared to the default test framework is that many advanced features such as <a href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html#checking-for-panics-with-should_panic"><code>should_panic</code> tests</a> are not available. Instead, it is up to the implementation to provide such features itself if needed. This is ideal for us since we have a very special execution environment where the default implementations of such advanced features probably wouldn't work anyway. For example, the <code>#[should_panic]</code> attribute relies on stack unwinding to catch the panics, which we disabled for our kernel.</p>
 <p>To implement a custom test framework for our kernel, we add the following to our <code>main.rs</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#dcdcdc;">#![feature(custom_test_frameworks)]
 #![test_runner(crate::test_runner)]
@@ -220,7 +220,7 @@ error[E0463]: can&#39;t find crate for `test`
         test();
     }
 }
-</span></pre>
+</span></code></pre>
 <p>Our runner just prints a short debug message and then calls each test function in the list. The argument type <code>&amp;[&amp;dyn Fn()]</code> is a <a href="https://doc.rust-lang.org/std/primitive.slice.html"><em>slice</em></a> of <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/trait-objects.html"><em>trait object</em></a> references of the <a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a> trait. It is basically a list of references to types that can be called like a function. Since the function is useless for non-test runs, we use the <code>#[cfg(test)]</code> attribute to include it only for tests.</p>
 <p>When we run <code>cargo test</code> now, we see that it now succeeds (if it doesn't, see the note below). However, we still see our &quot;Hello World&quot; instead of the message from our <code>test_runner</code>. The reason is that our <code>_start</code> function is still used as entry point. The custom test frameworks feature generates a <code>main</code> function that calls <code>test_runner</code>, but this function is ignored because we use the <code>#[no_main]</code> attribute and provide our own entry point.</p>
 <div class = "warning">
@@ -228,7 +228,7 @@ error[E0463]: can&#39;t find crate for `test`
 </div>
 <p>To fix this, we first need to change the name of the generated function to something different than <code>main</code> through the <code>reexport_test_harness_main</code> attribute. Then we can call the renamed function from our <code>_start</code> function:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#dcdcdc;">#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span style="color:#dcdcdc;">]
 
@@ -241,11 +241,11 @@ error[E0463]: can&#39;t find crate for `test`
 
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>We set the name of the test framework entry function to <code>test_main</code> and call it from our <code>_start</code> entry point. We use <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">conditional compilation</a> to add the call to <code>test_main</code> only in test contexts because the function is not generated on a normal run.</p>
 <p>When we now execute <code>cargo test</code>, we see the &quot;Running 0 tests&quot; message from our <code>test_runner</code> on the screen. We are now ready to create our first test function:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">trivial_assertion() {
@@ -253,7 +253,7 @@ error[E0463]: can&#39;t find crate for `test`
     assert_eq!(</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
     println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>When we run <code>cargo test</code> now, we see the following output:</p>
 <p><img src="https://os.phil-opp.com/testing/qemu-test-runner-output.png" alt="QEMU printing &quot;Hello World!&quot;, &quot;Running 1 tests&quot;, and &quot;trivial assertion... [ok]&quot;" /></p>
 <p>The <code>tests</code> slice passed to our <code>test_runner</code> function now contains a reference to the <code>trivial_assertion</code> function. From the <code>trivial assertion... [ok]</code> output on the screen we see that the test was called and that it succeeded.</p>
@@ -262,11 +262,11 @@ error[E0463]: can&#39;t find crate for `test`
 <p>Right now we have an endless loop at the end of our <code>_start</code> function and need to close QEMU manually on each execution of <code>cargo test</code>. This is unfortunate because we also want to run <code>cargo test</code> in scripts without user interaction. The clean solution to this would be to implement a proper way to shutdown our OS. Unfortunately this is relatively complex, because it requires implementing support for either the <a href="https://wiki.osdev.org/APM">APM</a> or <a href="https://wiki.osdev.org/ACPI">ACPI</a> power management standard.</p>
 <p>Luckily, there is an escape hatch: QEMU supports a special <code>isa-debug-exit</code> device, which provides an easy way to exit QEMU from the guest system. To enable it, we need to pass a <code>-device</code> argument to QEMU. We can do so by adding a <code>package.metadata.bootimage.test-args</code> configuration key in our <code>Cargo.toml</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-args </span><span style="color:#dcdcdc;">= [</span><span style="color:#d69d85;">&quot;-device&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span style="color:#dcdcdc;">]
-</span></pre>
+</span></code></pre>
 <p>The <code>bootimage runner</code> appends the <code>test-args</code> to the default QEMU command for all test executables. For a normal <code>cargo run</code>, the arguments are ignored.</p>
 <p>Together with the device name (<code>isa-debug-exit</code>), we pass the two parameters <code>iobase</code> and <code>iosize</code> that specify the <em>I/O port</em> through which the device can be reached from our kernel.</p>
 <h3 id="i-o-ports"><a class="zola-anchor" href="#i-o-ports" aria-label="Anchor link for: i-o-ports">🔗</a>I/O Ports</h3>
@@ -277,36 +277,36 @@ error[E0463]: can&#39;t find crate for `test`
 <p>The functionality of the <code>isa-debug-exit</code> device is very simple. When a <code>value</code> is written to the I/O port specified by <code>iobase</code>, it causes QEMU to exit with <a href="https://en.wikipedia.org/wiki/Exit_status">exit status</a> <code>(value &lt;&lt; 1) | 1</code>. So when we write <code>0</code> to the port QEMU will exit with exit status <code>(0 &lt;&lt; 1) | 1 = 1</code> and when we write <code>1</code> to the port it will exit with exit status <code>(1 &lt;&lt; 1) | 1 = 3</code>.</p>
 <p>Instead of manually invoking the <code>in</code> and <code>out</code> assembly instructions, we use the abstractions provided by the <a href="https://docs.rs/x86_64/0.11.1/x86_64/"><code>x86_64</code></a> crate. To add a dependency on that crate, we add it to the <code>dependencies</code> section in our <code>Cargo.toml</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">x86_64 </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.11.0&quot;
-</span></pre>
+</span></code></pre>
 <p>Now we can use the <a href="https://docs.rs/x86_64/0.11.1/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> type provided by the crate to create an <code>exit_qemu</code> function:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#dcdcdc;">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 </span><span style="color:#569cd6;">pub enum </span><span style="color:#dcdcdc;">QemuExitCode {
-    Success </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">0x10</span><span style="color:#dcdcdc;">,
-    Failed </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">0x11</span><span style="color:#dcdcdc;">,
+    Success = </span><span style="color:#b5cea8;">0x10</span><span style="color:#dcdcdc;">,
+    Failed = </span><span style="color:#b5cea8;">0x11</span><span style="color:#dcdcdc;">,
 }
 
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">exit_qemu(exit_code: QemuExitCode) {
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::instructions::port::Port;
 
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> port </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Port::new(</span><span style="color:#b5cea8;">0xf4</span><span style="color:#dcdcdc;">);
+        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> port = Port::new(</span><span style="color:#b5cea8;">0xf4</span><span style="color:#dcdcdc;">);
         port.write(exit_code </span><span style="color:#569cd6;">as u32</span><span style="color:#dcdcdc;">);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>The function creates a new <a href="https://docs.rs/x86_64/0.11.1/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> at <code>0xf4</code>, which is the <code>iobase</code> of the <code>isa-debug-exit</code> device. Then it writes the passed exit code to the port. We use <code>u32</code> because we specified the <code>iosize</code> of the <code>isa-debug-exit</code> device as 4 bytes. Both operations are unsafe, because writing to an I/O port can generally result in arbitrary behavior.</p>
 <p>For specifying the exit status, we create a <code>QemuExitCode</code> enum. The idea is to exit with the success exit code if all tests succeeded and with the failure exit code otherwise. The enum is marked as <code>#[repr(u32)]</code> to represent each variant by an <code>u32</code> integer. We use exit code <code>0x10</code> for success and <code>0x11</code> for failure. The actual exit codes do not matter much, as long as they don't clash with the default exit codes of QEMU. For example, using exit code <code>0</code> for success is not a good idea because it becomes <code>(0 &lt;&lt; 1) | 1 = 1</code> after the transformation, which is the default exit code when QEMU failed to run. So we could not differentiate a QEMU error from a successful test run.</p>
 <p>We can now update our <code>test_runner</code> to exit QEMU after all tests ran:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Fn()]) {
+<code><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Fn()]) {
     println!(</span><span style="color:#d69d85;">&quot;Running </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> tests&quot;</span><span style="color:#dcdcdc;">, tests.len());
     </span><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> test </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> tests {
         test();
@@ -314,10 +314,10 @@ error[E0463]: can&#39;t find crate for `test`
     </span><span style="color:#608b4e;">/// new
     </span><span style="color:#dcdcdc;">exit_qemu(QemuExitCode::Success);
 }
-</span></pre>
+</span></code></pre>
 <p>When we run <code>cargo test</code> now, we see that QEMU immediately closes after executing the tests. The problem is that <code>cargo test</code> interprets the test as failed even though we passed our <code>Success</code> exit code:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo test
+<code><span style="color:#dcdcdc;">&gt; cargo test
     Finished dev [unoptimized + debuginfo] target(s) in 0.03s
      Running target/x86_64-blog_os/debug/deps/blog_os-5804fc7d2dd4c9be
 Building bootloader
@@ -327,15 +327,15 @@ Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/d
     deps/bootimage-blog_os-5804fc7d2dd4c9be.bin -device isa-debug-exit,iobase=0xf4,
     iosize=0x04`
 error: test failed, to rerun pass &#39;--bin blog_os&#39;
-</span></pre>
+</span></code></pre>
 <p>The problem is that <code>cargo test</code> considers all error codes other than <code>0</code> as failure.</p>
 <h3 id="success-exit-code"><a class="zola-anchor" href="#success-exit-code" aria-label="Anchor link for: success-exit-code">🔗</a>Success Exit Code</h3>
 <p>To work around this, <code>bootimage</code> provides a <code>test-success-exit-code</code> configuration key that maps a specified exit code to the exit code <code>0</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
+<code><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-args </span><span style="color:#dcdcdc;">= [</span><span style="color:#ff3333;">…</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-success-exit-code </span><span style="color:#dcdcdc;">= </span><span style="color:#b5cea8;">33         </span><span style="color:#608b4e;"># (0x10 &lt;&lt; 1) | 1
-</span></pre>
+</span></code></pre>
 <p>With this configuration, <code>bootimage</code> maps our success exit code to exit code 0, so that <code>cargo test</code> correctly recognizes the success case and does not count the test as failed.</p>
 <p>Our test runner now automatically closes QEMU and correctly reports the test results out. We still see the QEMU window open for a very short time, but it does not suffice to read the results. It would be nice if we could print the test results to the console instead, so that we can still see them after QEMU exited.</p>
 <h2 id="printing-to-the-console"><a class="zola-anchor" href="#printing-to-the-console" aria-label="Anchor link for: printing-to-the-console">🔗</a>Printing to the Console</h2>
@@ -345,36 +345,36 @@ error: test failed, to rerun pass &#39;--bin blog_os&#39;
 <p>The chips implementing a serial interface are called <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter">UARTs</a>. There are <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter#UART_models">lots of UART models</a> on x86, but fortunately the only differences between them are some advanced features we don't need. The common UARTs today are all compatible to the <a href="https://en.wikipedia.org/wiki/16550_UART">16550 UART</a>, so we will use that model for our testing framework.</p>
 <p>We will use the <a href="https://docs.rs/uart_16550"><code>uart_16550</code></a> crate to initialize the UART and send data over the serial port. To add it as a dependency, we update our <code>Cargo.toml</code> and <code>main.rs</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">dependencies</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">uart_16550 </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;0.2.0&quot;
-</span></pre>
+</span></code></pre>
 <p>The <code>uart_16550</code> crate contains a <code>SerialPort</code> struct that represents the UART registers, but we still need to construct an instance of it ourselves. For that we create a new <code>serial</code> module with the following content:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#569cd6;">mod </span><span style="color:#dcdcdc;">serial;
-</span></pre><pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/serial.rs
+</span></code></pre><pre style="background-color:#1e1e1e;">
+<code><span style="color:#608b4e;">// in src/serial.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">uart_16550::SerialPort;
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">spin::Mutex;
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">lazy_static::lazy_static;
 
 lazy_static! {
-    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span style="color:#dcdcdc;">: Mutex&lt;SerialPort&gt; </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> serial_port </span><span style="color:#569cd6;">= unsafe </span><span style="color:#dcdcdc;">{ SerialPort::new(</span><span style="color:#b5cea8;">0x3F8</span><span style="color:#dcdcdc;">) };
+    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span style="color:#dcdcdc;">: Mutex&lt;SerialPort&gt; = {
+        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> serial_port = </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{ SerialPort::new(</span><span style="color:#b5cea8;">0x3F8</span><span style="color:#dcdcdc;">) };
         serial_port.init();
         Mutex::new(serial_port)
     };
 }
-</span></pre>
+</span></code></pre>
 <p>Like with the <a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGA text buffer</a>, we use <code>lazy_static</code> and a spinlock to create a <code>static</code> writer instance. By using <code>lazy_static</code> we can ensure that the <code>init</code> method is called exactly once on its first use.</p>
 <p>Like the <code>isa-debug-exit</code> device, the UART is programmed using port I/O. Since the UART is more complex, it uses multiple I/O ports for programming different device registers. The unsafe <code>SerialPort::new</code> function expects the address of the first I/O port of the UART as argument, from which it can calculate the addresses of all needed ports. We're passing the port address <code>0x3F8</code>, which is the standard port number for the first serial interface.</p>
 <p>To make the serial port easily usable, we add <code>serial_print!</code> and <code>serial_println!</code> macros:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#[doc(hidden)]
+<code><span style="color:#dcdcdc;">#[doc(hidden)]
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">_print(args: ::core::fmt::Arguments) {
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::fmt::Write;
     </span><span style="color:#b4cea8;">SERIAL1</span><span style="color:#dcdcdc;">.lock().write_fmt(args).expect(</span><span style="color:#d69d85;">&quot;Printing to serial failed&quot;</span><span style="color:#dcdcdc;">);
@@ -383,8 +383,8 @@ lazy_static! {
 </span><span style="color:#608b4e;">/// Prints to the host through the serial interface.
 </span><span style="color:#dcdcdc;">#[macro_export]
 macro_rules! serial_print {
-    (</span><span style="color:#569cd6;">$</span><span style="color:#dcdcdc;">($arg:tt)</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{
-        $crate::serial::_print(format_args!(</span><span style="color:#569cd6;">$</span><span style="color:#dcdcdc;">($arg)</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">));
+    (</span><span style="color:#569cd6;">$</span><span style="color:#dcdcdc;">($arg:</span><span style="color:#569cd6;">tt</span><span style="color:#dcdcdc;">)</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">{
+        $crate::serial::_print(format_args!(</span><span style="color:#569cd6;">$</span><span style="color:#dcdcdc;">($arg)*));
     };
 }
 
@@ -393,14 +393,14 @@ macro_rules! serial_print {
 macro_rules! serial_println {
     () </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">($crate::serial_print</span><span style="color:#569cd6;">!</span><span style="color:#dcdcdc;">(</span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">));
     ($fmt:</span><span style="color:#569cd6;">expr</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">($crate::serial_print</span><span style="color:#569cd6;">!</span><span style="color:#dcdcdc;">(concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">)));
-    ($fmt:</span><span style="color:#569cd6;">expr</span><span style="color:#dcdcdc;">, </span><span style="color:#569cd6;">$</span><span style="color:#dcdcdc;">($arg:tt)</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">($crate::serial_print</span><span style="color:#569cd6;">!</span><span style="color:#dcdcdc;">(
-        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">), </span><span style="color:#569cd6;">$</span><span style="color:#dcdcdc;">($arg)</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">));
+    ($fmt:</span><span style="color:#569cd6;">expr</span><span style="color:#dcdcdc;">, </span><span style="color:#569cd6;">$</span><span style="color:#dcdcdc;">($arg:</span><span style="color:#569cd6;">tt</span><span style="color:#dcdcdc;">)</span><span style="color:#569cd6;">*</span><span style="color:#dcdcdc;">) </span><span style="color:#569cd6;">=&gt; </span><span style="color:#dcdcdc;">($crate::serial_print</span><span style="color:#569cd6;">!</span><span style="color:#dcdcdc;">(
+        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">), </span><span style="color:#569cd6;">$</span><span style="color:#dcdcdc;">($arg)*));
 }
-</span></pre>
+</span></code></pre>
 <p>The implementation is very similar to the implementation of our <code>print</code> and <code>println</code> macros. Since the <code>SerialPort</code> type already implements the <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> trait, we don't need to provide our own implementation.</p>
 <p>Now we can print to the serial interface instead of the VGA text buffer in our test code:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#dcdcdc;">#[cfg(test)]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Fn()]) {
@@ -414,21 +414,21 @@ macro_rules! serial_println {
     assert_eq!(</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
     serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>Note that the <code>serial_println</code> macro lives directly under the root namespace because we used the <code>#[macro_export]</code> attribute, so importing it through <code>use crate::serial::serial_println</code> will not work.</p>
 <h3 id="qemu-arguments"><a class="zola-anchor" href="#qemu-arguments" aria-label="Anchor link for: qemu-arguments">🔗</a>QEMU Arguments</h3>
 <p>To see the serial output from QEMU, we need use the <code>-serial</code> argument to redirect the output to stdout:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-args </span><span style="color:#dcdcdc;">= [
     </span><span style="color:#d69d85;">&quot;-device&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;stdio&quot;
 </span><span style="color:#dcdcdc;">]
-</span></pre>
+</span></code></pre>
 <p>When we run <code>cargo test</code> now, we see the test output directly in the console:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo test
+<code><span style="color:#dcdcdc;">&gt; cargo test
     Finished dev [unoptimized + debuginfo] target(s) in 0.02s
      Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
 Building bootloader
@@ -438,14 +438,14 @@ Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/d
     isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`
 Running 1 tests
 trivial assertion... [ok]
-</span></pre>
+</span></code></pre>
 <p>However, when a test fails we still see the output inside QEMU because our panic handler still uses <code>println</code>. To simulate this, we can change the assertion in our <code>trivial_assertion</code> test to <code>assert_eq!(0, 1)</code>:</p>
 <p><img src="https://os.phil-opp.com/testing/qemu-failed-test.png" alt="QEMU printing &quot;Hello World!&quot; and &quot;panicked at 'assertion failed: (left == right) left: 0, right: 1', src/main.rs:55:5" /></p>
 <p>We see that the panic message is still printed to the VGA buffer, while the other test output is printed to the serial port. The panic message is quite useful, so it would be useful to see it in the console too.</p>
 <h3 id="print-an-error-message-on-panic"><a class="zola-anchor" href="#print-an-error-message-on-panic" aria-label="Anchor link for: print-an-error-message-on-panic">🔗</a>Print an Error Message on Panic</h3>
 <p>To exit QEMU with an error message on a panic, we can use <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">conditional compilation</a> to use a different panic handler in testing mode:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// our existing panic handler
+<code><span style="color:#608b4e;">// our existing panic handler
 </span><span style="color:#dcdcdc;">#[cfg(not(test))] </span><span style="color:#608b4e;">// new attribute
 </span><span style="color:#dcdcdc;">#[panic_handler]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
@@ -462,11 +462,11 @@ trivial assertion... [ok]
     exit_qemu(QemuExitCode::Failed);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>For our test panic handler, we use <code>serial_println</code> instead of <code>println</code> and then exit QEMU with a failure exit code. Note that we still need an endless <code>loop</code> after the <code>exit_qemu</code> call because the compiler does not know that the <code>isa-debug-exit</code> device causes a program exit.</p>
 <p>Now QEMU also exits for failed tests and prints a useful error message on the console:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">&gt; cargo test
+<code><span style="color:#dcdcdc;">&gt; cargo test
     Finished dev [unoptimized + debuginfo] target(s) in 0.02s
      Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
 Building bootloader
@@ -480,19 +480,19 @@ trivial assertion... [failed]
 Error: panicked at &#39;assertion failed: `(left == right)`
   left: `0`,
  right: `1`&#39;, src/main.rs:65:5
-</span></pre>
+</span></code></pre>
 <p>Since we see all test output on the console now, we no longer need the QEMU window that pops up for a short time. So we can hide it completely.</p>
 <h3 id="hiding-qemu"><a class="zola-anchor" href="#hiding-qemu" aria-label="Anchor link for: hiding-qemu">🔗</a>Hiding QEMU</h3>
 <p>Since we report out the complete test results using the <code>isa-debug-exit</code> device and the serial port, we don't need the QEMU window anymore. We can hide it by passing the <code>-display none</code> argument to QEMU:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-args </span><span style="color:#dcdcdc;">= [
     </span><span style="color:#d69d85;">&quot;-device&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;stdio&quot;</span><span style="color:#dcdcdc;">,
     </span><span style="color:#d69d85;">&quot;-display&quot;</span><span style="color:#dcdcdc;">, </span><span style="color:#d69d85;">&quot;none&quot;
 </span><span style="color:#dcdcdc;">]
-</span></pre>
+</span></code></pre>
 <p>Now QEMU runs completely in the background and no window is opened anymore. This is not only less annoying, but also allows our test framework to run in environments without a graphical user interface, such as CI services or <a href="https://en.wikipedia.org/wiki/Secure_Shell">SSH</a> connections.</p>
 <h3 id="timeouts"><a class="zola-anchor" href="#timeouts" aria-label="Anchor link for: timeouts">🔗</a>Timeouts</h3>
 <p>Since <code>cargo test</code> waits until the test runner exits, a test that never returns can block the test runner forever. That's unfortunate, but not a big problem in practice since it's normally easy to avoid endless loops. In our case, however, endless loops can occur in various situations:</p>
@@ -505,33 +505,33 @@ Error: panicked at &#39;assertion failed: `(left == right)`
 <p>Since endless loops can occur in so many situations, the <code>bootimage</code> tool sets a timeout of 5 minutes for each test executable by default. If the test does not finish in this time, it is marked as failed and a &quot;Timed Out&quot; error is printed to the console. This feature ensures that tests that are stuck in an endless loop don't block <code>cargo test</code> forever.</p>
 <p>You can try it yourself by adding a <code>loop {}</code> statement in the <code>trivial_assertion</code> test. When you run <code>cargo test</code>, you see that the test is marked as timed out after 5 minutes. The timeout duration is <a href="https://github.com/rust-osdev/bootimage#configuration">configurable</a> through a <code>test-timeout</code> key in the Cargo.toml:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-timeout </span><span style="color:#dcdcdc;">= </span><span style="color:#b5cea8;">300          </span><span style="color:#608b4e;"># (in seconds)
-</span></pre>
+</span></code></pre>
 <p>If you don't want to wait 5 minutes for the <code>trivial_assertion</code> test to time out, you can temporarily decrease the above value.</p>
 <h3 id="insert-printing-automatically"><a class="zola-anchor" href="#insert-printing-automatically" aria-label="Anchor link for: insert-printing-automatically">🔗</a>Insert Printing Automatically</h3>
 <p>Our <code>trivial_assertion</code> test currently needs to print its own status information using <code>serial_print!</code>/<code>serial_println!</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">#[test_case]
+<code><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">trivial_assertion() {
     serial_print!(</span><span style="color:#d69d85;">&quot;trivial assertion... &quot;</span><span style="color:#dcdcdc;">);
     assert_eq!(</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
     serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>Manually adding these print statements for every test we write is cumbersome, so let's update our <code>test_runner</code> to print these messages automatically. To do that, we need to create a new <code>Testable</code> trait:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#569cd6;">pub trait </span><span style="color:#dcdcdc;">Testable {
     </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">run(</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">self) -&gt; ();
 }
-</span></pre>
+</span></code></pre>
 <p>The trick now is to implement this trait for all types <code>T</code> that implement the <a href="https://doc.rust-lang.org/stable/core/ops/trait.Fn.html"><code>Fn()</code> trait</a>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#569cd6;">impl</span><span style="color:#dcdcdc;">&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">T
 </span><span style="color:#569cd6;">where</span><span style="color:#dcdcdc;">
@@ -543,12 +543,12 @@ Error: panicked at &#39;assertion failed: `(left == right)`
         serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span style="color:#dcdcdc;">);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>We implement the <code>run</code> function by first printing the function name using the <a href="https://doc.rust-lang.org/stable/core/any/fn.type_name.html"><code>any::type_name</code></a> function. This function is implemented directly in the compiler and returns a string description of every type. For functions, the type is their name, so this is exactly what we want in this case. The <code>\t</code> character is the <a href="https://en.wikipedia.org/wiki/Tab_key#Tab_characters">tab character</a>, which adds some alignment to the <code>[ok]</code> messages.</p>
 <p>After printing the function name, we invoke the test function through <code>self()</code>. This only works because we require that <code>self</code> implements the <code>Fn()</code> trait. After the test function returned, we print <code>[ok]</code> to indicate that the function did not panic.</p>
 <p>The last step is to update our <code>test_runner</code> to use the new <code>Testable</code> trait:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#dcdcdc;">#[cfg(test)]
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Testable]) {
@@ -558,37 +558,37 @@ Error: panicked at &#39;assertion failed: `(left == right)`
     </span><span style="color:#dcdcdc;">}
     exit_qemu(QemuExitCode::Success);
 }
-</span></pre>
+</span></code></pre>
 <p>The only two changes are the type of the <code>tests</code> argument from <code>&amp;[&amp;dyn Fn()]</code> to <code>&amp;[&amp;dyn Testable]</code> and that we now call <code>test.run()</code> instead of <code>test()</code>.</p>
 <p>We can now remove the print statements from our <code>trivial_assertion</code> test since they're now printed automatically:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">trivial_assertion() {
     assert_eq!(</span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>The <code>cargo test</code> output now looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#dcdcdc;">Running 1 tests
+<code><span style="color:#dcdcdc;">Running 1 tests
 blog_os::trivial_assertion...	[ok]
-</span></pre>
+</span></code></pre>
 <p>The function name now includes the full path to the function, which is useful when test functions in different modules have the same name. Otherwise the output looks the same as before, but we no longer need to manually add print statements to our tests.</p>
 <h2 id="testing-the-vga-buffer"><a class="zola-anchor" href="#testing-the-vga-buffer" aria-label="Anchor link for: testing-the-vga-buffer">🔗</a>Testing the VGA Buffer</h2>
 <p>Now that we have a working test framework, we can create a few tests for our VGA buffer implementation. First, we create a very simple test to verify that <code>println</code> works without panicking:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/vga_buffer.rs
+<code><span style="color:#608b4e;">// in src/vga_buffer.rs
 
 </span><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println_simple() {
     println!(</span><span style="color:#d69d85;">&quot;test_println_simple output&quot;</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>The test just prints something to the VGA buffer. If it finishes without panicking, it means that the <code>println</code> invocation did not panic either.</p>
 <p>To ensure that no panic occurs even if many lines are printed and lines are shifted off the screen, we can create another test:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/vga_buffer.rs
+<code><span style="color:#608b4e;">// in src/vga_buffer.rs
 
 </span><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println_many() {
@@ -596,21 +596,21 @@ blog_os::trivial_assertion...	[ok]
         println!(</span><span style="color:#d69d85;">&quot;test_println_many output&quot;</span><span style="color:#dcdcdc;">);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>We can also create a test function to verify that the printed lines really appear on the screen:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/vga_buffer.rs
+<code><span style="color:#608b4e;">// in src/vga_buffer.rs
 
 </span><span style="color:#dcdcdc;">#[test_case]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println_output() {
-    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> s </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span style="color:#dcdcdc;">;
+    </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span style="color:#dcdcdc;">;
     println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">, s);
     </span><span style="color:#569cd6;">for </span><span style="color:#dcdcdc;">(i, c) </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> s.chars().enumerate() {
-        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> screen_char </span><span style="color:#569cd6;">= </span><span style="color:#b4cea8;">WRITER</span><span style="color:#dcdcdc;">.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span style="color:#569cd6;">- </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">][i].read();
+        </span><span style="color:#569cd6;">let</span><span style="color:#dcdcdc;"> screen_char = </span><span style="color:#b4cea8;">WRITER</span><span style="color:#dcdcdc;">.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span style="color:#dcdcdc;">- </span><span style="color:#b5cea8;">2</span><span style="color:#dcdcdc;">][i].read();
         assert_eq!(</span><span style="color:#569cd6;">char</span><span style="color:#dcdcdc;">::from(screen_char.ascii_character), c);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>The function defines a test string, prints it using <code>println</code>, and then iterates over the screen characters of the static <code>WRITER</code>, which represents the vga text buffer. Since <code>println</code> prints to the last screen line and then immediately appends a newline, the string should appear on line <code>BUFFER_HEIGHT - 2</code>.</p>
 <p>By using <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a>, we count the number of iterations in the variable <code>i</code>, which we then use for loading the screen character corresponding to <code>c</code>. By comparing the <code>ascii_character</code> of the screen character with <code>c</code>, we ensure that each character of the string really appears in the vga text buffer.</p>
 <p>As you can imagine, we could create many more test functions, for example a function that tests that no panic occurs when printing very long lines and that they're wrapped correctly. Or a function for testing that newlines, non-printable characters, and non-unicode characters are handled correctly.</p>
@@ -619,7 +619,7 @@ blog_os::trivial_assertion...	[ok]
 <p>The convention for <a href="https://doc.rust-lang.org/book/ch11-03-test-organization.html#integration-tests">integration tests</a> in Rust is to put them into a <code>tests</code> directory in the project root (i.e. next to the <code>src</code> directory). Both the default test framework and custom test frameworks will automatically pick up and execute all tests in that directory.</p>
 <p>All integration tests are their own executables and completely separate from our <code>main.rs</code>. This means that each test needs to define its own entry point function. Let's create an example integration test named <code>basic_boot</code> to see how it works in detail:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/basic_boot.rs
+<code><span style="color:#608b4e;">// in tests/basic_boot.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 #![no_main]
@@ -644,23 +644,23 @@ blog_os::trivial_assertion...	[ok]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>Since integration tests are separate executables, we need to provide all the crate attributes (<code>no_std</code>, <code>no_main</code>, <code>test_runner</code>, etc.) again. We also need to create a new entry point function <code>_start</code>, which calls the test entry point function <code>test_main</code>. We don't need any <code>cfg(test)</code> attributes because integration test executables are never built in non-test mode.</p>
 <p>We use the <a href="https://doc.rust-lang.org/core/macro.unimplemented.html"><code>unimplemented</code></a> macro that always panics as a placeholder for the <code>test_runner</code> function and just <code>loop</code> in the <code>panic</code> handler for now. Ideally, we want to implement these functions exactly as we did in our <code>main.rs</code> using the <code>serial_println</code> macro and the <code>exit_qemu</code> function. The problem is that we don't have access to these functions since tests are built completely separately of our <code>main.rs</code> executable.</p>
 <p>If you run <code>cargo test</code> at this stage, you will get an endless loop because the panic handler loops endlessly. You need to use the <code>Ctrl+c</code> keyboard shortcut for exiting QEMU.</p>
 <h3 id="create-a-library"><a class="zola-anchor" href="#create-a-library" aria-label="Anchor link for: create-a-library">🔗</a>Create a Library</h3>
 <p>To make the required functions available to our integration test, we need to split off a library from our <code>main.rs</code>, which can be included by other crates and integration test executables. To do this, we create a new <code>src/lib.rs</code> file:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// src/lib.rs
+<code><span style="color:#608b4e;">// src/lib.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 
 </span><span style="color:#569cd6;">extern crate</span><span style="color:#dcdcdc;"> rlibc;
-</span></pre>
+</span></code></pre>
 <p>Like the <code>main.rs</code>, the <code>lib.rs</code> is a special file that is automatically recognized by cargo. The library is a separate compilation unit, so we need to specify the <code>#![no_std]</code> attribute and the <code>extern crate rlibc</code> statement again.</p>
 <p>To make our library work with <code>cargo test</code>, we need to also add the test functions and attributes:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 
 </span><span style="color:#dcdcdc;">#![cfg_attr(test, no_main)]
 #![feature(custom_test_frameworks)]
@@ -712,40 +712,40 @@ blog_os::trivial_assertion...	[ok]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     test_panic_handler(info)
 }
-</span></pre>
+</span></code></pre>
 <p>To make our <code>test_runner</code> available to executables and integration tests, we don't apply the <code>cfg(test)</code> attribute to it and make it public. We also factor out the implementation of our panic handler into a public <code>test_panic_handler</code> function, so that it is available for executables too.</p>
 <p>Since our <code>lib.rs</code> is tested independently of our <code>main.rs</code>, we need to add a <code>_start</code> entry point and a panic handler when the library is compiled in test mode. By using the <a href="https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg_attr-attribute"><code>cfg_attr</code></a> crate attribute, we conditionally enable the <code>no_main</code> attribute in this case.</p>
 <p>We also move over the <code>QemuExitCode</code> enum and the <code>exit_qemu</code> function and make them public:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 
 </span><span style="color:#dcdcdc;">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 </span><span style="color:#569cd6;">pub enum </span><span style="color:#dcdcdc;">QemuExitCode {
-    Success </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">0x10</span><span style="color:#dcdcdc;">,
-    Failed </span><span style="color:#569cd6;">= </span><span style="color:#b5cea8;">0x11</span><span style="color:#dcdcdc;">,
+    Success = </span><span style="color:#b5cea8;">0x10</span><span style="color:#dcdcdc;">,
+    Failed = </span><span style="color:#b5cea8;">0x11</span><span style="color:#dcdcdc;">,
 }
 
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">exit_qemu(exit_code: QemuExitCode) {
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">x86_64::instructions::port::Port;
 
     </span><span style="color:#569cd6;">unsafe </span><span style="color:#dcdcdc;">{
-        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> port </span><span style="color:#569cd6;">= </span><span style="color:#dcdcdc;">Port::new(</span><span style="color:#b5cea8;">0xf4</span><span style="color:#dcdcdc;">);
+        </span><span style="color:#569cd6;">let mut</span><span style="color:#dcdcdc;"> port = Port::new(</span><span style="color:#b5cea8;">0xf4</span><span style="color:#dcdcdc;">);
         port.write(exit_code </span><span style="color:#569cd6;">as u32</span><span style="color:#dcdcdc;">);
     }
 }
-</span></pre>
+</span></code></pre>
 <p>Now executables and integration tests can import these functions from the library and don't need to define their own implementations. To also make <code>println</code> and <code>serial_println</code> available, we move the module declarations too:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in src/lib.rs
+<code><span style="color:#608b4e;">// in src/lib.rs
 
 </span><span style="color:#569cd6;">pub mod </span><span style="color:#dcdcdc;">serial;
 </span><span style="color:#569cd6;">pub mod </span><span style="color:#dcdcdc;">vga_buffer;
-</span></pre>
+</span></code></pre>
 <p>We make the modules public to make them usable from outside of our library. This is also required for making our <code>println</code> and <code>serial_println</code> macros usable, since they use the <code>_print</code> functions of the modules.</p>
 <p>Now we can update our <code>main.rs</code> to use the library:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// src/main.rs
+<code><span style="color:#608b4e;">// src/main.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 #![no_main]
@@ -779,13 +779,13 @@ blog_os::trivial_assertion...	[ok]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     blog_os::test_panic_handler(info)
 }
-</span></pre>
+</span></code></pre>
 <p>The library is usable like a normal external crate. It is called like our crate, which is <code>blog_os</code> in our case. The above code uses the <code>blog_os::test_runner</code> function in the <code>test_runner</code> attribute and the <code>blog_os::test_panic_handler</code> function in our <code>cfg(test)</code> panic handler. It also imports the <code>println</code> macro to make it available to our <code>_start</code> and <code>panic</code> functions.</p>
 <p>At this point, <code>cargo run</code> and <code>cargo test</code> should work again. Of course, <code>cargo test</code> still loops endlessly (you can exit with <code>ctrl+c</code>). Let's fix this by using the required library functions in our integration test.</p>
 <h3 id="completing-the-integration-test"><a class="zola-anchor" href="#completing-the-integration-test" aria-label="Anchor link for: completing-the-integration-test">🔗</a>Completing the Integration Test</h3>
 <p>Like our <code>src/main.rs</code>, our <code>tests/basic_boot.rs</code> executable can import types from our new library. This allows us to import the missing components to complete our test.</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/basic_boot.rs
+<code><span style="color:#608b4e;">// in tests/basic_boot.rs
 
 </span><span style="color:#dcdcdc;">#![test_runner(blog_os::test_runner)]
 
@@ -793,12 +793,12 @@ blog_os::trivial_assertion...	[ok]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
     blog_os::test_panic_handler(info)
 }
-</span></pre>
+</span></code></pre>
 <p>Instead of reimplementing the test runner, we use the <code>test_runner</code> function from our library. For our <code>panic</code> handler, we call the <code>blog_os::test_panic_handler</code> function like we did in our <code>main.rs</code>.</p>
 <p>Now <code>cargo test</code> exits normally again. When you run it, you see that it builds and runs the tests for our <code>lib.rs</code>, <code>main.rs</code>, and <code>basic_boot.rs</code> separately after each other. For the <code>main.rs</code> and the <code>basic_boot</code> integration test, it reports &quot;Running 0 tests&quot; since these files don't have any functions annotated with <code>#[test_case]</code>.</p>
 <p>We can now add tests to our <code>basic_boot.rs</code>. For example, we can test that <code>println</code> works without panicking, like we did in the vga buffer tests:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/basic_boot.rs
+<code><span style="color:#608b4e;">// in tests/basic_boot.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::println;
 
@@ -806,7 +806,7 @@ blog_os::trivial_assertion...	[ok]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_println() {
     println!(</span><span style="color:#d69d85;">&quot;test_println output&quot;</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>When we run <code>cargo test</code> now, we see that it finds and executes the test function.</p>
 <p>The test might seem a bit useless right now since it's almost identical to one of the VGA buffer tests. However, in the future the <code>_start</code> functions of our <code>main.rs</code> and <code>lib.rs</code> might grow and call various initialization routines before running the <code>test_main</code> function, so that the two tests are executed in very different environments.</p>
 <p>By testing <code>println</code> in a <code>basic_boot</code> environment without calling any initialization routines in <code>_start</code>, we can ensure that <code>println</code> works right after booting. This is important because we rely on it e.g. for printing panic messages.</p>
@@ -823,7 +823,7 @@ blog_os::trivial_assertion...	[ok]
 <p>The test framework of the standard library supports a <a href="https://doc.rust-lang.org/rust-by-example/testing/unit_testing.html#testing-panics"><code>#[should_panic]</code> attribute</a> that allows to construct tests that should fail. This is useful for example to verify that a function fails when an invalid argument is passed. Unfortunately this attribute isn't supported in <code>#[no_std]</code> crates since it requires support from the standard library.</p>
 <p>While we can't use the <code>#[should_panic]</code> attribute in our kernel, we can get similar behavior by creating an integration test that exits with a success error code from the panic handler. Let's start creating such a test with the name <code>should_panic</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/should_panic.rs
+<code><span style="color:#608b4e;">// in tests/should_panic.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 #![no_main]
@@ -837,10 +837,10 @@ blog_os::trivial_assertion...	[ok]
     exit_qemu(QemuExitCode::Success);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>This test is still incomplete as it doesn't define a <code>_start</code> function or any of the custom test runner attributes yet. Let's add the missing parts:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/should_panic.rs
+<code><span style="color:#608b4e;">// in tests/should_panic.rs
 
 </span><span style="color:#dcdcdc;">#![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
@@ -862,11 +862,11 @@ blog_os::trivial_assertion...	[ok]
     }
     exit_qemu(QemuExitCode::Success);
 }
-</span></pre>
+</span></code></pre>
 <p>Instead of reusing the <code>test_runner</code> from our <code>lib.rs</code>, the test defines its own <code>test_runner</code> function that exits with a failure exit code when a test returns without panicking (we want our tests to panic). If no test function is defined, the runner exits with a success error code. Since the runner always exits after running a single test, it does not make sense to define more than one <code>#[test_case]</code> function.</p>
 <p>Now we can create a test that should fail:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/should_panic.rs
+<code><span style="color:#608b4e;">// in tests/should_panic.rs
 
 </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">blog_os::serial_print;
 
@@ -875,7 +875,7 @@ blog_os::trivial_assertion...	[ok]
     serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span style="color:#dcdcdc;">);
     assert_eq!(</span><span style="color:#b5cea8;">0</span><span style="color:#dcdcdc;">, </span><span style="color:#b5cea8;">1</span><span style="color:#dcdcdc;">);
 }
-</span></pre>
+</span></code></pre>
 <p>The test uses the <code>assert_eq</code> to assert that <code>0</code> and <code>1</code> are equal. This of course fails, so that our test panics as desired. Note that we need to manually print the function name using <code>serial_print!</code> here because we don't use the <code>Testable</code> trait.</p>
 <p>When we run the test through <code>cargo test --test should_panic</code> we see that it is successful because the test panicked as expected. When we comment out the assertion and run the test again, we see that it indeed fails with the <em>&quot;test did not panic&quot;</em> message.</p>
 <p>A significant drawback of this approach is that it only works for a single test function. With multiple <code>#[test_case]</code> functions, only the first function is executed because the execution cannot continue after the panic handler has been called. I currently don't know of a good way to solve this problem, so let me know if you have an idea!</p>
@@ -884,15 +884,15 @@ blog_os::trivial_assertion...	[ok]
 <p>The key to this is disable the <code>harness</code> flag for the test in the <code>Cargo.toml</code>, which defines whether a test runner is used for an integration test. When it's set to <code>false</code>, both the default test runner and the custom test runner feature are disabled, so that the test is treated like a normal executable.</p>
 <p>Let's disable the <code>harness</code> flag for our <code>should_panic</code> test:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;"># in Cargo.toml
+<code><span style="color:#608b4e;"># in Cargo.toml
 
 </span><span style="color:#dcdcdc;">[[</span><span style="color:#808080;">test</span><span style="color:#dcdcdc;">]]
 </span><span style="color:#569cd6;">name </span><span style="color:#dcdcdc;">= </span><span style="color:#d69d85;">&quot;should_panic&quot;
 </span><span style="color:#569cd6;">harness </span><span style="color:#dcdcdc;">= </span><span style="color:#569cd6;">false
-</span></pre>
+</span></code></pre>
 <p>Now we vastly simplify our <code>should_panic</code> test by removing the test runner related code. The result looks like this:</p>
 <pre style="background-color:#1e1e1e;">
-<span style="color:#608b4e;">// in tests/should_panic.rs
+<code><span style="color:#608b4e;">// in tests/should_panic.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 #![no_main]
@@ -919,7 +919,7 @@ blog_os::trivial_assertion...	[ok]
     exit_qemu(QemuExitCode::Success);
     </span><span style="color:#569cd6;">loop </span><span style="color:#dcdcdc;">{}
 }
-</span></pre>
+</span></code></pre>
 <p>We now call the <code>should_fail</code> function directly from our <code>_start</code> function and exit with a failure exit code if it returns. When we run <code>cargo test --test should_panic</code> now, we see that the test behaves exactly as before.</p>
 <p>Apart from creating <code>should_panic</code> tests, disabling the <code>harness</code> attribute can also be useful for complex integration tests, for example when the individual test functions have side effects and need to be run in a specified order.</p>
 <h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>Summary</h2>
