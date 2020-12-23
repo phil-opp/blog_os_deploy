@@ -309,7 +309,9 @@ error[E0463]: can&#39;t find crate for `test`
 <p>For specifying the exit status, we create a <code>QemuExitCode</code> enum. The idea is to exit with the success exit code if all tests succeeded and with the failure exit code otherwise. The enum is marked as <code>#[repr(u32)]</code> to represent each variant by an <code>u32</code> integer. We use exit code <code>0x10</code> for success and <code>0x11</code> for failure. The actual exit codes do not matter much, as long as they don't clash with the default exit codes of QEMU. For example, using exit code <code>0</code> for success is not a good idea because it becomes <code>(0 &lt;&lt; 1) | 1 = 1</code> after the transformation, which is the default exit code when QEMU failed to run. So we could not differentiate a QEMU error from a successful test run.</p>
 <p>We can now update our <code>test_runner</code> to exit QEMU after all tests ran:</p>
 <pre style="background-color:#1e1e1e;">
-<code><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Fn()]) {
+<code><span style="color:#608b4e;">// in src/main.rs
+
+</span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">[</span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">dyn Fn()]) {
     println!(</span><span style="color:#d69d85;">&quot;Running </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> tests&quot;</span><span style="color:#dcdcdc;">, tests.len());
     </span><span style="color:#569cd6;">for</span><span style="color:#dcdcdc;"> test </span><span style="color:#569cd6;">in</span><span style="color:#dcdcdc;"> tests {
         test();
@@ -335,7 +337,9 @@ error: test failed, to rerun pass &#39;--bin blog_os&#39;
 <h3 id="success-exit-code"><a class="zola-anchor" href="#success-exit-code" aria-label="Anchor link for: success-exit-code">🔗</a>Success Exit Code</h3>
 <p>To work around this, <code>bootimage</code> provides a <code>test-success-exit-code</code> configuration key that maps a specified exit code to the exit code <code>0</code>:</p>
 <pre style="background-color:#1e1e1e;">
-<code><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
+<code><span style="color:#608b4e;"># in Cargo.toml
+
+</span><span style="color:#dcdcdc;">[</span><span style="color:#808080;">package.metadata.bootimage</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-args </span><span style="color:#dcdcdc;">= [</span><span style="color:#ff3333;">…</span><span style="color:#dcdcdc;">]
 </span><span style="color:#569cd6;">test-success-exit-code </span><span style="color:#dcdcdc;">= </span><span style="color:#b5cea8;">33         </span><span style="color:#608b4e;"># (0x10 &lt;&lt; 1) | 1
 </span></code></pre>
@@ -377,7 +381,9 @@ lazy_static! {
 <p>Like the <code>isa-debug-exit</code> device, the UART is programmed using port I/O. Since the UART is more complex, it uses multiple I/O ports for programming different device registers. The unsafe <code>SerialPort::new</code> function expects the address of the first I/O port of the UART as argument, from which it can calculate the addresses of all needed ports. We're passing the port address <code>0x3F8</code>, which is the standard port number for the first serial interface.</p>
 <p>To make the serial port easily usable, we add <code>serial_print!</code> and <code>serial_println!</code> macros:</p>
 <pre style="background-color:#1e1e1e;">
-<code><span style="color:#dcdcdc;">#[doc(hidden)]
+<code><span style="color:#608b4e;">// in src/serial.rs
+
+</span><span style="color:#dcdcdc;">#[doc(hidden)]
 </span><span style="color:#569cd6;">pub fn </span><span style="color:#dcdcdc;">_print(args: ::core::fmt::Arguments) {
     </span><span style="color:#569cd6;">use </span><span style="color:#dcdcdc;">core::fmt::Write;
     </span><span style="color:#b4cea8;">SERIAL1</span><span style="color:#dcdcdc;">.lock().write_fmt(args).expect(</span><span style="color:#d69d85;">&quot;Printing to serial failed&quot;</span><span style="color:#dcdcdc;">);
@@ -448,7 +454,9 @@ trivial assertion... [ok]
 <h3 id="print-an-error-message-on-panic"><a class="zola-anchor" href="#print-an-error-message-on-panic" aria-label="Anchor link for: print-an-error-message-on-panic">🔗</a>Print an Error Message on Panic</h3>
 <p>To exit QEMU with an error message on a panic, we can use <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">conditional compilation</a> to use a different panic handler in testing mode:</p>
 <pre style="background-color:#1e1e1e;">
-<code><span style="color:#608b4e;">// our existing panic handler
+<code><span style="color:#608b4e;">// in src/main.rs
+
+// our existing panic handler
 </span><span style="color:#dcdcdc;">#[cfg(not(test))] </span><span style="color:#608b4e;">// new attribute
 </span><span style="color:#dcdcdc;">#[panic_handler]
 </span><span style="color:#569cd6;">fn </span><span style="color:#dcdcdc;">panic(info: </span><span style="color:#569cd6;">&amp;</span><span style="color:#dcdcdc;">PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span style="color:#dcdcdc;">{
@@ -747,7 +755,7 @@ blog_os::trivial_assertion...	[ok]
 <p>We make the modules public to make them usable from outside of our library. This is also required for making our <code>println</code> and <code>serial_println</code> macros usable, since they use the <code>_print</code> functions of the modules.</p>
 <p>Now we can update our <code>main.rs</code> to use the library:</p>
 <pre style="background-color:#1e1e1e;">
-<code><span style="color:#608b4e;">// src/main.rs
+<code><span style="color:#608b4e;">// in src/main.rs
 
 </span><span style="color:#dcdcdc;">#![no_std]
 #![no_main]
