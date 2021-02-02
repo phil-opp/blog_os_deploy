@@ -829,8 +829,9 @@ many_boxes_long_lived... [ok]
 </span><span style="color:#569cd6;">impl </span><span style="color:#dcdcdc;">FixedSizeBlockAllocator {
     </span><span style="color:#608b4e;">/// Creates an empty FixedSizeBlockAllocator.
     </span><span style="color:#569cd6;">pub const fn </span><span style="color:#dcdcdc;">new() -&gt; </span><span style="color:#569cd6;">Self </span><span style="color:#dcdcdc;">{
+        </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">EMPTY</span><span style="color:#dcdcdc;">: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span style="color:#dcdcdc;"> ListNode&gt; = None;
         FixedSizeBlockAllocator {
-            list_heads: [None; </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span style="color:#dcdcdc;">.len()],
+            list_heads: [</span><span style="color:#b4cea8;">EMPTY</span><span style="color:#dcdcdc;">; </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span style="color:#dcdcdc;">.len()],
             fallback_allocator: linked_list_allocator::Heap::empty(),
         }
     }
@@ -845,7 +846,7 @@ many_boxes_long_lived... [ok]
     }
 }
 </span></code></pre>
-<p>The <code>new</code> function just initializes the <code>list_heads</code> array with empty nodes and creates an <a href="https://docs.rs/linked_list_allocator/0.8.0/linked_list_allocator/struct.Heap.html#method.empty"><code>empty</code></a> linked list allocator as <code>fallback_allocator</code>. Since array initializations using non-<code>Copy</code> types are still unstable, we need to add <strong><code>#![feature(const_in_array_repeat_expressions)]</code></strong> to the beginning of our <code>lib.rs</code>. The reason that <code>None</code> is not <code>Copy</code> in this case is that <code>ListNode</code> does not implement <code>Copy</code>. Thus, the <code>Option</code> wrapper and its <code>None</code> variant are not <code>Copy</code> either.</p>
+<p>The <code>new</code> function just initializes the <code>list_heads</code> array with empty nodes and creates an <a href="https://docs.rs/linked_list_allocator/0.8.0/linked_list_allocator/struct.Heap.html#method.empty"><code>empty</code></a> linked list allocator as <code>fallback_allocator</code>. The <code>EMPTY</code> constant is needed because to tell the Rust compiler that we want to initialize the array with a constant value. Initializing the array directly as <code>[None; BLOCK_SIZES.len()]</code> does not work because then the compiler requires that <code>Option&lt;&amp;'static mut ListNode&gt;</code> implements the <code>Copy</code> trait, which is does not. This is a current limitation of the Rust compiler, which might go away in the future.</p>
 <p>If you haven't done so already for the <code>LinkedListAllocator</code> implementation, you also need to add <strong><code>#![feature(const_mut_refs)]</code></strong> to the beginning of your <code>lib.rs</code>. The reason is that any use of mutable reference types in const functions is still unstable, including the <code>Option&lt;&amp;'static mut ListNode&gt;</code> array element type of the <code>list_heads</code> field (even if we set it to <code>None</code>).</p>
 <p>The unsafe <code>init</code> function only calls the <a href="https://docs.rs/linked_list_allocator/0.8.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> function of the <code>fallback_allocator</code> without doing any additional initialization of the <code>list_heads</code> array. Instead, we will initialize the lists lazily on <code>alloc</code> and <code>dealloc</code> calls.</p>
 <p>For convenience, we also create a private <code>fallback_alloc</code> method that allocates using the <code>fallback_allocator</code>:</p>
