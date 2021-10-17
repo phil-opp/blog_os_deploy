@@ -5,6 +5,13 @@ window.onload = function () {
     toc_scroll_position(container);
     window.onscroll = function () { toc_scroll_position(container) };
   }
+
+  let theme = localStorage.getItem("theme");
+  if (theme != null) {
+    setTimeout(() => {
+      set_giscus_theme(theme)
+    }, 500);
+  }
 }
 
 function resize_toc(container) {
@@ -91,9 +98,3 @@ function set_giscus_theme(theme) {
   }
 }
 
-function giscus_loaded() {
-  let theme = localStorage.getItem("theme");
-  if (theme != null) {
-    set_giscus_theme(theme)
-  }
-}
