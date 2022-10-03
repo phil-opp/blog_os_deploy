@@ -264,7 +264,7 @@
 </span><span>}
 </span></code></pre>
 <p>The <code>interrupts::enable</code> function of the <code>x86_64</code> crate executes the special <code>sti</code> instruction (“set interrupts”) to enable external interrupts. When we try <code>cargo run</code> now, we see that a double fault occurs:</p>
-<p><img src="qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT because of hardware timer" /></p>
+<p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT because of hardware timer" /></p>
 <p>The reason for this double fault is that the hardware timer (the <a href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a>, to be exact) is enabled by default, so we start receiving timer interrupts as soon as we enable interrupts. Since we didn’t define a handler function for it yet, our double fault handler is invoked.</p>
 <h2 id="handling-timer-interrupts"><a class="zola-anchor" href="#handling-timer-interrupts" aria-label="Anchor link for: handling-timer-interrupts">🔗</a>Handling Timer Interrupts</h2>
 <p>As we see from the graphic <a href="https://os.phil-opp.com/hardware-interrupts/#the-8259-pic">above</a>, the timer uses line 0 of the primary PIC. This means that it arrives at the CPU as interrupt 32 (0 + offset 32). Instead of hardcoding index 32, we store it in an <code>InterruptIndex</code> enum:</p>
@@ -312,7 +312,7 @@
 </span></code></pre>
 <p>Our <code>timer_interrupt_handler</code> has the same signature as our exception handlers, because the CPU reacts identically to exceptions and external interrupts (the only difference is that some exceptions push an error code). The <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> struct implements the <a href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> trait, so we can access individual entries through array indexing syntax.</p>
 <p>In our timer interrupt handler, we print a dot to the screen. As the timer interrupt happens periodically, we would expect to see a dot appearing on each timer tick. However, when we run it, we see that only a single dot is printed:</p>
-<p><img src="qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
+<p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
 <h3 id="end-of-interrupt"><a class="zola-anchor" href="#end-of-interrupt" aria-label="Anchor link for: end-of-interrupt">🔗</a>End of Interrupt</h3>
 <p>The reason is that the PIC expects an explicit “end of interrupt” (EOI) signal from our interrupt handler. This signal tells the controller that the interrupt was processed and that the system is ready to receive the next interrupt. So the PIC thinks we’re still busy processing the first timer interrupt and waits patiently for the EOI signal before sending the next one.</p>
 <p>To send the EOI, we use our static <code>PICS</code> struct again:</p>
@@ -332,7 +332,7 @@
 <p>The <code>notify_end_of_interrupt</code> figures out whether the primary or secondary PIC sent the interrupt and then uses the <code>command</code> and <code>data</code> ports to send an EOI signal to the respective controllers. If the secondary PIC sent the interrupt, both PICs need to be notified because the secondary PIC is connected to an input line of the primary PIC.</p>
 <p>We need to be careful to use the correct interrupt vector number, otherwise we could accidentally delete an important unsent interrupt or cause our system to hang. This is the reason that the function is unsafe.</p>
 <p>When we now execute <code>cargo run</code> we see dots periodically appearing on the screen:</p>
-<p><img src="qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
+<p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
 <h3 id="configuring-the-timer"><a class="zola-anchor" href="#configuring-the-timer" aria-label="Anchor link for: configuring-the-timer">🔗</a>Configuring the Timer</h3>
 <p>The hardware timer that we use is called the <em>Programmable Interval Timer</em>, or PIT, for short. Like the name says, it is possible to configure the interval between two interrupts. We won’t go into details here because we will switch to the <a href="https://wiki.osdev.org/APIC_timer">APIC timer</a> soon, but the OSDev wiki has an extensive article about the <a href="https://wiki.osdev.org/Programmable_Interval_Timer">configuring the PIT</a>.</p>
 <h2 id="deadlocks"><a class="zola-anchor" href="#deadlocks" aria-label="Anchor link for: deadlocks">🔗</a>Deadlocks</h2>
@@ -374,7 +374,7 @@
 </span><span>}
 </span></code></pre>
 <p>When we run it in QEMU, we get an output of the form:</p>
-<p><img src="./qemu-deadlock.png" alt="QEMU output with many rows of hyphens and no dots" /></p>
+<p><img src="https://os.phil-opp.com/hardware-interrupts/./qemu-deadlock.png" alt="QEMU output with many rows of hyphens and no dots" /></p>
 <p>We see that only a limited number of hyphens are printed until the first timer interrupt occurs. Then the system hangs because the timer interrupt handler deadlocks when it tries to print a dot. This is the reason that we see no dots in the above output.</p>
 <p>The actual number of hyphens varies between runs because the timer interrupt occurs asynchronously. This non-determinism is what makes concurrency-related bugs so difficult to debug.</p>
 <h3 id="fixing-the-deadlock"><a class="zola-anchor" href="#fixing-the-deadlock" aria-label="Anchor link for: fixing-the-deadlock">🔗</a>Fixing the Deadlock</h3>
@@ -580,7 +580,7 @@
 </span><span>}
 </span></code></pre>
 <p>We use the <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> type of the <code>x86_64</code> crate to read a byte from the keyboard’s data port. This byte is called the <a href="https://en.wikipedia.org/wiki/Scancode"><em>scancode</em></a> and it represents the key press/release. We don’t do anything with the scancode yet, other than print it to the screen:</p>
-<p><img src="qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
+<p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
 <p>The above image shows me slowly typing “123”. We see that adjacent keys have adjacent scancodes and that pressing a key causes a different scancode than releasing it. But how do we translate the scancodes to the actual key actions exactly?</p>
 <h3 id="interpreting-the-scancodes"><a class="zola-anchor" href="#interpreting-the-scancodes" aria-label="Anchor link for: interpreting-the-scancodes">🔗</a>Interpreting the Scancodes</h3>
 <p>There are three different standards for the mapping between scancodes and keys, the so-called <em>scancode sets</em>. All three go back to the keyboards of early IBM computers: the <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a>, the <a href="https://en.wikipedia.org/wiki/IBM_3270_PC">IBM 3270 PC</a>, and the <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer/AT">IBM AT</a>. Later computers fortunately did not continue the trend of defining new scancode sets, but rather emulated the existing sets and extended them. Today, most keyboards can be configured to emulate any of the three sets.</p>
@@ -622,7 +622,7 @@
 </span></code></pre>
 <p>The above code translates keypresses of the number keys 0-9 and ignores all other keys. It uses a <a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a> statement to assign a character or <code>None</code> to each scancode. It then uses <a href="https://doc.rust-lang.org/book/ch18-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a> to destructure the optional <code>key</code>. By using the same variable name <code>key</code> in the pattern, we <a href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">shadow</a> the previous declaration, which is a common pattern for destructuring <code>Option</code> types in Rust.</p>
 <p>Now we can write numbers:</p>
-<p><img src="qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
+<p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
 <p>Translating the other keys works in the same way. Fortunately, there is a crate named <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/"><code>pc-keyboard</code></a> for translating scancodes of scancode sets 1 and 2, so we don’t have to implement this ourselves. To use the crate, we add it to our <code>Cargo.toml</code> and import it in our <code>lib.rs</code>:</p>
 <pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
 </span><span>
@@ -669,7 +669,7 @@
 <p>On each interrupt, we lock the Mutex, read the scancode from the keyboard controller, and pass it to the <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> method, which translates the scancode into an <code>Option&lt;KeyEvent&gt;</code>. The <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> contains the key which caused the event and whether it was a press or release event.</p>
 <p>To interpret this key event, we pass it to the <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> method, which translates the key event to a character, if possible. For example, it translates a press event of the <code>A</code> key to either a lowercase <code>a</code> character or an uppercase <code>A</code> character, depending on whether the shift key was pressed.</p>
 <p>With this modified interrupt handler, we can now write text:</p>
-<p><img src="qemu-typing.gif" alt="Typing “Hello World” in QEMU" /></p>
+<p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-typing.gif" alt="Typing “Hello World” in QEMU" /></p>
 <h3 id="configuring-the-keyboard"><a class="zola-anchor" href="#configuring-the-keyboard" aria-label="Anchor link for: configuring-the-keyboard">🔗</a>Configuring the Keyboard</h3>
 <p>It’s possible to configure some aspects of a PS/2 keyboard, for example, which scancode set it should use. We won’t cover it here because this post is already long enough, but the OSDev Wiki has an overview of possible <a href="https://wiki.osdev.org/PS/2_Keyboard#Commands">configuration commands</a>.</p>
 <h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>Summary</h2>

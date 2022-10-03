@@ -365,9 +365,9 @@
 <h2 id="revisiting-recursive-mapping"><a class="zola-anchor" href="#revisiting-recursive-mapping" aria-label="Anchor link for: revisiting-recursive-mapping">🔗</a>Revisiting Recursive Mapping</h2>
 <p>Recursive mapping works by mapping the last P4 entry to the P4 table itself. Thus we can access the page tables by looping one or more times.</p>
 <p>For example, accessing a P3 table requires lopping three times:</p>
-<p><img src="recursive_mapping_access_p3.svg" alt="access active P3 table through recursive mapping" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_access_p3.svg" alt="access active P3 table through recursive mapping" /></p>
 <p>We can use the same mechanism to access inactive tables. The trick is to change the recursive mapping of the active P4 table to point to the inactive P4 table:</p>
-<p><img src="recursive_mapping_access_p3_inactive_table.svg" alt="access inactive P3 table through recursive mapping" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_access_p3_inactive_table.svg" alt="access inactive P3 table through recursive mapping" /></p>
 <p>Now the inactive table can be accessed exactly as the active table, even the magic addresses are the same. This allows us to use the <code>ActivePageTable</code> interface and the existing mapping methods for inactive tables, too. Note that everything besides the recursive mapping continues to work exactly as before since we’ve never changed the active table in the CPU.</p>
 <h3 id="implementation-draft"><a class="zola-anchor" href="#implementation-draft" aria-label="Anchor link for: implementation-draft">🔗</a>Implementation Draft</h3>
 <p>We add a method to <code>ActivePageTable</code> that temporary changes the recursive mapping and executes a given closure in the new context:</p>
@@ -390,7 +390,7 @@
 </span></code></pre>
 <p>It overwrites the 511th P4 entry and points it to the inactive table frame. Then it flushes the <a href="https://wiki.osdev.org/TLB">translation lookaside buffer (TLB)</a>, which still contains some old translations. We need to flush all pages that are part of the recursive mapping, so the easiest way is to flush the TLB completely.</p>
 <p>Now that the recursive mapping points to the given inactive table, we execute the closure in the new context. The closure can call all active table methods such as <code>translate</code> or <code>map_to</code>. It could even call <code>with</code> again and chain another inactive table! Wait… that would not work:</p>
-<p><img src="recursive_mapping_access_p1_invalid_chaining.svg" alt="access inactive P3 table through recursive mapping" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_access_p1_invalid_chaining.svg" alt="access inactive P3 table through recursive mapping" /></p>
 <p>Here the closure called <code>with</code> again and thus changed the recursive mapping of the inactive table to point to a second inactive table. Now we want to modify the P1 of the <em>second</em> inactive table, but instead we land on the P1 of the <em>first</em> inactive table since we never follow the pointer to the second table. Only when modifying the P2, P3, or P4 table we really access the second inactive table. This inconsistency would break our mapping functions completely.</p>
 <p>So we should really prohibit the closure from calling <code>with</code> again. We could add some runtime assertion that panics when the active table is not recursive mapped anymore. But a cleaner solution is to split off the mapping code from <code>ActivePageTable</code> into a new <code>Mapper</code> type.</p>
 <h3 id="refactoring"><a class="zola-anchor" href="#refactoring" aria-label="Anchor link for: refactoring">🔗</a>Refactoring</h3>
@@ -466,10 +466,10 @@
 </span></code></pre>
 <p>Why is it unsafe? Because reading the CR3 register leads to a CPU exception if the processor is not running in kernel mode (<a href="https://wiki.osdev.org/Security#Low-level_Protection_Mechanisms">Ring 0</a>). But this code will always run in kernel mode, so the <code>unsafe</code> block is completely safe here.</p>
 <p>Now that we have a backup of the original P4 frame, we need a way to restore it after the closure has run. So we need to somehow modify the 511th entry of the original P4 frame, which is still the active table in the CPU. But we can’t access it because the recursive mapping now points to the inactive table:</p>
-<p><img src="recursive_mapping_inactive_table_scheme.svg" alt="it’s not possible to access the original P4 through recursive mapping anymore" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/recursive_mapping_inactive_table_scheme.svg" alt="it’s not possible to access the original P4 through recursive mapping anymore" /></p>
 <p>It’s just not possible to access the active P4 entry in 4 steps, so we can’t reach it through the 4-level page table.</p>
 <p>We could try to overwrite the recursive mapping of the <em>inactive</em> P4 table and point it back to the original P4 frame:</p>
-<p><img src="cyclic_mapping_inactive_tables.svg" alt="cyclic map active and inactive P4 tables" /></p>
+<p><img src="https://os.phil-opp.com/remap-the-kernel/cyclic_mapping_inactive_tables.svg" alt="cyclic map active and inactive P4 tables" /></p>
 <p>Now we can reach the active P4 entry in 4 steps and could restore the original mapping in the active table. But this hack has a drawback: The inactive table is now invalid since it is no longer recursive mapped. We would need to fix it by using a temporary page again (as above).</p>
 <p>But if we need a temporary page anyway, we can just use it to map the original P4 frame directly. Thus we avoid the above hack and make the code simpler. So let’s do it that way.</p>
 <h3 id="completing-the-implementation"><a class="zola-anchor" href="#completing-the-implementation" aria-label="Anchor link for: completing-the-implementation">🔗</a>Completing the Implementation</h3>

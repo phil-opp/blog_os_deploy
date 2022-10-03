@@ -197,30 +197,30 @@
 <p>この方法を実装するには、ブートローダーからの補助が必要になるので、まずこれに設定を加えます。その後で、ページテーブルの階層構造を移動して、仮想アドレスを物理アドレスに変換する関数を実装します。最後に、ページテーブルに新しいマッピングを作る方法と、それを作るための未使用メモリを見つける方法を学びます。</p>
 <h2 id="peziteburuniakusesusuru"><a class="zola-anchor" href="#peziteburuniakusesusuru" aria-label="Anchor link for: peziteburuniakusesusuru">🔗</a>ページテーブルにアクセスする</h2>
 <p>私達のカーネルからページテーブルにアクセスするのは案外難しいです。この問題を理解するために、前回の記事の4層ページテーブルをもう一度見てみましょう：</p>
-<p><img src="../paging-introduction/x86_64-page-table-translation.svg" alt="An example 4-level page hierarchy with each page table shown in physical memory" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/../paging-introduction/x86_64-page-table-translation.svg" alt="An example 4-level page hierarchy with each page table shown in physical memory" /></p>
 <p>ここで重要なのは、それぞれのページテーブルのエントリは次のテーブルの<strong>物理</strong>アドレスであるということです。これにより、それらのアドレスに対しては変換せずにすみます。もしこの変換が行われたとしたら、性能的にも良くないですし、容易に変換の無限ループに陥りかねません。</p>
 <p>問題は、私達のカーネル自体も仮想アドレスの上で動いているため、カーネルから直接物理アドレスにアクセスすることができないということです。例えば、アドレス<code>4KiB</code>にアクセスしたとき、私達は<strong>仮想</strong>アドレス<code>4KiB</code>にアクセスしているのであって、レベル4ページテーブルが格納されている<strong>物理</strong>アドレス<code>4KiB</code>にアクセスしているのではありません。物理アドレス<code>4KiB</code>にアクセスしたいなら、それにマップさせられている何らかの仮想アドレスを通じてのみ可能です。</p>
 <p>そのため、ページテーブルのフレームにアクセスするためには、どこかの仮想ページをそれにマッピングしなければいけません。このような、任意のページテーブルのフレームにアクセスできるようにしてくれるマッピングを作る方法にはいくつかあります。</p>
 <h3 id="heng-deng-matupingu"><a class="zola-anchor" href="#heng-deng-matupingu" aria-label="Anchor link for: heng-deng-matupingu">🔗</a>恒等マッピング</h3>
 <p>シンプルな方法として、<strong>すべてのページテーブルを恒等<ruby>対応<rp> (</rp><rt>マップ</rt><rp>) </rp></ruby>させる</strong>ということが考えられるでしょう：</p>
-<p><img src="identity-mapped-page-tables.svg" alt="A virtual and a physical address space with various virtual pages mapped to the physical frame with the same address" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/identity-mapped-page-tables.svg" alt="A virtual and a physical address space with various virtual pages mapped to the physical frame with the same address" /></p>
 <p>この例では、恒等マップしたいくつかのページテーブルのフレームが見てとれます。こうすることで、ページテーブルの物理アドレスは仮想アドレスと同じ値になり、よってCR3レジスタから始めることで全ての階層のページテーブルに簡単にアクセスできます。</p>
 <p>しかし、この方法では仮想アドレス空間が散らかってしまい、大きいサイズの連続したメモリを見つけることが難しくなります。例えば、上の図において、<a href="https://en.wikipedia.org/wiki/Memory-mapped_file">ファイルをメモリにマップする</a>ために1000KiBの大きさの仮想メモリ領域を作りたいとします。<code>28KiB</code>を始点として領域を作ろうとすると、<code>1004KiB</code>のところで既存のページと衝突してしまうのでうまくいきません。そのため、<code>1008KiB</code>のような、十分な広さでマッピングのない領域が見つかるまで更に探さないといけません。これは<a href="https://os.phil-opp.com/ja/paging-introduction/#duan-pian-hua-fragmentation">セグメンテーション</a>の時に見た断片化の問題に似ています。</p>
 <p>同様に、新しいページテーブルを作ることもずっと難しくなります。なぜなら、対応するページがまだ使われていない物理フレームを見つけないといけないからです。例えば、メモリ<ruby>マップト<rp> (</rp><rt>に対応づけられた</rt><rp>) </rp></ruby>ファイルのために<code>1008KiB</code>から1000KiBにわたって仮想メモリを占有したとしましょう。すると、物理アドレス<code>1000KiB</code>から<code>2008KiB</code>までのフレームは、もう恒等マッピングを作ることができないので使用することができません。</p>
 <h3 id="gu-ding-ohusetutonomatupingu"><a class="zola-anchor" href="#gu-ding-ohusetutonomatupingu" aria-label="Anchor link for: gu-ding-ohusetutonomatupingu">🔗</a>固定オフセットのマッピング</h3>
 <p>仮想アドレス空間を散らかしてしまうという問題を回避するために、<strong>ページテーブルのマッピングのために別のメモリ領域を使う</strong>ことができます。ページテーブルを恒等マップさせる代わりに、仮想アドレス空間で一定の<ruby>補正値<rp> (</rp><rt>オフセット</rt><rp>) </rp></ruby>をおいてマッピングしてみましょう。例えば、オフセットを10TiBにしてみましょう：</p>
-<p><img src="page-tables-mapped-at-offset.svg" alt="The same figure as for the identity mapping, but each mapped virtual page is offset by 10 TiB." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/page-tables-mapped-at-offset.svg" alt="The same figure as for the identity mapping, but each mapped virtual page is offset by 10 TiB." /></p>
 <p><code>10TiB</code>から<code>10TiB+物理メモリ全体の大きさ</code>の範囲の仮想メモリをページテーブルのマッピング専用に使うことで、恒等マップのときに存在していた衝突問題を回避しています。このように巨大な領域を仮想アドレス空間内に用意するのは、仮想アドレス空間が物理メモリの大きさより遥かに大きい場合にのみ可能です。x86_64で用いられている48bit（仮想）アドレス空間は256TiBもの大きさがあるので、これは問題ではありません。</p>
 <p>この方法では、新しいページテーブルを作るたびに新しいマッピングを作る必要があるという欠点があります。また、他のアドレス空間のページテーブルにアクセスすることができると新しいプロセスを作るときに便利なのですが、これも不可能です。</p>
 <h3 id="map-the-complete-physical-memory"><a class="zola-anchor" href="#map-the-complete-physical-memory" aria-label="Anchor link for: map-the-complete-physical-memory">🔗</a>物理メモリ全体をマップする</h3>
 <p>これらの問題はページテーブルのフレームだけと言わず<strong>物理メモリ全体をマップして</strong>しまえば解決します：</p>
-<p><img src="map-complete-physical-memory.svg" alt="The same figure as for the offset mapping, but every physical frame has a mapping (at 10TiB + X) instead of only page table frames." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/map-complete-physical-memory.svg" alt="The same figure as for the offset mapping, but every physical frame has a mapping (at 10TiB + X) instead of only page table frames." /></p>
 <p>この方法を使えば、私達のカーネルは他のアドレス空間を含め任意の物理メモリにアクセスできます。用意する仮想メモリの範囲は以前と同じであり、違うのは全てのページがマッピングされているということです。</p>
 <p>この方法の欠点は、物理メモリへのマッピングを格納するために、追加でページテーブルが必要になるところです。これらのページテーブルもどこかに格納されなければならず、したがって物理メモリの一部を占有することになります。これはメモリの量が少ないデバイスにおいては問題となりえます。</p>
 <p>しかし、x86_64においては、通常の4KiBサイズのページに代わって、大きさ2MiBの<a href="https://en.wikipedia.org/wiki/Page_%28computer_memory%29#Multiple_page_sizes">huge page</a>をマッピングに使うことができます。こうすれば、例えば32GiBの物理メモリをマップするのにはレベル3テーブル1個とレベル2テーブル32個があればいいので、たったの132KiBしか必要ではありません。huge pagesは、トランスレーション・ルックアサイド・バッファ (TLB) のエントリをあまり使わないので、キャッシュ的にも効率が良いです。</p>
 <h3 id="yi-shi-de-nadui-ying-matupingu"><a class="zola-anchor" href="#yi-shi-de-nadui-ying-matupingu" aria-label="Anchor link for: yi-shi-de-nadui-ying-matupingu">🔗</a>一時的な<ruby>対応<rp> (</rp><rt>マッピング</rt><rp>) </rp></ruby></h3>
 <p>物理メモリの量が非常に限られたデバイスについては、アクセスする必要があるときだけ<strong>ページテーブルのフレームを一時的にマップする</strong>という方法が考えられます。そのような一時的なマッピングを作りたいときには、たった一つだけ恒等マップさせられたレベル1テーブルがあれば良いです：</p>
-<p><img src="temporarily-mapped-page-tables.svg" alt="A virtual and a physical address space with an identity mapped level 1 table, which maps its 0th entry to the level 2 table frame, thereby mapping that frame to page with address 0" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/temporarily-mapped-page-tables.svg" alt="A virtual and a physical address space with an identity mapped level 1 table, which maps its 0th entry to the level 2 table frame, thereby mapping that frame to page with address 0" /></p>
 <p>この図におけるレベル1テーブルは仮想アドレス空間の最初の2MiBを制御しています。なぜなら、このテーブルにはCR3レジスタから始めて、レベル4、3、2のページテーブルの0番目のエントリを辿ることで到達できるからです。その8番目のエントリは、アドレス<code>32 KiB</code>の仮想アドレスページをアドレス<code>32 KiB</code>の物理アドレスページにマップするので、レベル1テーブル自体を恒等マップしています。この図ではその恒等マッピングを<code>32 KiB</code>のところの横向きの（茶色の）矢印で表しています。</p>
 <p>恒等マップさせたレベル1テーブルに書き込むことによって、カーネルは最大511個の一時的なマッピングを作ることができます（512から、恒等マッピングに必要な1つを除く）。上の例では、カーネルは2つの一時的なマッピングを作りました：</p>
 <ul>
@@ -239,31 +239,31 @@
 <h3 id="zai-gui-de-peziteburu"><a class="zola-anchor" href="#zai-gui-de-peziteburu" aria-label="Anchor link for: zai-gui-de-peziteburu">🔗</a>再帰的ページテーブル</h3>
 <p>他に興味深いアプローチとして<strong>再帰的にページテーブルをマップする</strong>方法があり、この方法では追加のページテーブルは一切不要です。発想としては、レベル4ページテーブルのエントリのどれかをレベル4ページテーブル自体にマップするのです。こうすることにより、仮想アドレス空間の一部を予約しておき、現在及び将来のあらゆるページテーブルフレームをその空間にマップしているのと同じことになります。</p>
 <p>これがうまく行く理由を説明するために、例を見てみましょう：</p>
-<p><img src="recursive-page-table.png" alt="An example 4-level page hierarchy with each page table shown in physical memory. Entry 511 of the level 4 page is mapped to frame 4KiB, the frame of the level 4 table itself." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/recursive-page-table.png" alt="An example 4-level page hierarchy with each page table shown in physical memory. Entry 511 of the level 4 page is mapped to frame 4KiB, the frame of the level 4 table itself." /></p>
 <p><a href="https://os.phil-opp.com/ja/paging-implementation/#peziteburuniakusesusuru">この記事の最初での例</a>との唯一の違いは、レベル4テーブルの511番目に、物理フレーム<code>4 KiB</code>すなわちレベル4テーブル自体のフレームにマップされたエントリが追加されていることです。</p>
 <p>CPUにこのエントリを辿らせるようにすると、レベル3テーブルではなく、そのレベル4テーブルに再び到達します。これは再帰関数（自らを呼び出す関数）に似ているので、<strong><ruby>再帰的<rp> (</rp><rt>recursive</rt><rp>) </rp></ruby>ページテーブル</strong>と呼ばれます。CPUはレベル4テーブルのすべてのエントリはレベル3テーブルを指していると思っているので、CPUはいまレベル4テーブルをレベル3テーブルとして扱っているということに注目してください。これがうまく行くのは、x86_64においてはすべてのレベルのテーブルが全く同じレイアウトを持っているためです。</p>
 <p>実際に変換を始める前に、この再帰エントリを1回以上たどることで、CPUのたどる階層の数を短くできます。例えば、一度再帰エントリを辿ったあとでレベル3テーブルに進むと、CPUはレベル3テーブルをレベル2テーブルだと思い込みます。同様に、レベル2テーブルをレベル1テーブルだと、レベル1テーブルをマップされた（物理）フレームだと思います。CPUがこれを物理フレームだと思っているということは、レベル1ページテーブルを読み書きできるということを意味します。下の図はこの5回の変換ステップを示しています：</p>
-<p><img src="recursive-page-table-access-level-1.png" alt="The above example 4-level page hierarchy with 5 arrows: “Step 0” from CR4 to level 4 table, “Step 1” from level 4 table to level 4 table, “Step 2” from level 4 table to level 3 table, “Step 3” from level 3 table to level 2 table, and “Step 4” from level 2 table to level 1 table." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/recursive-page-table-access-level-1.png" alt="The above example 4-level page hierarchy with 5 arrows: “Step 0” from CR4 to level 4 table, “Step 1” from level 4 table to level 4 table, “Step 2” from level 4 table to level 3 table, “Step 3” from level 3 table to level 2 table, and “Step 4” from level 2 table to level 1 table." /></p>
 <p>同様に、変換の前に再帰エントリを2回たどることで、階層移動の回数を2回に減らせます：</p>
-<p><img src="recursive-page-table-access-level-2.png" alt="The same 4-level page hierarchy with the following 4 arrows: “Step 0” from CR4 to level 4 table, “Steps 1&amp;2” from level 4 table to level 4 table, “Step 3” from level 4 table to level 3 table, and “Step 4” from level 3 table to level 2 table." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/recursive-page-table-access-level-2.png" alt="The same 4-level page hierarchy with the following 4 arrows: “Step 0” from CR4 to level 4 table, “Steps 1&amp;2” from level 4 table to level 4 table, “Step 3” from level 4 table to level 3 table, and “Step 4” from level 3 table to level 2 table." /></p>
 <p>ステップごとにこれを見てみましょう：まず、CPUはレベル4テーブルの再帰エントリをたどり、レベル3テーブルに着いたと思い込みます。同じ再帰エントリを再びたどり、レベル2テーブルに着いたと考えます。しかし実際にはまだレベル4テーブルから動いていません。CPUが異なるエントリをたどると、レベル3テーブルに到着するのですが、CPUはレベル1にすでにいるのだと思っています。そのため、次のエントリはレベル2テーブルを指しているのですが、CPUはマップされた物理フレームを指していると思うので、私達はレベル2テーブルを読み書きできるというわけです。</p>
 <p>レベル3や4のテーブルにアクセスするのも同じやり方でできます。レベル3テーブルにアクセスするためには、再帰エントリを3回たどることでCPUを騙し、すでにレベル1テーブルにいると思い込ませます。そこで別のエントリをたどりレベル3テーブルに着くと、CPUはそれをマップされたフレームとして扱います。レベル4テーブル自体にアクセスするには、再帰エントリを4回辿ればCPUはそのレベル4テーブル自体をマップされたフレームとして扱ってくれるというわけです（下の青紫の矢印）。</p>
-<p><img src="recursive-page-table-access-level-3.png" alt="The same 4-level page hierarchy with the following 3 arrows: “Step 0” from CR4 to level 4 table, “Steps 1,2,3” from level 4 table to level 4 table, and “Step 4” from level 4 table to level 3 table. In blue the alternative “Steps 1,2,3,4” arrow from level 4 table to level 4 table." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/recursive-page-table-access-level-3.png" alt="The same 4-level page hierarchy with the following 3 arrows: “Step 0” from CR4 to level 4 table, “Steps 1,2,3” from level 4 table to level 4 table, and “Step 4” from level 4 table to level 3 table. In blue the alternative “Steps 1,2,3,4” arrow from level 4 table to level 4 table." /></p>
 <p>この概念を理解するのは難しいかもしれませんが、実際これは非常にうまく行くのです。</p>
 <p>下のセクションでは、再帰エントリをたどるための仮想アドレスを構成する方法について説明します。私達の（OSの）実装には再帰的ページングは使わないので、これを読まずに記事の続きを読み進めても構いません。もし興味がおありでしたら、下の「アドレス計算」をクリックして展開してください。</p>
 <hr />
 <details>
 <summary><h4>アドレス計算</h4></summary>
 <p>実際の変換の前に再帰的移動を1回または複数回行うことですべての階層のテーブルにアクセスできるということを見てきました。4つのテーブルそれぞれのどのインデックスが使われるかは仮想アドレスから直接計算されていましたから、再帰エントリを使うためには特別な仮想アドレスを作り出す必要があります。ページテーブルのインデックスは仮想アドレスから以下のように計算されていたことを思い出してください：</p>
-<p><img src="../paging-introduction/x86_64-table-indices-from-address.svg" alt="Bits 0–12 are the page offset, bits 12–21 the level 1 index, bits 21–30 the level 2 index, bits 30–39 the level 3 index, and bits 39–48 the level 4 index" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/../paging-introduction/x86_64-table-indices-from-address.svg" alt="Bits 0–12 are the page offset, bits 12–21 the level 1 index, bits 21–30 the level 2 index, bits 30–39 the level 3 index, and bits 39–48 the level 4 index" /></p>
 <p>あるページをマップしているレベル1テーブルにアクセスしたいとします。上で学んだように、このためには再帰エントリを1度辿ってからレベル4，3，2のインデックスへと続けていく必要があります。これをするために、それぞれのアドレスブロックを一つ右にずらし、レベル4のインデックスがあったところに再帰エントリのインデックスをセットします：</p>
-<p><img src="table-indices-from-address-recursive-level-1.svg" alt="Bits 0–12 are the offset into the level 1 table frame, bits 12–21 the level 2 index, bits 21–30 the level 3 index, bits 30–39 the level 4 index, and bits 39–48 the index of the recursive entry" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/table-indices-from-address-recursive-level-1.svg" alt="Bits 0–12 are the offset into the level 1 table frame, bits 12–21 the level 2 index, bits 21–30 the level 3 index, bits 30–39 the level 4 index, and bits 39–48 the index of the recursive entry" /></p>
 <p>そのページのレベル2テーブルにアクセスしたい場合、それぞれのブロックを2つ右にずらし、レベル4と3のインデックスがあったところに再帰エントリのインデックスをセットします：</p>
-<p><img src="table-indices-from-address-recursive-level-2.svg" alt="Bits 0–12 are the offset into the level 2 table frame, bits 12–21 the level 3 index, bits 21–30 the level 4 index, and bits 30–39 and bits 39–48 are the index of the recursive entry" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/table-indices-from-address-recursive-level-2.svg" alt="Bits 0–12 are the offset into the level 2 table frame, bits 12–21 the level 3 index, bits 21–30 the level 4 index, and bits 30–39 and bits 39–48 are the index of the recursive entry" /></p>
 <p>レベル3テーブルにアクセスする場合、それぞれのブロックを3つ右にずらし、レベル4，3，2のインデックスがあったところに再帰インデックスを使います：</p>
-<p><img src="table-indices-from-address-recursive-level-3.svg" alt="Bits 0–12 are the offset into the level 3 table frame, bits 12–21 the level 4 index, and bits 21–30, bits 30–39 and bits 39–48 are the index of the recursive entry" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/table-indices-from-address-recursive-level-3.svg" alt="Bits 0–12 are the offset into the level 3 table frame, bits 12–21 the level 4 index, and bits 21–30, bits 30–39 and bits 39–48 are the index of the recursive entry" /></p>
 <p>最後に、レベル4テーブルにはそれぞれのブロックを4ブロックずらし、オフセットを除いてすべてのアドレスブロックに再帰インデックスを使うことでアクセスできます：</p>
-<p><img src="table-indices-from-address-recursive-level-4.svg" alt="Bits 0–12 are the offset into the level l table frame and bits 12–21, bits 21–30, bits 30–39 and bits 39–48 are the index of the recursive entry" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/table-indices-from-address-recursive-level-4.svg" alt="Bits 0–12 are the offset into the level l table frame and bits 12–21, bits 21–30, bits 30–39 and bits 39–48 are the index of the recursive entry" /></p>
 <p>これで、4つの階層すべてのページテーブルの仮想アドレスを計算できます。また、インデックスをページテーブルエントリのサイズ倍、つまり8倍することによって、特定のページテーブルエントリを指すアドレスを計算できます。</p>
 <p>下の表は、それぞれの種類のフレームにアクセスするためのアドレス構造をまとめたものです：</p>
 <table><thead><tr><th>……の仮想アドレス</th><th>アドレス構造（<a href="https://en.wikipedia.org/wiki/Octal">8進</a>）</th></tr></thead><tbody>
@@ -468,7 +468,7 @@
 </span></code></pre>
 <p>まず、<code>BootInfo</code>構造体の<code>physical_memory_offset</code>を<a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a>に変換し、<code>active_level_4_table</code>関数に渡します。つぎに<code>iter</code>関数を使ってページテーブルのエントリをイテレートし、<a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a>コンビネータをつかってそれぞれの要素にインデックス<code>i</code>を追加します。全512エントリを出力すると画面に収まらないので、<ruby>空<rp> (</rp><rt>から</rt><rp>) </rp></ruby>でないエントリのみ出力します。</p>
 <p>実行すると、以下の出力を得ます：</p>
-<p><img src="qemu-print-level-4-table.png" alt="QEMU printing entry 0 (0x2000, PRESENT, WRITABLE, ACCESSED), entry 1 (0x894000, PRESENT, WRITABLE, ACCESSED, DIRTY), entry 31 (0x88e000, PRESENT, WRITABLE, ACCESSED, DIRTY), entry 175 (0x891000, PRESENT, WRITABLE, ACCESSED, DIRTY), and entry 504 (0x897000, PRESENT, WRITABLE, ACCESSED, DIRTY)" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/qemu-print-level-4-table.png" alt="QEMU printing entry 0 (0x2000, PRESENT, WRITABLE, ACCESSED), entry 1 (0x894000, PRESENT, WRITABLE, ACCESSED, DIRTY), entry 31 (0x88e000, PRESENT, WRITABLE, ACCESSED, DIRTY), entry 175 (0x891000, PRESENT, WRITABLE, ACCESSED, DIRTY), and entry 504 (0x897000, PRESENT, WRITABLE, ACCESSED, DIRTY)" /></p>
 <p>いくつかの空でないエントリがあり、いずれも異なるレベル3テーブルにマップさせられていることがわかります。このようにたくさんの領域があるのは、カーネルコード、カーネルスタック、物理メモリマッピング、ブート情報が互いに離れたメモリ領域を使っているためです。</p>
 <p>ページテーブルを更に辿りレベル3テーブルを見るには、エントリに対応するフレームを取り出し再び仮想アドレスに変換すればよいです：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rsのforループ内にて……
@@ -592,7 +592,7 @@
 </span><span>}
 </span></code></pre>
 <p>実行すると、以下の出力を得ます：</p>
-<p><img src="qemu-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x201008 -&gt; 0x401008, 0x10000201a10 -&gt; 0x279a10, “panicked at ‘huge pages not supported’" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/qemu-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x201008 -&gt; 0x401008, 0x10000201a10 -&gt; 0x279a10, “panicked at ‘huge pages not supported’" /></p>
 <p>期待したとおり、恒等マップしているアドレス<code>0xb8000</code>は同じ物理アドレスに変換されました。コードページとスタックページは物理アドレスのどこかしかに変換されていますが、その場所はブートローダがカーネルの初期マッピングをどのようにつくったかによります。また、下から12ビットは変換のあとも常に同じであるということも注目に値します：この部分は<a href="https://os.phil-opp.com/ja/paging-introduction/#x86-64niokerupezingu">ページオフセット</a>であり、変換には関わらないためです。</p>
 <p>それぞれの物理アドレスは<code>physical_memory_offset</code>を足すことでアクセスできるわけですから、<code>physical_memory_offset</code>自体を変換すると物理アドレス<code>0</code>を指すはずです。しかし、効率よくマッピングを行うためにここではhuge pageが使われており、これはまだサポートしていないので変換には失敗しています。</p>
 <h3 id="offsetpagetablewoshi-u"><a class="zola-anchor" href="#offsetpagetablewoshi-u" aria-label="Anchor link for: offsetpagetablewoshi-u">🔗</a><code>OffsetPageTable</code>を使う</h3>
@@ -654,7 +654,7 @@
 </span></code></pre>
 <p><a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html#method.translate_addr"><code>translate_addr</code></a>メソッドを使うために、それを提供している<code>Translate</code>トレイトをインポートする必要があります。</p>
 <p>これを実行すると、同じ変換結果が得られますが、今度はhuge pageの変換もうまく行っています：</p>
-<p><img src="qemu-mapper-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x201008 -&gt; 0x401008, 0x10000201a10 -&gt; 0x279a10, 0x18000000000 -&gt; 0x0" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/qemu-mapper-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x201008 -&gt; 0x401008, 0x10000201a10 -&gt; 0x279a10, 0x18000000000 -&gt; 0x0" /></p>
 <p>想定通り、<code>0xb8000</code>やコード・スタックアドレスの変換結果は自前の変換関数と同じになっています。また、<code>physical_memory_offset</code>は物理アドレス<code>0x0</code>にマップされているのもわかります。</p>
 <p><code>MappedPageTable</code>型の変換関数を使うことで、huge pageをサポートする手間が省けます。また<code>map_to</code>のような他のページング関数も利用でき、これは次のセクションで使います。</p>
 <p>この時点で、自作した<code>memory::translate_addr</code>関数や<code>memory::translate_addr_inner</code>関数はもう必要ではないので削除して構いません。</p>
@@ -710,7 +710,7 @@
 <p><code>FrameAllocator</code>を実装するのはunsafeです。なぜなら、実装する人は、実装したアロケータが未使用のフレームのみ取得することを保証しなければならないからです。さもなくば、例えば二つの仮想ページが同じ物理フレームにマップされたときに未定義動作が起こるかもしれません。この<code>EmptyFrameAllocator</code>は<code>None</code>しか返さないので、これは問題ではありません。</p>
 <h4 id="jia-xiang-peziwoxuan-bu"><a class="zola-anchor" href="#jia-xiang-peziwoxuan-bu" aria-label="Anchor link for: jia-xiang-peziwoxuan-bu">🔗</a>仮想ページを選ぶ</h4>
 <p><code>create_example_mapping</code>関数に渡すための単純なフレームアロケータを手に入れました。しかし、このアロケータは常に<code>None</code>を返すので、マッピングを作る際に追加のページテーブルフレームが必要でなかったときにのみうまく動作します。いつ追加のページテーブルフレームが必要でありいつそうでないのかを知るために、例をとって考えてみましょう：</p>
-<p><img src="required-page-frames-example.svg" alt="A virtual and a physical address space with a single mapped page and the page tables of all four levels" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/required-page-frames-example.svg" alt="A virtual and a physical address space with a single mapped page and the page tables of all four levels" /></p>
 <p>この図の左は仮想アドレス空間を、右は物理アドレス空間を、真ん中はページテーブルを示します。このページテーブルが格納されている物理フレームが破線で示されています。仮想アドレス空間は一つのマップされたページをアドレス<code>0x803fe00000</code>に持っており、これは青色で示されています。このページをフレームに変換するために、CPUは4層のページテーブルを辿り、アドレス36KiBのフレームに到達します。</p>
 <p>また、この図はVGAテキストバッファの物理フレームを赤色で示しています。私達の目的は、<code>create_example_mapping</code>関数を使ってまだマップされていない仮想ページをこのフレームにマップすることです。私達の<code>EmptyFrameAllocator</code>は常に<code>None</code>を返すので、アロケータからフレームを追加する必要がないようにマッピングを作りたいです。これができるかは、私達がマッピングにどの仮想ページを使うかに依存します。</p>
 <p>この図の仮想アドレス空間には、2つの候補となるページを黄色で示しています。ページのうち一つはアドレス<code>0x803fe00000</code>で、これは（青で示された）マップされているページの3つ前です。レベル4と3のテーブルのインデックスは青いページと同じですが、レベル2と1のインデックスは違います（<a href="https://os.phil-opp.com/ja/paging-introduction/#x86-64niokerupezingu">前の記事</a>を参照）。レベル2テーブルのインデックスが違うということは、異なるレベル1テーブルが使われることを意味します。そんなレベル1テーブルは存在しないので、もしこちらを使っていたら、使われていない物理フレームを追加（でアロケート）する必要が出てきます。対して、2つ目のアドレス<code>0x803fe02000</code>にある候補のページは、青のページと同じレベル1ページテーブルを使うのでこの問題は発生しません。よって、必要となるすべてのページテーブルはすでに存在しています。</p>
@@ -744,7 +744,7 @@
 <p>まず、<code>mapper</code>と<code>frame_allocator</code>インスタンスの可変参照を渡して<code>create_example_mapping</code>を呼ぶことで、アドレス<code>0</code>のページにマッピングを作っています。これはVGAテキストバッファのフレームにマップしているので、これに書き込んだものは何であれ画面に出てくるはずです。</p>
 <p>次にページを生ポインタに変更して、オフセット<code>400</code>に値を書き込みます。このページの最初に書き込むとVGAバッファの一番上の行になり、次のprintlnで即座に画面外に流れていってしまうので、それを避けています。値<code>0x_f021_f077_f065_f04e</code>は、白背景の“New!“という文字列を表します。<a href="https://os.phil-opp.com/ja/vga-text-mode/#volatile">VGAテキストモードの記事</a>で学んだように、VGAバッファへの書き込みはvolatileでなければならないので、<a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write_volatile"><code>write_volatile</code></a>メソッドを使っています。</p>
 <p>QEMUで実行すると、以下の出力を得ます：</p>
-<p><img src="qemu-new-mapping.png" alt="QEMU printing “It did not crash!” with four completely white cells in the middle of the screen" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-implementation/qemu-new-mapping.png" alt="QEMU printing “It did not crash!” with four completely white cells in the middle of the screen" /></p>
 <p>画面の “New!” はページ<code>0</code>への書き込みによるものなので、ページテーブルへの新しいマッピングの作成が成功したということを意味します。</p>
 <p>このマッピングが成功したのは、アドレス<code>0</code>を管轄するレベル1テーブルがすでに存在していたからに過ぎません。レベル1テーブルがまだ存在しないページをマッピングしようとすると、<code>map_to</code>関数は新しいページテーブルを作るために<code>EmptyFrameAllocator</code>からフレームを割り当てようとしてエラーになります。<code>0</code>の代わりに<code>0xdeadbeaf000</code>をマッピングしようとするとそれが発生するのが見られます。</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs

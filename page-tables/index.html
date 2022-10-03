@@ -115,13 +115,13 @@
 <span id="continue-reading"></span>
 <p>You can find the source code and this post itself on <a href="https://github.com/phil-opp/blog_os/tree/first_edition_post_6">GitHub</a>. Please file an issue there if you have any problems or improvement suggestions. There is also a comment section at the end of this page. Note that this post requires a current Rust nightly.</p>
 <h2 id="paging"><a class="zola-anchor" href="#paging" aria-label="Anchor link for: paging">🔗</a>Paging</h2>
-<p><em>Paging</em> is a memory management scheme that separates virtual and physical memory. The address space is split into equal sized <em>pages</em> and <em>page tables</em> specify which virtual page points to which physical frame. For an extensive paging introduction take a look at the paging chapter (<a href="http://pages.cs.wisc.edu/%7Eremzi/OSTEP/vm-paging.pdf">PDF</a>) of the <a href="http://pages.cs.wisc.edu/%7Eremzi/OSTEP/">Three Easy Pieces</a> OS book.</p>
+<p><em>Paging</em> is a memory management scheme that separates virtual and physical memory. The address space is split into equal sized <em>pages</em> and <em>page tables</em> specify which virtual page points to which physical frame. For an extensive paging introduction take a look at the paging chapter (<a href="http://pages.cs.wisc.edu/~remzi/OSTEP/vm-paging.pdf">PDF</a>) of the <a href="http://pages.cs.wisc.edu/~remzi/OSTEP/">Three Easy Pieces</a> OS book.</p>
 <p>The x86 architecture uses a 4-level page table in 64-bit mode. A virtual address has the following structure:</p>
-<p><img src="x86_address_structure.svg" alt="structure of a virtual address on x86" /></p>
+<p><img src="https://os.phil-opp.com/page-tables/x86_address_structure.svg" alt="structure of a virtual address on x86" /></p>
 <p>The bits 48–63 are so-called <em>sign extension</em> bits and must be copies of bit 47. The following 36 bits define the page table indexes (9 bits per table) and the last 12 bits specify the offset in the 4KiB page.</p>
 <p>Each table has 2^9 = 512 entries and each entry is 8 byte. Thus a page table fits exactly in one page (4 KiB).</p>
 <p>To translate an address, the CPU reads the P4 address from the CR3 register. Then it uses the indexes to walk the tables:</p>
-<p><img src="X86_Paging_64bit.svg" alt="translation of virtual to physical addresses in 64 bit mode" /></p>
+<p><img src="https://os.phil-opp.com/page-tables/X86_Paging_64bit.svg" alt="translation of virtual to physical addresses in 64 bit mode" /></p>
 <p>The P4 entry points to a P3 table, where the next 9 bits of the address are used to select an entry. The P3 entry then points to a P2 table and the P2 entry points to a P1 table. The P1 entry, which is specified through bits 12–20, finally points to the physical frame.</p>
 <h2 id="a-basic-paging-module"><a class="zola-anchor" href="#a-basic-paging-module" aria-label="Anchor link for: a-basic-paging-module">🔗</a>A Basic Paging Module</h2>
 <p>Let’s create a basic paging module in <code>memory/paging/mod.rs</code>:</p>
@@ -273,13 +273,13 @@
 <p>We will solve the problem in another way using a trick called <em>recursive mapping</em>.</p>
 <h3 id="recursive-mapping"><a class="zola-anchor" href="#recursive-mapping" aria-label="Anchor link for: recursive-mapping">🔗</a>Recursive Mapping</h3>
 <p>The trick is to map the P4 table recursively: The last entry doesn’t point to a P3 table, but to the P4 table itself. We can use this entry to remove a translation level so that we land on a page table instead. For example, we can “loop” once to access a P1 table:</p>
-<p><img src="recursive_mapping_access_p1.svg" alt="access P1 table through recursive paging" /></p>
+<p><img src="https://os.phil-opp.com/page-tables/recursive_mapping_access_p1.svg" alt="access P1 table through recursive paging" /></p>
 <p>By selecting the 511th P4 entry, which points points to the P4 table itself, the P4 table is used as the P3 table. Similarly, the P3 table is used as a P2 table and the P2 table is treated like a P1 table. Thus the P1 table becomes the target page and can be accessed through the offset.</p>
 <p>It’s also possible to access P2 tables by looping twice. And if we select the 511th entry three times, we can access and modify P3 tables:</p>
-<p><img src="recursive_mapping_access_p3.svg" alt="access P3 table through recursive paging" /></p>
+<p><img src="https://os.phil-opp.com/page-tables/recursive_mapping_access_p3.svg" alt="access P3 table through recursive paging" /></p>
 <p>So we just need to specify the desired P3 table in the address through the P1 index. By choosing the 511th entry multiple times, we stay on the P4 table until the address’s P1 index becomes the actual P4 index.</p>
 <p>To access the P4 table itself, we loop once more and thus never leave the frame:</p>
-<p><img src="recursive_mapping_access_p4.svg" alt="access P4 table through recursive paging" /></p>
+<p><img src="https://os.phil-opp.com/page-tables/recursive_mapping_access_p4.svg" alt="access P4 table through recursive paging" /></p>
 <p>So we can access and modify page tables of all levels by just setting one P4 entry once. Most work is done by the CPU, we just the recursive entry to remove one or more translation levels. It may seem a bit strange at first, but it’s a clean and simple solution once you wrapped your head around it.</p>
 <p>By using recursive mapping, each page table is accessible through an unique virtual address. The math checks out, too: If all page tables are used, there is 1 P4 table, 511 P3 tables (the last entry is used for the recursive mapping), <code>511*512</code> P2 tables, and <code>511*512*512</code> P1 tables. So there are <code>134217728</code> page tables altogether. Each page table occupies 4KiB, so we need <code>134217728 * 4KiB = 512GiB</code> to store them. That’s exactly the amount of memory that can be accessed through one P4 entry since <code>4KiB per page * 512 P1 entries * 512 P2 entries * 512 P3 entries = 512GiB</code>.</p>
 <p>Of course recursive mapping has some disadvantages, too. It occupies a P4 entry and thus 512GiB of the virtual address space. But since we’re in long mode and have a 48-bit address space, there are still 225.5TiB left. The bigger problem is that only the active table can be modified by default. To access another table, the recursive entry needs to be replaced temporary. We will tackle this problem in the next post when we switch to a new page table.</p>

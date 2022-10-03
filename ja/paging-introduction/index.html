@@ -205,22 +205,22 @@
 <p>仮想メモリの背景にある考え方は、下層にある物理的なストレージデバイスからメモリアドレスを抽象化することです。ストレージデバイスに直接アクセスするのではなく、先に何らかの変換ステップが踏まれます。セグメンテーションの場合、この変換ステップとはアクティブなセグメントのオフセットアドレスを追加することです。例えば、オフセット<code>0x1111000</code>のセグメントにあるプログラムが<code>0x1234000</code>というメモリアドレスにアクセスすると、実際にアクセスされるアドレスは<code>0x2345000</code>になります。</p>
 <p>この2種類のアドレスを区別するため、変換前のアドレスを <strong>仮想（アドレス）</strong> と、変換後のアドレスを <strong>物理（アドレス）</strong> と呼びます。この2種類のアドレスの重要な違いの一つは、物理アドレスは常に同じ一意なメモリ位置を指すということです。いっぽう仮想アドレス（の指す場所）は変換する関数に依存します。二つの異なる仮想アドレスが同じ物理アドレスを指すということは十分にありえます。また、変換関数が異なっていれば、同じ仮想アドレスが別の物理アドレスを示すということもありえます。</p>
 <p>この特性が役立つ例として、同じプログラムを2つ並行して実行するという状況が挙げられます。</p>
-<p><img src="segmentation-same-program-twice.svg" alt="Two virtual address spaces with address 0–150, one translated to 100–250, the other to 300–450" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/segmentation-same-program-twice.svg" alt="Two virtual address spaces with address 0–150, one translated to 100–250, the other to 300–450" /></p>
 <p>同じプログラムを2つ実行していますが、別の変換関数が使われています。1つ目の<ruby>実体<rp> (</rp><rt>インスタンス</rt><rp>) </rp></ruby>ではセグメントのオフセットが100なので、0から150の仮想アドレスは100から250に変換されます。2つ目のインスタンスではオフセットが300なので、0から150の仮想アドレスが300から450に変換されます。これにより、プログラムが互いに干渉することなく同じコード、同じ仮想アドレスを使うことができます。</p>
 <p>もう一つの利点は、プログラムが全く異なる仮想アドレスを使っていたとしても、物理メモリ上の任意の場所に置けるということです。したがって、OSはプログラムを再コンパイルすることなく利用可能なメモリをフルに活用できます。</p>
 <h3 id="duan-pian-hua-fragmentation"><a class="zola-anchor" href="#duan-pian-hua-fragmentation" aria-label="Anchor link for: duan-pian-hua-fragmentation">🔗</a><ruby>断片化<rp> (</rp><rt>fragmentation</rt><rp>) </rp></ruby></h3>
 <p>物理アドレスと仮想アドレスを分けることにより、セグメンテーションは非常に強力なものとなっています。しかし、これにより断片化という問題が発生します。例として、上で見たプログラムの3つ目を実行したいとしましょう：</p>
-<p><img src="segmentation-fragmentation.svg" alt="Three virtual address spaces, but there is not enough continuous space for the third" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/segmentation-fragmentation.svg" alt="Three virtual address spaces, but there is not enough continuous space for the third" /></p>
 <p>開放されているメモリは十分にあるにも関わらず、プログラムのインスタンスを重ねることなく物理メモリに対応づけることはできません。ここで必要なのは <strong>連続した</strong> メモリであり、開放されているメモリが小さな塊であっては使えないためです。</p>
 <p>この断片化に対処する方法の一つは、実行を一時停止し、メモリの使用されている部分を寄せ集めて、変換関数を更新し、実行を再開することでしょう：</p>
-<p><img src="segmentation-fragmentation-compacted.svg" alt="Three virtual address spaces after defragmentation" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/segmentation-fragmentation-compacted.svg" alt="Three virtual address spaces after defragmentation" /></p>
 <p>これで、プログラムの3つ目のインスタンスを開始するのに十分な連続したスペースができました。</p>
 <p>このデフラグメンテーションという処理の欠点は、大量のメモリをコピーしなければならず、パフォーマンスを低下させてしまうことです。また、メモリが断片化しすぎる前に定期的に実行しないといけません。そうすると、プログラムが時々一時停止して反応がなくなるので、性能が予測不可能になってしまいます。</p>
 <p>ほとんどのシステムでセグメンテーションが用いられなくなった理由の一つに、この断片化の問題があります。実際、x86の64ビットモードでは、セグメンテーションはもはやサポートされていません。代わりに <strong>ページング</strong> が使用されており、これにより断片化の問題は完全に回避されます。</p>
 <h2 id="pezingu"><a class="zola-anchor" href="#pezingu" aria-label="Anchor link for: pezingu">🔗</a>ページング</h2>
 <p>ページングの考え方は、仮想メモリ空間と物理メモリ空間の両方を、サイズの固定された小さなブロックに分割するというものです。仮想メモリ空間のブロックは <strong>ページ</strong> と呼ばれ、物理アドレス空間のブロックは <strong>フレーム</strong> と呼ばれます。各ページはフレームに独立してマッピングできるので、大きなメモリ領域を連続していない物理フレームに分割することが可能です。</p>
 <p>この方法の利点は、上のメモリ空間断片化の状況をもう一度、セグメンテーションの代わりにページングを使って見てみれば明らかになります：</p>
-<p><img src="paging-fragmentation.svg" alt="With paging the third program instance can be split across many smaller physical areas" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/paging-fragmentation.svg" alt="With paging the third program instance can be split across many smaller physical areas" /></p>
 <p>この例では、ページサイズは50バイトなので、それぞれのメモリ領域が3つのページに分割されます。それぞれのページは個別にフレームに対応付けられるので、連続した仮想メモリ領域を非連続な物理フレームへと対応付けられるのです。これにより、デフラグを事前に実行することなく、3つ目のプログラムのインスタンスを開始できるようになります。</p>
 <h3 id="yin-saretaduan-pian-hua"><a class="zola-anchor" href="#yin-saretaduan-pian-hua" aria-label="Anchor link for: yin-saretaduan-pian-hua">🔗</a>隠された断片化</h3>
 <p>少ない数の可変なサイズのメモリ領域を使っていたセグメンテーションと比べると、ページングでは大量の小さい固定サイズのメモリ領域を使います。すべてのフレームが同じ大きさなので、「小さすぎて使えないフレーム」などというものは存在せず、したがって断片化も起きません。</p>
@@ -229,17 +229,17 @@
 <h3 id="peziteburu"><a class="zola-anchor" href="#peziteburu" aria-label="Anchor link for: peziteburu">🔗</a>ページテーブル</h3>
 <p>最大で何百万ものページがそれぞれ独立にフレームに対応付けられることを見てきました。この対応付けの情報はどこかに保存されなければなりません。セグメンテーションでは、有効なメモリ領域ごとに個別のセグメントセレクタを使っていましたが、ページングではレジスタよりも遥かに多くのページが使われるので、これは不可能です。代わりにページングでは <strong>ページテーブル</strong> と呼ばれる<ruby>表<rp> (</rp><rt>テーブル</rt><rp>) </rp></ruby>構造を使って対応付の情報を保存します。</p>
 <p>上の例では、ページテーブルは以下のようになります：</p>
-<p><img src="paging-page-tables.svg" alt="Three page tables, one for each program instance. For instance 1 the mapping is 0-&gt;100, 50-&gt;150, 100-&gt;200. For instance 2 it is 0-&gt;300, 50-&gt;350, 100-&gt;400. For instance 3 it is 0-&gt;250, 50-&gt;450, 100-&gt;500." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/paging-page-tables.svg" alt="Three page tables, one for each program instance. For instance 1 the mapping is 0-&gt;100, 50-&gt;150, 100-&gt;200. For instance 2 it is 0-&gt;300, 50-&gt;350, 100-&gt;400. For instance 3 it is 0-&gt;250, 50-&gt;450, 100-&gt;500." /></p>
 <p>それぞれのプログラムのインスタンスが独自のページテーブルを持っているのが分かります。現在有効なテーブルへのポインタは、特殊なCPUのレジスタに格納されます。<code>x86</code>においては、このレジスタは<code>CR3</code>と呼ばれています。それぞれのプログラムのインスタンスを実行する前に、正しいページテーブルを指すポインタをこのレジスタにロードするのはOSの役割です。</p>
 <p>それぞれのメモリアクセスにおいて、CPUはテーブルへのポインタをレジスタから読み出し、テーブル内のアクセスされたページから対応するフレームを見つけ出します。これは完全にハードウェア内で行われ、実行しているプログラムからはこの動作は見えません。変換プロセスを高速化するために、多くのCPUアーキテクチャは前回の変換の結果を覚えておく専用のキャッシュを持っています。</p>
 <p>アーキテクチャによっては、ページテーブルのエントリは“Flags“フィールドにあるアクセス権限のような属性も保持できます。上の例では、“r/w“フラグがあることにより、このページは読み書きのどちらも可能だということを示しています。</p>
 <h3 id="fu-shu-ceng-multilevel-peziteburu"><a class="zola-anchor" href="#fu-shu-ceng-multilevel-peziteburu" aria-label="Anchor link for: fu-shu-ceng-multilevel-peziteburu">🔗</a><ruby>複数層<rp> (</rp><rt>Multilevel</rt><rp>) </rp></ruby>ページテーブル</h3>
 <p>上で見たシンプルなページテーブルは、アドレス空間が大きくなってくると問題が発生します：メモリが無駄になるのです。たとえば、<code>0</code>, <code>1_000_000</code>, <code>1_000_050</code> および <code>1_000_100</code>（3ケタごとの区切りとして<code>_</code>を用いています）の4つの仮想ページを使うプログラムを考えてみましょう。</p>
-<p><img src="single-level-page-table.svg" alt="Page 0 mapped to frame 0 and pages 1_000_000–1_000_150 mapped to frames 100–250" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/single-level-page-table.svg" alt="Page 0 mapped to frame 0 and pages 1_000_000–1_000_150 mapped to frames 100–250" /></p>
 <p>このプログラムはたった4つしか物理フレームを必要としていないのに、テーブルには100万以上ものエントリが存在してしまっています。空のエントリを省略した場合、変換プロセスにおいてCPUが正しいエントリに直接ジャンプできなくなってしまうので、それはできません（たとえば、4つめのページが4つめのエントリを使っていることが保証されなくなってしまいます）。</p>
 <p>この無駄になるメモリを減らせる、 <strong>2層ページテーブル</strong> を使ってみましょう。発想としては、それぞれのアドレス領域に異なるページテーブルを使うというものです。<strong>レベル2</strong> ページテーブルと呼ばれる追加のページテーブルは、アドレス領域と（レベル1の）ページテーブルのあいだの対応を格納します。</p>
 <p>これを理解するには、例を見るのが一番です。それぞれのレベル1テーブルは大きさ<code>10_000</code>の領域に対応するとします。すると、以下のテーブルが上のマッピングの例に対応するものとなります：</p>
-<p><img src="multilevel-page-table.svg" alt="Page 0 points to entry 0 of the level 2 page table, which points to the level 1 page table T1. The first entry of T1 points to frame 0, the other entries are empty. Pages 1_000_000–1_000_150 point to the 100th entry of the level 2 page table, which points to a different level 1 page table T2. The first three entries of T2 point to frames 100–250, the other entries are empty." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/multilevel-page-table.svg" alt="Page 0 points to entry 0 of the level 2 page table, which points to the level 1 page table T1. The first entry of T1 points to frame 0, the other entries are empty. Pages 1_000_000–1_000_150 point to the 100th entry of the level 2 page table, which points to a different level 1 page table T2. The first three entries of T2 point to frames 100–250, the other entries are empty." /></p>
 <p>ページ0は最初の<code>10_000</code>バイト領域に入るので、レベル2ページテーブルの最初のエントリを使います。このエントリはT1というレベル1ページテーブルを指し、このページテーブルはページ<code>0</code>がフレーム<code>0</code>に対応すると指定します。</p>
 <p>ページ<code>1_000_000</code>, <code>1_000_050</code>および<code>1_000_100</code>はすべて、<code>10_000</code>バイトの大きさの領域100個目に入るので、レベル2ページテーブルの100個目のエントリを使います。このエントリは、T2という別のレベル1テーブルを指しており、このレベル1テーブルはこれらの3つのページをフレーム<code>100</code>, <code>150</code>および<code>200</code>に対応させています。レベル1テーブルにおけるページアドレスには領域のオフセットは含まれていない、つまり例えば、ページ<code>1_000_050</code>のエントリは単に<code>50</code>である、ということに注意してください。</p>
 <p>レベル2テーブルにはまだ100個の空のエントリがありますが、前の100万にくらべればこれはずっと少ないです。このように節約できる理由は、<code>10_000</code>から<code>10_000_000</code>の、対応付けのないメモリ領域のためのレベル1テーブルを作る必要がないためです。</p>
@@ -248,16 +248,16 @@
 <h2 id="x86-64niokerupezingu"><a class="zola-anchor" href="#x86-64niokerupezingu" aria-label="Anchor link for: x86-64niokerupezingu">🔗</a>x86_64におけるページング</h2>
 <p>x86_64アーキテクチャは4層ページテーブルを使っており、ページサイズは4KiBです。それぞれのページテーブルは、層によらず512のエントリを持っています。それぞれのエントリの大きさは8バイトなので、それぞれのテーブルは512 * 8B = 4KiBであり、よってぴったり1ページに収まります。</p>
 <p>（各）レベルのページテーブルインデックスは、仮想アドレスから直接求められます：</p>
-<p><img src="x86_64-table-indices-from-address.svg" alt="Bits 0–12 are the page offset, bits 12–21 the level 1 index, bits 21–30 the level 2 index, bits 30–39 the level 3 index, and bits 39–48 the level 4 index" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/x86_64-table-indices-from-address.svg" alt="Bits 0–12 are the page offset, bits 12–21 the level 1 index, bits 21–30 the level 2 index, bits 30–39 the level 3 index, and bits 39–48 the level 4 index" /></p>
 <p>それぞれのテーブルインデックスは9ビットからなることがわかります。それぞれのテーブルに2^9 = 512エントリあることを考えるとこれは妥当です。最下位の12ビットは4KiBページ内でのオフセット（2^12バイト = 4KiB）です。48ビットから64ビットは捨てられます。つまり、x86_64は48ビットのアドレスにしか対応しておらず、そのため（64ビットアーキテクチャなどとよく呼ばれるが）実際には64ビットではないということです。</p>
 <p>48ビットから64ビットが捨てられるからといって、任意の値にしてよいということではありません。アドレスを一意にし、5層ページテーブルのような将来の拡張に備えるため、この範囲のすべてのビットは47ビットの値と同じにしないといけません。これは、<a href="https://en.wikipedia.org/wiki/Two&#x27;s_complement#Sign_extension">2の補数における符号拡張</a>によく似ているので、 <strong><ruby>符号<rp> (</rp><rt>sign</rt><rp>) </rp></ruby><ruby>拡張<rp> (</rp><rt>extension</rt><rp>) </rp></ruby></strong> とよばれています。アドレスが適切に符号拡張されていない場合、CPUは例外を投げます。</p>
 <p>近年発売されたIntelのIce LakeというCPUは、<a href="https://en.wikipedia.org/wiki/Intel_5-level_paging">5層ページテーブル</a>を使用することもでき、そうすると仮想アドレスが48ビットから57ビットまで延長されるということは書いておく価値があるでしょう。いまの段階で私たちのカーネルをこの特定のCPUに最適化する意味はないので、この記事では標準の4層ページテーブルのみを使うことにします。</p>
 <h3 id="bian-huan-noli"><a class="zola-anchor" href="#bian-huan-noli" aria-label="Anchor link for: bian-huan-noli">🔗</a>変換の例</h3>
 <p>この変換の仕組みをより詳細に理解するために、例を挙げて見てみましょう。</p>
-<p><img src="x86_64-page-table-translation.svg" alt="An example 4-level page hierarchy with each page table shown in physical memory" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/x86_64-page-table-translation.svg" alt="An example 4-level page hierarchy with each page table shown in physical memory" /></p>
 <p>現在有効なレベル4ページテーブルの物理アドレス、つまりレベル4ページテーブルの「<ruby>根<rp> (</rp><rt>root</rt><rp>) </rp></ruby>」は<code>CR3</code>レジスタに格納されています。それぞれのページテーブルエントリは、次のレベルのテーブルの物理フレームを指しています。そして、レベル1のテーブルは対応するフレームを指しています。なお、ページテーブル内のアドレスは全て仮想ではなく物理アドレスであることに注意してください。さもなければ、CPUは（変換プロセス中に）それらのアドレスも変換しなくてはならず、無限再帰に陥ってしまうかもしれないからです。</p>
 <p>上のページテーブル階層構造は、最終的に（青色の）2つのページへの対応を行っています。ページテーブルのインデックスから、これらの2つのページの仮想アドレスは<code>0x803FE7F000</code>と<code>0x803FE00000</code>であると推論できます。プログラムがアドレス<code>0x803FE7F5CE</code>から読み込もうとしたときに何が起こるかを見てみましょう。まず、アドレスを2進数に変換し、アドレスのページテーブルインデックスとページオフセットが何であるかを決定します：</p>
-<p><img src="x86_64-page-table-translation-addresses.png" alt="The sign extension bits are all 0, the level 4 index is 1, the level 3 index is 0, the level 2 index is 511, the level 1 index is 127, and the page offset is 0x5ce" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/x86_64-page-table-translation-addresses.png" alt="The sign extension bits are all 0, the level 4 index is 1, the level 3 index is 0, the level 2 index is 511, the level 1 index is 127, and the page offset is 0x5ce" /></p>
 <p>これらのインデックス情報をもとにページテーブル階層構造を移動して、このアドレスに対応するフレームを決定します：</p>
 <ul>
 <li>まず、<code>CR3</code>レジスタからレベル4テーブルのアドレスを読み出します。</li>
@@ -267,7 +267,7 @@
 <li>レベル1テーブルの127番目のエントリを読むことで、ついに対象のページは12KiB（16進数では0x3000）のフレームに対応づけられていると分かります。</li>
 <li>最後のステップは、ページオフセットをフレームアドレスに足して、物理アドレスを得ることです。0x3000 + 0x5ce = 0x35ce</li>
 </ul>
-<p><img src="x86_64-page-table-translation-steps.svg" alt="The same example 4-level page hierarchy with 5 additional arrows: “Step 0” from the CR3 register to the level 4 table, “Step 1” from the level 4 entry to the level 3 table, “Step 2” from the level 3 entry to the level 2 table, “Step 3” from the level 2 entry to the level 1 table, and “Step 4” from the level 1 table to the mapped frames." /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/x86_64-page-table-translation-steps.svg" alt="The same example 4-level page hierarchy with 5 additional arrows: “Step 0” from the CR3 register to the level 4 table, “Step 1” from the level 4 entry to the level 3 table, “Step 2” from the level 3 entry to the level 2 table, “Step 3” from the level 2 entry to the level 1 table, and “Step 4” from the level 1 table to the mapped frames." /></p>
 <p>レベル1テーブルにあるこのページの権限は<code>r</code>であり、これは読み込み専用という意味です。これらのような権限に対する侵害はハードウェアによって保護されており、このページに書き込もうとした場合は例外が投げられます。より高いレベルのページにおける権限は、下のレベルにおいて可能な権限を制限します。たとえばレベル3エントリを読み込み専用にした場合、下のレベルで読み書きを許可したとしても、このエントリを使うページはすべて書き込み不可になります。</p>
 <p>この例ではそれぞれのテーブルの<ruby>実体<rp> (</rp><rt>インスタンス</rt><rp>) </rp></ruby>を1つずつしか使いませんでしたが、普通、それぞれのアドレス空間において、各レベルに対して複数のインスタンスが使われるということは知っておく価値があるでしょう。最大で</p>
 <ul>
@@ -379,7 +379,7 @@
 </span><span>}
 </span></code></pre>
 <p>これを実行すると、ページフォルトハンドラが呼びだされたのを見ることができます：</p>
-<p><img src="qemu-page-fault.png" alt="EXCEPTION: Page Fault, Accessed Address: VirtAddr(0xdeadbeaf), Error Code: CAUSED_BY_WRITE, InterruptStackFrame: {…}" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/qemu-page-fault.png" alt="EXCEPTION: Page Fault, Accessed Address: VirtAddr(0xdeadbeaf), Error Code: CAUSED_BY_WRITE, InterruptStackFrame: {…}" /></p>
 <p><code>CR2</code>レジスタは確かに私達がアクセスしようとしていたアドレスである<code>0xdeadbeaf</code>を格納しています。エラーコードが<a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a>なので、この<ruby>障害<rp> (</rp><rt>フォルト</rt><rp>) </rp></ruby>は<ruby>write<rp> (</rp><rt>書き込み</rt><rp>) </rp></ruby>操作の実行中に発生したのだと分かります。更に、<a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html">1にセットされていないビット</a>からも情報を得ることができます。例えば、<code>PROTECTION_VIOLATION</code>フラグが1にセットされていないことから、ページフォルトは対象のページが存在しなかったために発生したのだと分かります。</p>
 <p>ページフォルトを起こした時点での命令ポインタは<code>0x2031b2</code>であるので、このアドレスはコードページを指しているとわかります。コードページはブートローダによって読み込み専用に指定されているので、このアドレスからの読み込みは大丈夫ですが、このページへの書き込みはページフォルトを起こします。<code>0xdeadbeaf</code>へのポインタを<code>0x2031b2</code>に変更して、これを試してみましょう。</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// 注意：実際のアドレスは個々人で違うかもしれません。
@@ -395,7 +395,7 @@
 </span><span>println!(</span><span style="color:#d69d85;">&quot;write worked&quot;</span><span>);
 </span></code></pre>
 <p>最後の2行をコメントアウトすると、読み込みアクセスだけになるので実行は成功しますが、そうしなかった場合ページフォルトが発生します：</p>
-<p><img src="qemu-page-fault-protection.png" alt="QEMU with output: “read worked, EXCEPTION: Page Fault, Accessed Address: VirtAddr(0x2031b2), Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE, InterruptStackFrame: {…}”" /></p>
+<p><img src="https://os.phil-opp.com/ja/paging-introduction/qemu-page-fault-protection.png" alt="QEMU with output: “read worked, EXCEPTION: Page Fault, Accessed Address: VirtAddr(0x2031b2), Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE, InterruptStackFrame: {…}”" /></p>
 <p>“read worked“というメッセージが表示されますが、これは読み込み操作が何のエラーも発生させなかったことを示しています。しかし、“write worked“のメッセージではなく、ページフォルトが発生してしまいました。今回は<a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a>フラグに加えて<a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.PROTECTION_VIOLATION"><code>PROTECTION_VIOLATION</code></a>フラグがセットされています。これは、ページは存在していたものの、それに対する今回の操作が許可されていなかったということを示します。今回の場合、ページへの書き込みは、コードページが読み込み専用に指定されているため許可されていませんでした。</p>
 <h3 id="peziteburuhenoakusesu"><a class="zola-anchor" href="#peziteburuhenoakusesu" aria-label="Anchor link for: peziteburuhenoakusesu">🔗</a>ページテーブルへのアクセス</h3>
 <p>私達のカーネルがどのように（物理メモリに）対応づけられているのかを定義しているページテーブルを見てみましょう。</p>

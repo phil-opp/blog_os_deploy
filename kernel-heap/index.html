@@ -531,17 +531,17 @@
 <p>One possible solution could be to use an array-like data structure that starts at some unused virtual address. If the array becomes full, we increase its size and map new physical frames as backing storage. This approach would require a large part of the virtual address space since the array could grow significantly. We would need to create a custom implementation of a growable array and manipulate the page tables when deallocating. It would also consume a possibly large number of physical frames as backing storage.</p>
 <p>We will choose another solution with different tradoffs. It’s not clearly “better” than the approach above and has significant disadvantages itself. However, it has one big advantage: It does not need any additional physical or virtual memory at all. This makes it less complex since we don’t need to manipulate any page tables. The idea is the following:</p>
 <p>A freed memory block is not used anymore and no one needs the stored information. It is still mapped to a virtual address and backed by a physical page. So we just store the information about the freed block <em>in the block itself</em>.  We keep a pointer to the first block and store a pointer to the next block in each block. Thus, we create a single linked list:</p>
-<p><img src="overview.svg" alt="Linked List Allocator" /></p>
+<p><img src="https://os.phil-opp.com/kernel-heap/overview.svg" alt="Linked List Allocator" /></p>
 <p>In the following, we call a freed block a <em>hole</em>. Each hole stores its size and a pointer to the next hole. If a hole is larger than needed, we leave the remaining memory unused. By storing a pointer to the first hole, we are able to traverse the complete list.</p>
 <h4 id="initialization"><a class="zola-anchor" href="#initialization" aria-label="Anchor link for: initialization">🔗</a>Initialization</h4>
 <p>When the heap is created, all of its memory is unused. Thus, it forms a single large hole:</p>
-<p><img src="initialization.svg" alt="Heap Initialization" /></p>
+<p><img src="https://os.phil-opp.com/kernel-heap/initialization.svg" alt="Heap Initialization" /></p>
 <p>The optional pointer to the next hole is set to <code>None</code>.</p>
 <h4 id="allocation"><a class="zola-anchor" href="#allocation" aria-label="Anchor link for: allocation">🔗</a>Allocation</h4>
 <p>In order to allocate a block of memory, we need to find a hole that satisfies the size and alignment requirements. If the found hole is larger than required, we split it into two smaller holes. For example, when we allocate a 24 byte block right after initialization, we split the single hole into a hole of size 24 and a hole with the remaining size:</p>
-<p><img src="split-hole.svg" alt="split hole" /></p>
+<p><img src="https://os.phil-opp.com/kernel-heap/split-hole.svg" alt="split hole" /></p>
 <p>Then we use the new 24 byte hole to perform the allocation:</p>
-<p><img src="allocate.svg" alt="24 bytes allocated" /></p>
+<p><img src="https://os.phil-opp.com/kernel-heap/allocate.svg" alt="24 bytes allocated" /></p>
 <p>To find a suitable hole, we can use several search strategies:</p>
 <ul>
 <li><strong>best fit</strong>: Search the whole list and choose the <em>smallest</em> hole that satisfies the requirements.</li>
@@ -553,9 +553,9 @@
 <p>However, both best fit and worst fit have a significant problem: They need to scan the whole list for each allocation in order to find the optimal block. This leads to long allocation times if the list is long. The first fit strategy does not have this problem, as it returns as soon as it finds a suitable hole. It is fairly fast for small allocations and might only need to scan the whole list for large allocations.</p>
 <h4 id="deallocation"><a class="zola-anchor" href="#deallocation" aria-label="Anchor link for: deallocation">🔗</a>Deallocation</h4>
 <p>To deallocate a block of memory, we can just insert its corresponding hole somewhere into the list. However, we need to merge adjacent holes. Otherwise, we are unable to reuse the freed memory for larger allocations. For example:</p>
-<p><img src="deallocate.svg" alt="deallocate memory, which leads to adjacent holes" /></p>
+<p><img src="https://os.phil-opp.com/kernel-heap/deallocate.svg" alt="deallocate memory, which leads to adjacent holes" /></p>
 <p>In order to use these adjacent holes for a large allocation, we need to merge them to a single large hole first:</p>
-<p><img src="merge-holes-and-allocate.svg" alt="merge adjacent holes and allocate large block" /></p>
+<p><img src="https://os.phil-opp.com/kernel-heap/merge-holes-and-allocate.svg" alt="merge adjacent holes and allocate large block" /></p>
 <p>The easiest way to ensure that adjacent holes are always merged, is to keep the hole list sorted by address. Thus, we only need to check the predecessor and the successor in the list when we free a memory block. If they are adjacent to the freed block, we merge the corresponding holes. Else, we insert the freed block as a new hole at the correct position.</p>
 <h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h3>
 <p>The detailed implementation would go beyond the scope of this post, since it contains several hidden difficulties. For example:</p>

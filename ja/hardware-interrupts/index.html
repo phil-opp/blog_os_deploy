@@ -275,7 +275,7 @@
 </span><span>}
 </span></code></pre>
 <p><code>x86_64</code> クレートの <code>interrupts::enable</code> 関数は、特別な <code>sti</code> (“set interrupts”) 命令を実行し外部割り込みを有効にします。ここで <code>cargo run</code> を実行するとダブルフォルトが発生します:</p>
-<p><img src="qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT because of hardware timer" /></p>
+<p><img src="https://os.phil-opp.com/ja/hardware-interrupts/qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT because of hardware timer" /></p>
 <p>ダブルフォルトが発生する理由は、ハードウェアタイマ (正確には <a href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a>) がデフォルトで有効になっているため、割り込みを有効にするとすぐにタイマ割り込みを受け取り始めるためです。この割り込みのためのハンドラ関数を定義していないため、ダブルフォルトのハンドラが呼ばれることになります。</p>
 <h2 id="taimage-riip-minochu-li"><a class="zola-anchor" href="#taimage-riip-minochu-li" aria-label="Anchor link for: taimage-riip-minochu-li">🔗</a>タイマ割り込みの処理</h2>
 <p><a href="https://os.phil-opp.com/ja/hardware-interrupts/#8259-pic">上述</a>した図にある通り、タイマはプライマリの PIC の0番目の線を使います。これはタイマ割り込みは32番 (0 + オフセットの32) の割り込みとして CPU に届くということです。32をハードコーディングする代わりに <code>InterruptIndex</code> enum に保存することにしましょう:</p>
@@ -323,7 +323,7 @@
 </span></code></pre>
 <p>CPU は例外に対しても外部割り込みに対しても同じように反応するため、我々が定義した <code>timer_interrupt_handler</code> は例外ハンドラと同じシグニチャを持っています (唯一の違いは、一部の例外はエラーコードをプッシュすることです)。<a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> 構造体は <a href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> トレイトを実装しているので、配列の添字記法でそれぞれのエントリにアクセスすることができます。</p>
 <p>我々のタイマ割り込みハンドラでは画面にドットを表示します。タイマ割り込みは定期的に発生するので、タイマティックのたびに新たなドットが現れるだろうと思うでしょう。しかし実行してみると、ドットはひとつしか表示されません:</p>
-<p><img src="qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
+<p><img src="https://os.phil-opp.com/ja/hardware-interrupts/qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
 <h3 id="ge-riip-minozhong-liao"><a class="zola-anchor" href="#ge-riip-minozhong-liao" aria-label="Anchor link for: ge-riip-minozhong-liao">🔗</a>割り込みの終了</h3>
 <p>この理由は、PIC は明示的な “割り込みの終了” (end of interrupt: EOI) 信号を割り込みハンドラが通知してくると期待しているからです。この信号は、割り込みが既に処理されシステムが次の割り込みを受け取る準備ができたことをコントローラに伝えます。そのため PIC は、我々のシステムはまだ最初のタイマ割り込みを処理している最中だと考え、次の割り込みを送らずに辛抱強く EOI 信号を待ち続けているのです。</p>
 <p>EOI を送るためには、再び静的な <code>PICS</code> 構造体を使います:</p>
@@ -343,7 +343,7 @@
 <p><code>notify_end_of_interrupt</code> は、プライマリとセカンダリのどちらの PIC が割り込みを送ったかを判断し、コマンドポートとデータポートを使って EOI 信号をそれぞれのコントローラに送ります。セカンダリの PIC はプライマリの PIC の入力線に接続されているため、もしセカンダリの PIC が割り込みを送った場合は、両方の PIC に信号を送る必要があります。</p>
 <p>正しい割り込みベクタ番号を使うよう気をつけないと、まだ送信されていない重要な割り込みを間違って消してしまったり、システムがハングしてしまうかもしれません。この関数が unsafe になっているのはこのためです。</p>
 <p><code>cargo run</code> を実行すると、画面上にドットが定期的に表示されるでしょう:</p>
-<p><img src="qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
+<p><img src="https://os.phil-opp.com/ja/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
 <h3 id="taimanoshe-ding"><a class="zola-anchor" href="#taimanoshe-ding" aria-label="Anchor link for: taimanoshe-ding">🔗</a>タイマの設定</h3>
 <p>我々が使ったハードウェアタイマは <em>プログラム可能インターバルタイマ</em> 、もしくは短く PIT と呼ばれています。名前が示すように、PIT は2つの割り込みの間の間隔を設定することができます。すぐに <a href="https://wiki.osdev.org/APIC_timer">APIC タイマ</a>に切り替えるのでここで詳細に入ることはしませんが、OSDev wiki には <a href="https://wiki.osdev.org/Programmable_Interval_Timer">PIT の設定</a>に関する記事が豊富にあります。</p>
 <h2 id="detudorotuku"><a class="zola-anchor" href="#detudorotuku" aria-label="Anchor link for: detudorotuku">🔗</a>デッドロック</h2>
@@ -385,7 +385,7 @@
 </span><span>}
 </span></code></pre>
 <p>QEMU で実行すると以下のような出力が得られます:</p>
-<p><img src="./qemu-deadlock.png" alt="QEMU output with many rows of hyphens and no dots" /></p>
+<p><img src="https://os.phil-opp.com/ja/hardware-interrupts/./qemu-deadlock.png" alt="QEMU output with many rows of hyphens and no dots" /></p>
 <p>限られた数のハイフンが表示されたのち、最初のタイマ割り込みが発生したことがわかります。そしてタイマ割り込みハンドラがドットを表示しようとするとデッドロックするので、システムがハングしてしまいます。これが上記の出力でドットが表示されていない理由です。</p>
 <p>タイマ割り込みは非同期に発生するので、実際のハイフンの数は実行するたびに変わります。この非決定性が、並行性に関するバグのデバッグを非常に難しくします。</p>
 <h3 id="detudorotukuwoxiu-zheng-suru"><a class="zola-anchor" href="#detudorotukuwoxiu-zheng-suru" aria-label="Anchor link for: detudorotukuwoxiu-zheng-suru">🔗</a>デッドロックを修正する</h3>
@@ -592,7 +592,7 @@
 </span><span>}
 </span></code></pre>
 <p>キーボードのデータポートから1バイトのデータを読み取るため、<code>x86_64</code> クレートに含まれる <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> 型を使います。この1バイトは<a href="https://ja.wikipedia.org/wiki/%E3%82%B9%E3%82%AD%E3%83%A3%E3%83%B3%E3%82%B3%E3%83%BC%E3%83%89">スキャンコード</a>と呼ばれ、キーのプレス/リリースの状態を表します。今のところはスキャンコードを画面に表示する以外にはなにもしません:</p>
-<p><img src="qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
+<p><img src="https://os.phil-opp.com/ja/hardware-interrupts/qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
 <p>上の画像は、私がゆっくりと “123” とタイプしたときの様子です。隣り合うキーは隣り合うスキャンコードを持ち、キーを押したときと離したときのスキャンコードは異なることがわかります。ではスキャンコードを実際のキー操作に正確に変換するためにはどうしたらいいのでしょうか。</p>
 <h3 id="sukiyankodonojie-shi"><a class="zola-anchor" href="#sukiyankodonojie-shi" aria-label="Anchor link for: sukiyankodonojie-shi">🔗</a>スキャンコードの解釈</h3>
 <p><em>スキャンコードセット</em> と呼ばれるスキャンコードとキーのマッピングの標準は3つあります。3つのどれもが、 <a href="https://ja.wikipedia.org/wiki/IBM_PC_XT">IBM XT</a>、<a href="https://en.wikipedia.org/wiki/IBM_3270_PC">IBM 3270 PC</a>、<a href="https://ja.wikipedia.org/wiki/PC/AT">IBM AT</a> という、初期の IBM コンピュータのキーボードにさかのぼります。幸運なことに、その後のコンピュータは新たなスキャンコードセットを定義するという流れには乗らず、既存のセットをエミュレートして拡張しました。現在では、多くのキーボードは3つのセットのどれでもエミュレートするよう設定できるようになっています。</p>
@@ -634,7 +634,7 @@
 </span></code></pre>
 <p>上記のコードは、0から9の数字キーが押された場合に変換を行い、それ以外のキーは無視します。全てのスキャンコードに対し、<a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a> 文を使って対応する文字か <code>None</code> を割り当てます。そのあと <a href="https://doc.rust-lang.org/book/ch18-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a> 構文を使ってオプション型の <code>key</code> から値を取り出します。パターン部分に <code>key</code> という同じ変数名を使うことでそれ以前の宣言を<a href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">シャドーイング</a>します。これは Rust において <code>Option</code> 型から値を取り出すときによく使うパターンです。</p>
 <p>これで数字が表示できるようになりました:</p>
-<p><img src="qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
+<p><img src="https://os.phil-opp.com/ja/hardware-interrupts/qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
 <p>他の文字も同じように変換することができます。幸運なことに、スキャンコードセットの1と2のスキャンコードを変換するための <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/"><code>pc-keyboard</code></a> というクレートがありますので、これを自分で実装する必要はありません。このクレートを使うために <code>Cargo.toml</code> に以下を追加し、<code>lib.rs</code> でインポートしましょう:</p>
 <pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
 </span><span>
@@ -681,7 +681,7 @@
 <p>各割り込みでは、ミューテックスをロックし、キーボードコントローラからスキャンコードを読み取り、それを読み取ったスキャンコードを <code>Option&lt;KeyEvent&gt;</code> に変換する <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> メソッドに渡します。<a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> は、そのイベントを起こしたキーと、それが押されたのか離されたのかの情報を含んでいます。</p>
 <p>このキーイベントを解釈するために、変換可能であればキーイベントを文字に変換する <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> メソッドにキーイベントを渡します。例えば <code>A</code> キーの押下イベントを、シフトキーが押されていたかによって小文字の <code>a</code> か大文字の <code>A</code> に変換します。</p>
 <p>修正した割り込みハンドラで、テキストが入力できるようになります:</p>
-<p><img src="qemu-typing.gif" alt="Typing “Hello World” in QEMU" /></p>
+<p><img src="https://os.phil-opp.com/ja/hardware-interrupts/qemu-typing.gif" alt="Typing “Hello World” in QEMU" /></p>
 <h3 id="kibodonoshe-ding"><a class="zola-anchor" href="#kibodonoshe-ding" aria-label="Anchor link for: kibodonoshe-ding">🔗</a>キーボードの設定</h3>
 <p>例えば使用するスキャンコードセットを変えるなど、PS/2 キーボードの一部の設定を変えることができます。もうこの記事は長くなりすぎたのでそれについて説明することはしませんが、OSDev Wiki に<a href="https://wiki.osdev.org/PS/2_Keyboard#Commands">設定コマンド</a>の概要が記載されています。</p>
 <h2 id="matome"><a class="zola-anchor" href="#matome" aria-label="Anchor link for: matome">🔗</a>まとめ</h2>
