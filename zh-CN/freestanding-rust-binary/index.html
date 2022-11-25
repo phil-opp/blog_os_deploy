@@ -119,7 +119,11 @@
             这是对原文章 <strong><a href="https://os.phil-opp.com/freestanding-rust-binary/">A Freestanding Rust Binary</a></strong> 的社区中文翻译。它可能不完整，过时或者包含错误。可以在 <a href="https://github.com/phil-opp/blog_os/issues/961">这个 Issue</a> 上评论和提问！
             </p>
             <p>
-                翻译者： <a href="https://github.com/luojia65">@luojia65</a>, <a href="https://github.com/Rustin-Liu">@Rustin-Liu</a> 和 <a href="https://github.com/TheBegining">@TheBegining</a>.</p>
+                翻译者： <a href="https://github.com/luojia65">@luojia65</a>, <a href="https://github.com/Rustin-Liu">@Rustin-Liu</a>, <a href="https://github.com/TheBegining">@TheBegining</a> 和 <a href="https://github.com/liuyuran">@liuyuran</a>.
+                <span class="translation_contributors">
+                    With contributions from <a href="https://github.com/JiangengDong">@JiangengDong</a>.
+                </span>
+                </p>
             </div>
     
 
@@ -187,9 +191,9 @@
 <h2 id="jin-yong-biao-zhun-ku"><a class="zola-anchor" href="#jin-yong-biao-zhun-ku" aria-label="Anchor link for: jin-yong-biao-zhun-ku">🔗</a>禁用标准库</h2>
 <p>在默认情况下，所有的 Rust <strong>包</strong>（crate）都会链接<strong>标准库</strong>（<a href="https://doc.rust-lang.org/std/">standard library</a>），而标准库依赖于操作系统功能，如线程、文件系统、网络。标准库还与 <strong>Rust 的 C 语言标准库实现库</strong>（libc）相关联，它也是和操作系统紧密交互的。既然我们的计划是编写自己的操作系统，我们就需要不使用任何与操作系统相关的库——因此我们必须禁用<strong>标准库自动引用</strong>（automatic inclusion）。使用 <a href="https://doc.rust-lang.org/book/first-edition/using-rust-without-the-standard-library.html">no_std 属性</a>可以实现这一点。</p>
 <p>我们可以从创建一个新的 cargo 项目开始。最简单的办法是使用下面的命令：</p>
-<pre data-lang="bash" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-bash "><code class="language-bash" data-lang="bash"><span>&gt; cargo new blog_os
+<pre data-lang="bash" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-bash "><code class="language-bash" data-lang="bash"><span>cargo new blog_os --bin --edition 2018
 </span></code></pre>
-<p>在这里我把项目命名为 <code>blog_os</code>，当然读者也可以选择自己的项目名称。这里，cargo 默认为我们添加了<code>--bin</code> 选项，说明我们将要创建一个可执行文件（而不是一个库）；cargo还为我们添加了<code>--edition 2018</code> 标签，指明项目的包要使用 Rust 的 <strong>2018 版次</strong>（<a href="https://doc.rust-lang.org/nightly/edition-guide/rust-2018/index.html">2018 edition</a>）。当我们执行这行指令的时候，cargo 为我们创建的目录结构如下：</p>
+<p>在这里我把项目命名为 <code>blog_os</code>，当然读者也可以选择自己的项目名称。默认情况下，即使不显式指定，cargo 也会为我们添加<code>--bin</code> 选项，说明我们将要创建一个可执行文件（而不是一个库）； 另外 <code>--edition 2018</code> 参数指明了项目的包要使用 Rust 的 <strong>2018 版次</strong>（<a href="https://doc.rust-lang.org/nightly/edition-guide/rust-2018/index.html">2018 edition</a>），但在默认情况下，该参数会指向本地安装的最新版本。当我们成功执行这行指令后，cargo 为我们创建的目录结构如下：</p>
 <pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>blog_os
 </span><span>├── Cargo.toml
 </span><span>└── src
@@ -259,7 +263,7 @@
 <h2 id="start-yu-yan-xiang"><a class="zola-anchor" href="#start-yu-yan-xiang" aria-label="Anchor link for: start-yu-yan-xiang">🔗</a>start 语言项</h2>
 <p>这里，我们的程序遗失了 <code>start</code> 语言项，它将定义一个程序的<strong>入口点</strong>（entry point）。</p>
 <p>我们通常会认为，当运行一个程序时，首先被调用的是 <code>main</code> 函数。但是，大多数语言都拥有一个<strong>运行时系统</strong>（<a href="https://en.wikipedia.org/wiki/Runtime_system">runtime system</a>），它通常为<strong>垃圾回收</strong>（garbage collection）或<strong>绿色线程</strong>（software threads，或 green threads）服务，如 Java 的 GC 或 Go 语言的协程（goroutine）；这个运行时系统需要在 main 函数前启动，因为它需要让程序初始化。</p>
-<p>在一个典型的使用标准库的 Rust 程序中，程序运行是从一个名为 <code>crt0</code> 的运行时库开始的。<code>crt0</code> 意为 C runtime zero，它能建立一个适合运行 C 语言程序的环境，这包含了栈的创建和可执行程序参数的传入。在这之后，这个运行时库会调用 <a href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">Rust 的运行时入口点</a>，这个入口点被称作 <strong>start语言项</strong>（“start” language item）。Rust 只拥有一个极小的运行时，它被设计为拥有较少的功能，如爆栈检测和打印<strong>堆栈轨迹</strong>（stack trace）。这之后，这个运行时将会调用 main 函数。</p>
+<p>在一个典型的使用标准库的 Rust 程序中，程序运行是从一个名为 <code>crt0</code> 的运行时库开始的。<code>crt0</code> 意为 C runtime zero，它能建立一个适合运行 C 语言程序的环境，这包含了栈的创建和可执行程序参数的传入。在这之后，这个运行时库会调用 <a href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">Rust 的运行时入口点</a>，这个入口点被称作 <strong>start语言项</strong>（“start” language item）。Rust 只拥有一个极小的运行时，它被设计为拥有较少的功能，如爆栈检测和打印<strong>栈轨迹</strong>（stack trace）。这之后，这个运行时将会调用 main 函数。</p>
 <p>我们的独立式可执行程序并不能访问 Rust 运行时或 <code>crt0</code> 库，所以我们需要定义自己的入口点。只实现一个 <code>start</code> 语言项并不能帮助我们，因为这之后程序依然要求 <code>crt0</code> 库。所以，我们要做的是，直接重写整个 <code>crt0</code> 库和它定义的入口点。</p>
 <h3 id="zhong-xie-ru-kou-dian"><a class="zola-anchor" href="#zhong-xie-ru-kou-dian" aria-label="Anchor link for: zhong-xie-ru-kou-dian">🔗</a>重写入口点</h3>
 <p>要告诉 Rust 编译器我们不使用预定义的入口点，我们可以添加 <code>#![no_main]</code> 属性。</p>
@@ -309,7 +313,108 @@
 <p>我们传递了 <code>--target</code> 参数，来为裸机目标系统<strong>交叉编译</strong>（<a href="https://en.wikipedia.org/wiki/Cross_compiler">cross compile</a>）我们的程序。我们的目标并不包括操作系统，所以链接器不会试着链接 C 语言运行环境，因此构建过程成功会完成，不会产生链接器错误。</p>
 <p>我们将使用这个方法编写自己的操作系统内核。我们不会编译到 <code>thumbv7em-none-eabihf</code>，而是使用描述 <code>x86_64</code> 环境的<strong>自定义目标</strong>（<a href="https://doc.rust-lang.org/rustc/targets/custom.html">custom target</a>）。在下一篇文章中，我们将详细描述一些相关的细节。</p>
 <h3 id="lian-jie-qi-can-shu"><a class="zola-anchor" href="#lian-jie-qi-can-shu" aria-label="Anchor link for: lian-jie-qi-can-shu">🔗</a>链接器参数</h3>
-<p>我们也可以选择不编译到裸机系统，因为传递特定的参数也能解决链接器错误问题。虽然我们不会在后面使用到这个方法，为了教程的完整性，我们也撰写了专门的短文章，来提供这个途径的解决方案。</p>
+<p>我们也可以选择不编译到裸机系统，因为传递特定的参数也能解决链接器错误问题。虽然我们不会在后面使用到这个方法，为了教程的完整性，我们也撰写了专门的短文章，来提供这个途径的解决方案。
+如有需要，请点击下方的 <em>“链接器参数”</em> 按钮来展开可选内容。</p>
+<details>
+<summary>链接器参数</summary>
+<p>在本章节中，我们讨论了Linux、Windows和macOS中遇到的链接错误，并阐述如何通过传递额外参数来解决这些错误。注意，由于不同操作系统的可执行文件内在格式不同，所以对于不同操作系统而言，所适用的额外参数也有所不同。</p>
+<h4 id="linux"><a class="zola-anchor" href="#linux" aria-label="Anchor link for: linux">🔗</a>Linux</h4>
+<p>在Linux下，会触发以下链接错误（简化版）：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `cc` failed: exit code: 1
+</span><span>  |
+</span><span>  = note: &quot;cc&quot; […]
+</span><span>  = note: /usr/lib/gcc/../x86_64-linux-gnu/Scrt1.o: In function `_start&#39;:
+</span><span>          (.text+0x12): undefined reference to `__libc_csu_fini&#39;
+</span><span>          /usr/lib/gcc/../x86_64-linux-gnu/Scrt1.o: In function `_start&#39;:
+</span><span>          (.text+0x19): undefined reference to `__libc_csu_init&#39;
+</span><span>          /usr/lib/gcc/../x86_64-linux-gnu/Scrt1.o: In function `_start&#39;:
+</span><span>          (.text+0x25): undefined reference to `__libc_start_main&#39;
+</span><span>          collect2: error: ld returned 1 exit status
+</span></code></pre>
+<p>这里的问题在于，链接器默认包含了C启动例程，即构建名为 <code>_start</code> 的入口函数的地方。但其依赖一些C标准库 <code>libc</code> 中的符号，而我们已经使用 <code>no_std</code> 开关排除掉了这些符号，所以链接器报告了这些错误。要解决这个问题，我们需要通过 <code>-nostartfiles</code> 参数来告诉链接器不要使用C启动例程功能。</p>
+<p>通过 <code>cargo rustc</code> 可以传递链接器参数，该命令和 <code>cargo build</code> 的效果完全一致，但是可以将参数传递给rust的底层编译器 <code>rustc</code>。<code>rustc</code> 支持 <code>-C link-arg</code> 参数，此参数可以传递参数给配套的链接器。那么以此推断，我们的编译语句可以这样写：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-arg=-nostartfiles
+</span></code></pre>
+<p>现在我们编译出的程序就可以在Linux上独立运行了。</p>
+<p>我们并不需要显式指定入口函数名，链接器默认会查找 <code>_start</code> 函数作为入口点。</p>
+<h4 id="windows"><a class="zola-anchor" href="#windows" aria-label="Anchor link for: windows">🔗</a>Windows</h4>
+<p>在Windows下，会触发以下链接错误（简化版）：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `link.exe` failed: exit code: 1561
+</span><span>  |
+</span><span>  = note: &quot;C:\\Program Files (x86)\\…\\link.exe&quot; […]
+</span><span>  = note: LINK : fatal error LNK1561: entry point must be defined
+</span></code></pre>
+<p>错误信息 “entry point must be defined” 意味着链接器没有找到程序入口点。在Windows环境下，默认入口点<a href="https://docs.microsoft.com/en-us/cpp/build/reference/entry-entry-point-symbol">取决于使用的子系统</a>。对于 <code>CONSOLE</code> 子系统，链接器会寻找 <code>mainCRTStartup</code> 函数作为入口，而对于 <code>WINDOWS</code> 子系统，入口函数名叫做 <code>WinMainCRTStartup</code>。要复写掉入口函数名的默认设定，使其使用我们已经定义的 <code>_start</code> 函数，可以将 <code>/ENTRY</code> 参数传递给链接器：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-arg=/ENTRY:_start
+</span></code></pre>
+<p>显而易见，从链接参数上看，Windows平台使用的链接器和Linux平台是完全不同的。</p>
+<p>此时可能你还会遇到这个链接错误：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `link.exe` failed: exit code: 1221
+</span><span>  |
+</span><span>  = note: &quot;C:\\Program Files (x86)\\…\\link.exe&quot; […]
+</span><span>  = note: LINK : fatal error LNK1221: a subsystem can&#39;t be inferred and must be
+</span><span>          defined
+</span></code></pre>
+<p>该错误的原因是Windows平台下的可执行文件可以使用不同的<a href="https://docs.microsoft.com/en-us/cpp/build/reference/entry-entry-point-symbol">子系统</a>。一般而言，操作系统会如此判断：如果入口函数名叫 <code>main</code> ，则会使用 <code>CONSOLE</code> 子系统；若名叫 <code>WinMain</code> ，则会使用 <code>WINDOWS</code> 子系统。然而此时我们使用的入口函数名叫 <code>_start</code> ，两者都不是，此时就需要显式指定子系统：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-args=&quot;/ENTRY:_start /SUBSYSTEM:console&quot;
+</span></code></pre>
+<p>这里我们使用了 <code>CONSOLE</code> 子系统，如果使用 <code>WINDOWS</code> 子系统其实也可以。但是多次使用 <code>-C link-arg</code> 参数大可不必，我们可以如上面一样，将一个引号包裹起来的以空格分隔的列表传递给 <code>-C link-arg</code> 参数。</p>
+<p>现在我们编译出的程序就可以在Windows平台成功运行了。</p>
+<h4 id="macos"><a class="zola-anchor" href="#macos" aria-label="Anchor link for: macos">🔗</a>macOS</h4>
+<p>在macOS下，会触发以下链接错误（简化版）：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `cc` failed: exit code: 1
+</span><span>  |
+</span><span>  = note: &quot;cc&quot; […]
+</span><span>  = note: ld: entry point (_main) undefined. for architecture x86_64
+</span><span>          clang: error: linker command failed with exit code 1 […]
+</span></code></pre>
+<p>该错误告诉我们链接器找不到入口函数 <code>main</code> （由于某些原因，macOS平台下，所有函数都会具有 <code>_</code> 前缀）。要重设入口函数名，我们可以传入链接器参数 <code>-e</code> ：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-args=&quot;-e __start&quot;
+</span></code></pre>
+<p><code>-e</code> 参数可用于重设入口函数名。由于在macOS平台下，所有函数都具有 <code>_</code> 前缀，所以需要传入 <code>__start</code> ，而不是 <code>_start</code> 。</p>
+<p>接下来，会出现一个新的链接错误：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `cc` failed: exit code: 1
+</span><span>  |
+</span><span>  = note: &quot;cc&quot; […]
+</span><span>  = note: ld: dynamic main executables must link with libSystem.dylib
+</span><span>          for architecture x86_64
+</span><span>          clang: error: linker command failed with exit code 1 […]
+</span></code></pre>
+<p>macOS <a href="https://developer.apple.com/library/archive/qa/qa1118/_index.html">并未官方支持静态链接</a> ，并且在默认情况下程序会链接 <code>libSystem</code> 库。要复写这个设定并进行静态链接，我们可以传入链接器参数 <code>-static</code> ：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-args=&quot;-e __start -static&quot;
+</span></code></pre>
+<p>然而问题并没有解决，链接器再次抛出了一个错误：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `cc` failed: exit code: 1
+</span><span>  |
+</span><span>  = note: &quot;cc&quot; […]
+</span><span>  = note: ld: library not found for -lcrt0.o
+</span><span>          clang: error: linker command failed with exit code 1 […]
+</span></code></pre>
+<p>该错误的原因是macOS平台下的程序会默认链接 <code>crt0</code> （即“C runtime zero”）。 这个错误实际上和Linux平台上的错误类似，可以添加链接器参数 <code>-nostartfiles</code> 解决：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-args=&quot;-e __start -static -nostartfiles&quot;
+</span></code></pre>
+<p>现在，我们的程序可以在macOS下编译成功了。</p>
+<h4 id="tong-yi-bian-yi-ming-ling"><a class="zola-anchor" href="#tong-yi-bian-yi-ming-ling" aria-label="Anchor link for: tong-yi-bian-yi-ming-ling">🔗</a>统一编译命令</h4>
+<p>经过上面的章节，我们知道了在各个平台使用的编译命令是不同的，这十分不优雅。要解决这个问题，我们可以创建一个 <code>.cargo/config.toml</code> 文件，分别配置不同平台下所使用的参数：</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in .cargo/config.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;linux&quot;)&#39;</span><span>]
+</span><span style="color:#569cd6;">rustflags </span><span>= [</span><span style="color:#d69d85;">&quot;-C&quot;</span><span>, </span><span style="color:#d69d85;">&quot;link-arg=-nostartfiles&quot;</span><span>]
+</span><span>
+</span><span>[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;windows&quot;)&#39;</span><span>]
+</span><span style="color:#569cd6;">rustflags </span><span>= [</span><span style="color:#d69d85;">&quot;-C&quot;</span><span>, </span><span style="color:#d69d85;">&quot;link-args=/ENTRY:_start /SUBSYSTEM:console&quot;</span><span>]
+</span><span>
+</span><span>[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;macos&quot;)&#39;</span><span>]
+</span><span style="color:#569cd6;">rustflags </span><span>= [</span><span style="color:#d69d85;">&quot;-C&quot;</span><span>, </span><span style="color:#d69d85;">&quot;link-args=-e __start -static -nostartfiles&quot;</span><span>]
+</span></code></pre>
+<p>对应的 <code>rustflags</code> 配置项的值可以自动被填充到 <code>rustc</code> 的运行参数中。要寻找 <code>.cargo/config.toml</code> 更多的用法，可以看一下 <a href="https://doc.rust-lang.org/cargo/reference/config.html">官方文档</a>。</p>
+<p>现在只需要运行 <code>cargo build</code> 即可在全部三个平台编译我们的程序了。</p>
+<h4 id="wo-men-zhen-de-xu-yao-zuo-zhe-xie"><a class="zola-anchor" href="#wo-men-zhen-de-xu-yao-zuo-zhe-xie" aria-label="Anchor link for: wo-men-zhen-de-xu-yao-zuo-zhe-xie">🔗</a>我们真的需要做这些？</h4>
+<p>尽管我们可以在Linux、Windows和macOS编译出可执行程序，但这可能并非是个好主意。
+因为我们的程序少了不少本该存在的东西，比如 <code>_start</code> 执行时的栈初始化。
+失去了C运行时，部分基于它的依赖项很可能无法正确执行，这会造成程序出现各式各样的异常，比如segmentation fault（段错误）。</p>
+<p>如果你希望创建一个基于已存在的操作系统的最小类库，建议引用 <code>libc</code> ，阅读 <a href="https://doc.rust-lang.org/1.16.0/book/no-stdlib.html">这里</a> 并恰当设定 <code>#[start]</code> 比较好。</p>
+</details>
 <h2 id="xiao-jie"><a class="zola-anchor" href="#xiao-jie" aria-label="Anchor link for: xiao-jie">🔗</a>小结</h2>
 <p>一个用 Rust 编写的最小化的独立式可执行程序应该长这样：</p>
 <p><code>src/main.rs</code>：</p>
@@ -348,7 +453,15 @@
 <p>选用任意一个裸机目标来编译。比如对 <code>thumbv7em-none-eabihf</code>，我们使用以下命令：</p>
 <pre data-lang="bash" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-bash "><code class="language-bash" data-lang="bash"><span>cargo build --target thumbv7em-none-eabihf
 </span></code></pre>
-<p>要注意的是，现在我们的代码只是一个 Rust 编写的独立式可执行程序的一个例子。运行这个二进制程序还需要很多准备，比如在 <code>_start</code> 函数之前需要一个已经预加载完毕的栈。所以为了真正运行这样的程序，我们还有很多事情需要做。</p>
+<p>另外，我们也可以选择以本地操作系统为目标进行编译：</p>
+<pre data-lang="bash" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-bash "><code class="language-bash" data-lang="bash"><span style="color:#608b4e;"># Linux
+</span><span>cargo rustc</span><span style="color:#569cd6;"> --</span><span> -C link-arg=-nostartfiles
+</span><span style="color:#608b4e;"># Windows
+</span><span>cargo rustc</span><span style="color:#569cd6;"> --</span><span> -C link-args=</span><span style="color:#d69d85;">&quot;/ENTRY:_start /SUBSYSTEM:console&quot;
+</span><span style="color:#608b4e;"># macOS
+</span><span>cargo rustc</span><span style="color:#569cd6;"> --</span><span> -C link-args=</span><span style="color:#d69d85;">&quot;-e __start -static -nostartfiles&quot;
+</span></code></pre>
+<p>要注意的是，现在我们的代码只是一个 Rust 编写的独立式可执行程序的一个例子。运行这个二进制程序还需要很多准备，比如在 <code>_start</code> 函数之前需要一个已经预加载完毕的栈。所以为了真正运行这样的程序，<strong>我们还有很多事情需要做</strong>。</p>
 <h2 id="xia-pian-yu-lan"><a class="zola-anchor" href="#xia-pian-yu-lan" aria-label="Anchor link for: xia-pian-yu-lan">🔗</a>下篇预览</h2>
 <p>下一篇文章要做的事情基于我们这篇文章的成果，它将详细讲述编写一个最小的操作系统内核需要的步骤：如何配置特定的编译目标，如何将可执行程序与引导程序拼接，以及如何把一些特定的字符串打印到屏幕上。</p>
 
@@ -373,7 +486,7 @@
     <div class="PageNavigation">
         
         
-            <a class="next" href="/zh-CN/minimal-rust-kernel/">最小化内核 &raquo;</a>
+            <a class="next" href="/zh-CN/minimal-rust-kernel/">最小内核 &raquo;</a>
         
     </div>
 

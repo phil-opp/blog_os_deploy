@@ -80,7 +80,7 @@
                 <li>
                     <a href="#yan-chi-chu-shi-hua">延迟初始化</a>
                 </li><li>
-                    <a href="#zi-xuan-suo">自旋锁</a>
+                    <a href="#spinlock">spinlock</a>
                 </li><li>
                     <a href="#an-quan-xing">安全性</a>
                 </li><li>
@@ -120,14 +120,18 @@
             这是对原文章 <strong><a href="https://os.phil-opp.com/vga-text-mode/">VGA Text Mode</a></strong> 的社区中文翻译。它可能不完整，过时或者包含错误。可以在 <a href="https://github.com/phil-opp/blog_os/issues/961">这个 Issue</a> 上评论和提问！
             </p>
             <p>
-                翻译者： <a href="https://github.com/luojia65">@luojia65</a> 和 <a href="https://github.com/Rustin-Liu">@Rustin-Liu</a>.</p>
+                翻译者： <a href="https://github.com/luojia65">@luojia65</a> 和 <a href="https://github.com/Rustin-Liu">@Rustin-Liu</a>.
+                <span class="translation_contributors">
+                    With contributions from <a href="https://github.com/liuyuran">@liuyuran</a>.
+                </span>
+                </p>
             </div>
     
 
     <div class="">
     <p><strong>VGA 字符模式</strong>（<a href="https://en.wikipedia.org/wiki/VGA-compatible_text_mode">VGA text mode</a>）是打印字符到屏幕的一种简单方式。在这篇文章中，为了包装这个模式为一个安全而简单的接口，我们将包装 unsafe 代码到独立的模块。我们还将实现对 Rust 语言<strong>格式化宏</strong>（<a href="https://doc.rust-lang.org/std/fmt/#related-macros">formatting macros</a>）的支持。</p>
 <span id="continue-reading"></span>
-<p>This blog is openly developed on <a href="https://github.com/phil-opp/blog_os">GitHub</a>. If you have any problems or questions, please open an issue there. You can also leave comments <a href="https://os.phil-opp.com/zh-CN/vga-text-mode/#comments">at the bottom</a>. The complete source code for this post can be found in the <a href="https://github.com/phil-opp/blog_os/tree/post-03"><code>post-03</code></a> branch.</p>
+<p>此博客在 <a href="https://github.com/phil-opp/blog_os">GitHub</a> 上公开开发. 如果您有任何问题或疑问，请在此处打开一个 issue。 您也可以在<a href="https://os.phil-opp.com/zh-CN/vga-text-mode/#comments">底部</a>发表评论. 这篇文章的完整源代码可以在 [<code>post-03</code>] <a href="https://github.com/phil-opp/blog_os/tree/post-03">post branch</a> 分支中找到。</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -159,7 +163,7 @@
                     <li>
                         <a href="#yan-chi-chu-shi-hua">延迟初始化</a>
                     </li><li>
-                        <a href="#zi-xuan-suo">自旋锁</a>
+                        <a href="#spinlock">spinlock</a>
                     </li><li>
                         <a href="#an-quan-xing">安全性</a>
                     </li><li>
@@ -189,7 +193,8 @@
 <tr><td>12-14</td><td>Background color</td></tr>
 <tr><td>15</td><td>Blink</td></tr>
 </tbody></table>
-<p>其中，<strong>前景色</strong>（foreground color）和<strong>背景色</strong>（background color）取值范围如下：</p>
+<p>第一个字节表示了应当输出的 <a href="https://en.wikipedia.org/wiki/ASCII">ASCII 编码</a>，更加准确的说，类似于 <a href="https://en.wikipedia.org/wiki/Code_page_437">437 字符编码表</a> 中字符对应的编码，但又有细微的不同。 这里为了简化表达，我们在文章里将其简称为ASCII字符。</p>
+<p>第二个字节则定义了字符的显示方式，前四个比特定义了前景色，中间三个比特定义了背景色，最后一个比特则定义了该字符是否应该闪烁，以下是可用的颜色列表：</p>
 <table><thead><tr><th>Number</th><th>Color</th><th>Number + Bright Bit</th><th>Bright Color</th></tr></thead><tbody>
 <tr><td>0x0</td><td>Black</td><td>0x8</td><td>Dark Gray</td></tr>
 <tr><td>0x1</td><td>Blue</td><td>0x9</td><td>Light Blue</td></tr>
@@ -200,7 +205,7 @@
 <tr><td>0x6</td><td>Brown</td><td>0xe</td><td>Yellow</td></tr>
 <tr><td>0x7</td><td>Light Gray</td><td>0xf</td><td>White</td></tr>
 </tbody></table>
-<p>每个颜色的第四位称为<strong>加亮位</strong>（bright bit）。</p>
+<p>每个颜色的第四位称为<strong>加亮位</strong>（bright bit），比如blue加亮后就变成了light blue，但对于背景色，这个比特会被用于标记是否闪烁。</p>
 <p>要修改 VGA 字符缓冲区，我们可以通过<strong>存储器映射输入输出</strong>（<a href="https://en.wikipedia.org/wiki/Memory-mapped_I/O">memory-mapped I/O</a>）的方式，读取或写入地址 <code>0xb8000</code>；这意味着，我们可以像操作普通的内存区域一样操作这个地址。</p>
 <p>需要注意的是，一些硬件虽然映射到存储器，但可能不会完全支持所有的内存操作：可能会有一些设备支持按 <code>u8</code> 字节读取，但在读取 <code>u64</code> 时返回无效的数据。幸运的是，字符缓冲区都<a href="https://web.stanford.edu/class/cs140/projects/pintos/specs/freevga/vga/vgamem.htm#manip">支持标准的读写操作</a>，所以我们不需要用特殊的标准对待它。</p>
 <h2 id="bao-zhuang-dao-rust-mo-kuai"><a class="zola-anchor" href="#bao-zhuang-dao-rust-mo-kuai" aria-label="Anchor link for: bao-zhuang-dao-rust-mo-kuai">🔗</a>包装到 Rust 模块</h2>
@@ -208,10 +213,9 @@
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span style="color:#569cd6;">mod </span><span>vga_buffer;
 </span></code></pre>
-<p>这行代码定义了一个 Rust 模块，它的内容应当保存在 <code>src/vga_buffer.rs</code> 文件中。使用 <strong>2018 版次</strong>（2018 edition）的 Rust 时，我们可以把模块的<strong>子模块</strong>（submodule）文件直接保存到 <code>src/vga_buffer/</code> 文件夹下，与 <code>vga_buffer.rs</code> 文件共存，而无需创建一个 <code>mod.rs</code> 文件。</p>
 <p>我们的模块暂时不需要添加子模块，所以我们将它创建为 <code>src/vga_buffer.rs</code> 文件。除非另有说明，本文中的代码都保存到这个文件中。</p>
 <h3 id="yan-se"><a class="zola-anchor" href="#yan-se" aria-label="Anchor link for: yan-se">🔗</a>颜色</h3>
-<p>首先，我们使用 Rust 的<strong>枚举</strong>（enum）表示一种颜色：</p>
+<p>首先，我们使用 Rust 的<strong>枚举</strong>（enum）表示特定的颜色：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
 </span><span>
 </span><span>#[allow(dead_code)]
@@ -530,12 +534,12 @@
 </span><span>}
 </span></code></pre>
 <p>然而，这个 <code>WRITER</code> 可能没有什么用途，因为它目前还是<strong>不可变变量</strong>（immutable variable）：这意味着我们无法向它写入数据，因为所有与写入数据相关的方法都需要实例的可变引用 <code>&amp;mut self</code>。一种解决方案是使用<strong>可变静态</strong>（<a href="https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html#accessing-or-modifying-a-mutable-static-variable">mutable static</a>）的变量，但所有对它的读写操作都被规定为不安全的（unsafe）操作，因为这很容易导致数据竞争或发生其它不好的事情——使用 <code>static mut</code> 极其不被赞成，甚至有一些提案认为<a href="https://internals.rust-lang.org/t/pre-rfc-remove-static-mut/1437">应该将它删除</a>。也有其它的替代方案，比如可以尝试使用比如 <a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html#keeping-track-of-borrows-at-runtime-with-refcellt">RefCell</a> 或甚至 <a href="https://doc.rust-lang.org/nightly/core/cell/struct.UnsafeCell.html">UnsafeCell</a> 等类型提供的<strong>内部可变性</strong>（<a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html">interior mutability</a>）；但这些类型都被设计为非同步类型，即不满足 <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html">Sync</a> 约束，所以我们不能在静态变量中使用它们。</p>
-<h3 id="zi-xuan-suo"><a class="zola-anchor" href="#zi-xuan-suo" aria-label="Anchor link for: zi-xuan-suo">🔗</a>自旋锁</h3>
+<h3 id="spinlock"><a class="zola-anchor" href="#spinlock" aria-label="Anchor link for: spinlock">🔗</a>spinlock</h3>
 <p>要定义同步的内部可变性，我们往往使用标准库提供的互斥锁类 <a href="https://doc.rust-lang.org/nightly/std/sync/struct.Mutex.html">Mutex</a>，它通过提供当资源被占用时将线程<strong>阻塞</strong>（block）的<strong>互斥条件</strong>（mutual exclusion）实现这一点；但我们初步的内核代码还没有线程和阻塞的概念，我们将不能使用这个类。不过，我们还有一种较为基础的互斥锁实现方式——<strong>自旋锁</strong>（<a href="https://en.wikipedia.org/wiki/Spinlock">spinlock</a>）。自旋锁并不会调用阻塞逻辑，而是在一个小的无限循环中反复尝试获得这个锁，也因此会一直占用 CPU 时间，直到互斥锁被它的占用者释放。</p>
-<p>为了使用自旋的互斥锁，我们添加 <a href="https://crates.io/crates/spin">spin包</a> 到项目的依赖项列表：</p>
+<p>为了使用自旋互斥锁，我们添加 <a href="https://crates.io/crates/spin">spin包</a> 到项目的依赖项列表：</p>
 <pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
 </span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">spin </span><span>= </span><span style="color:#d69d85;">&quot;0.4.9&quot;
+</span><span style="color:#569cd6;">spin </span><span>= </span><span style="color:#d69d85;">&quot;0.5.2&quot;
 </span></code></pre>
 <p>现在，我们能够使用自旋的互斥锁，为我们的 <code>WRITER</code> 类实现安全的<a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html">内部可变性</a>：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
@@ -660,7 +664,7 @@
     <hr>
     <div class="PageNavigation">
         
-            <a class="prev" href="/zh-CN/minimal-rust-kernel/">&laquo; 最小化内核</a>
+            <a class="prev" href="/zh-CN/minimal-rust-kernel/">&laquo; 最小内核</a>
         
         
             <a class="next" href="/zh-CN/testing/">内核测试 &raquo;</a>
