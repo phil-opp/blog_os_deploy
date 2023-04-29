@@ -82,8 +82,6 @@
                     <a href="#a-dummyallocator">A DummyAllocator</a>
                 </li><li>
                     <a href="#the-global-allocator-attribute">The #[global_allocator] Attribute</a>
-                </li><li>
-                    <a href="#the-alloc-error-handler-attribute">The #[alloc_error_handler] Attribute</a>
                 </li>
             </ol>
         </li><li>
@@ -155,8 +153,6 @@
                         <a href="#a-dummyallocator">A DummyAllocator</a>
                     </li><li>
                         <a href="#the-global-allocator-attribute">The #[global_allocator] Attribute</a>
-                    </li><li>
-                        <a href="#the-alloc-error-handler-attribute">The #[alloc_error_handler] Attribute</a>
                     </li>
                 </ul>
             </li><li>
@@ -275,12 +271,8 @@
 <p>The reason that the <code>alloc</code> crate is disabled by default in <code>#[no_std]</code> crates is that it has additional requirements. When we try to compile our project now, we will see these requirements as errors:</p>
 <pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: no global memory allocator found but one is required; link to std or add
 </span><span>       #[global_allocator] to a static item that implements the GlobalAlloc trait.
-</span><span>
-</span><span>error: `#[alloc_error_handler]` function required, but not found
 </span></code></pre>
-<p>The first error occurs because the <code>alloc</code> crate requires a heap allocator, which is an object that provides the <code>allocate</code> and <code>deallocate</code> functions. In Rust, heap allocators are described by the <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait, which is mentioned in the error message. To set the heap allocator for the crate, the <code>#[global_allocator]</code> attribute must be applied to a <code>static</code> variable that implements the <code>GlobalAlloc</code> trait.</p>
-<p>The second error occurs because calls to <code>allocate</code> can fail, most commonly when there is no more memory available. Our program must be able to react to this case, which is what the <code>#[alloc_error_handler]</code> function is for.</p>
-<p>We will describe these traits and attributes in detail in the following sections.</p>
+<p>The error occurs because the <code>alloc</code> crate requires a heap allocator, which is an object that provides the <code>allocate</code> and <code>deallocate</code> functions. In Rust, heap allocators are described by the <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait, which is mentioned in the error message. To set the heap allocator for the crate, the <code>#[global_allocator]</code> attribute must be applied to a <code>static</code> variable that implements the <code>GlobalAlloc</code> trait.</p>
 <h3 id="the-globalalloc-trait"><a class="zola-anchor" href="#the-globalalloc-trait" aria-label="Anchor link for: the-globalalloc-trait">🔗</a>The <code>GlobalAlloc</code> Trait</h3>
 <p>The <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait defines the functions that a heap allocator must provide. The trait is special because it is almost never used directly by the programmer. Instead, the compiler will automatically insert the appropriate calls to the trait methods when using the allocation and collection types of <code>alloc</code>.</p>
 <p>Since we will need to implement the trait for all our allocator types, it is worth taking a closer look at its declaration:</p>
@@ -347,23 +339,7 @@
 </span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Dummy = Dummy;
 </span></code></pre>
 <p>Since the <code>Dummy</code> allocator is a <a href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">zero-sized type</a>, we don’t need to specify any fields in the initialization expression.</p>
-<p>When we now try to compile it, the first error should be gone. Let’s fix the remaining second error:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: `#[alloc_error_handler]` function required, but not found
-</span></code></pre>
-<h3 id="the-alloc-error-handler-attribute"><a class="zola-anchor" href="#the-alloc-error-handler-attribute" aria-label="Anchor link for: the-alloc-error-handler-attribute">🔗</a>The <code>#[alloc_error_handler]</code> Attribute</h3>
-<p>As we learned when discussing the <code>GlobalAlloc</code> trait, the <code>alloc</code> function can signal an allocation error by returning a null pointer. The question is: how should the Rust runtime react to such an allocation failure? This is where the <code>#[alloc_error_handler]</code> attribute comes in. It specifies a function that is called when an allocation error occurs, similar to how our panic handler is called when a panic occurs.</p>
-<p>Let’s add such a function to fix the compilation error:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span>#![feature(alloc_error_handler)] </span><span style="color:#608b4e;">// at the top of the file
-</span><span>
-</span><span>#[alloc_error_handler]
-</span><span style="color:#569cd6;">fn </span><span>alloc_error_handler(layout: alloc::alloc::Layout) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    panic!(</span><span style="color:#d69d85;">&quot;allocation error: {:?}&quot;</span><span>, layout)
-</span><span>}
-</span></code></pre>
-<p>The <code>alloc_error_handler</code> function is still unstable, so we need a feature gate to enable it. The function receives a single argument: the <code>Layout</code> instance that was passed to <code>alloc</code> when the allocation failure occurred. There’s nothing we can do to resolve the failure, so we just panic with a message that contains the <code>Layout</code> instance.</p>
-<p>With this function, the compilation errors should be fixed. Now we can use the allocation and collection types of <code>alloc</code>. For example, we can use a <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> to allocate a value on the heap:</p>
+<p>With this static, the compilation errors should be fixed. Now we can use the allocation and collection types of <code>alloc</code>. For example, we can use a <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> to allocate a value on the heap:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>
 </span><span style="color:#569cd6;">extern crate</span><span> alloc;
@@ -383,9 +359,9 @@
 </span><span>
 </span></code></pre>
 <p>Note that we need to specify the <code>extern crate alloc</code> statement in our <code>main.rs</code> too. This is required because the <code>lib.rs</code> and <code>main.rs</code> parts are treated as separate crates. However, we don’t need to create another <code>#[global_allocator]</code> static because the global allocator applies to all crates in the project. In fact, specifying an additional allocator in another crate would be an error.</p>
-<p>When we run the above code, we see that our <code>alloc_error_handler</code> function is called:</p>
+<p>When we run the above code, we see that a panic occurs:</p>
 <p><img src="https://os.phil-opp.com/heap-allocation/qemu-dummy-output.png" alt="QEMU printing “panicked at `allocation error: Layout { size_: 4, align_: 4 }, src/lib.rs:89:5”" /></p>
-<p>The error handler is called because the <code>Box::new</code> function implicitly calls the <code>alloc</code> function of the global allocator. Our dummy allocator always returns a null pointer, so every allocation fails. To fix this, we need to create an allocator that actually returns usable memory.</p>
+<p>The panic occurs because the <code>Box::new</code> function implicitly calls the <code>alloc</code> function of the global allocator. Our dummy allocator always returns a null pointer, so every allocation fails. To fix this, we need to create an allocator that actually returns usable memory.</p>
 <h2 id="creating-a-kernel-heap"><a class="zola-anchor" href="#creating-a-kernel-heap" aria-label="Anchor link for: creating-a-kernel-heap">🔗</a>Creating a Kernel Heap</h2>
 <p>Before we can create a proper allocator, we first need to create a heap memory region from which the allocator can allocate memory. To do this, we need to define a virtual memory range for the heap region and then map this region to physical frames. See the <a href="https://os.phil-opp.com/paging-introduction/"><em>“Introduction To Paging”</em></a> post for an overview of virtual memory and page tables.</p>
 <p>The first step is to define a virtual memory region for the heap. We can choose any virtual address range that we like, as long as it is not already used for a different memory region. Let’s define it as the memory starting at address <code>0x_4444_4444_0000</code> so that we can easily recognize a heap pointer later:</p>
