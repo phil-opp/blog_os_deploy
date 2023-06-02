@@ -26,7 +26,7 @@
 
     <script async src="/js/edition-2/main.js"></script>
 
-    <title>Un binaire Rust autonome | Writing an OS in Rust</title>
+    <title>Un binaire Rust autoporté | Writing an OS in Rust</title>
 </head>
 
 <body>
@@ -102,7 +102,7 @@
 
             <main>
     <div class="">
-    <h1>Un binaire Rust autonome</h1>
+    <h1>Un binaire Rust autoporté</h1>
     <time datetime="2018-02-10" class="post-date">
         Feb 10, 2018
         
@@ -180,15 +180,15 @@
 
 <h2 id="introduction"><a class="zola-anchor" href="#introduction" aria-label="Anchor link for: introduction">🔗</a>Introduction</h2>
 <p>Pour écrire un noyau de système d’exploitation, nous avons besoin d’un code qui ne dépend pas de fonctionnalités de système d’exploitation. Cela signifie que nous ne pouvons pas utiliser les fils d’exécution, les fichiers, la mémoire sur le tas, le réseau, les nombres aléatoires, la sortie standard ou tout autre fonctionnalité nécessitant une abstraction du système d’exploitation ou un matériel spécifique. Cela a du sens, étant donné que nous essayons d’écrire notre propre OS et nos propres pilotes.
-Cela signifie que nous ne pouvons pas utiliser la majeure partie de la <a href="https://doc.rust-lang.org/std/">bibliothèque standard de Rust</a>. Il y a néanmoins beaucoup de fonctionnalités de Rust que nous <em>pouvons</em> utiliser. Par exemple, nous pouvons utiliser les <a href="https://doc.rust-lang.org/book/ch13-02-iterators.html">iterators</a>, les <a href="https://doc.rust-lang.org/book/ch13-01-closures.html">closures</a>, le <a href="https://doc.rust-lang.org/book/ch06-00-enums.html">pattern matching</a>, l’<a href="https://doc.rust-lang.org/core/option/">option</a> et le <a href="https://doc.rust-lang.org/core/result/">result</a>, le <a href="https://doc.rust-lang.org/core/macro.write.html">string formatting</a>, et bien-sûr l’<a href="https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html">ownership system</a>. Ces fonctionnalités permettent l’écriture d’un noyau d’une façon expressive et haut-niveau sans se soucier des [comportements indéfinis] ou de la <a href="https://tonyarcieri.com/it-s-time-for-a-memory-safety-intervention">sécurité de la mémoire</a>.</p>
+Cela signifie que nous ne pouvons pas utiliser la majeure partie de la <a href="https://doc.rust-lang.org/std/">bibliothèque standard de Rust</a>. Il y a néanmoins beaucoup de fonctionnalités de Rust que nous <em>pouvons</em> utiliser. Par exemple, nous pouvons utiliser les <a href="https://doc.rust-lang.org/book/ch13-02-iterators.html">iterators</a>, les <a href="https://doc.rust-lang.org/book/ch13-01-closures.html">closures</a>, le <a href="https://doc.rust-lang.org/book/ch06-00-enums.html">pattern matching</a>, l’<a href="https://doc.rust-lang.org/core/option/">option</a> et le <a href="https://doc.rust-lang.org/core/result/">result</a>, le <a href="https://doc.rust-lang.org/core/macro.write.html">string formatting</a>, et bien sûr l’<a href="https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html">ownership system</a>. Ces fonctionnalités permettent l’écriture d’un noyau d’une façon expressive et haut-niveau sans se soucier des [comportements indéfinis] ou de la <a href="https://tonyarcieri.com/it-s-time-for-a-memory-safety-intervention">sécurité de la mémoire</a>.</p>
 <p>Pour créer un noyau d’OS en Rust, nous devons créer un exécutable qui peut tourner sans système d’exploitation sous-jacent. Un tel exécutable est appelé “freestanding” (autoporté) ou “bare-metal”.
 Cet article décrit les étapes nécessaires pour créer un exécutable Rust autoporté et explique pourquoi ces étapes sont importantes. Si vous n’êtes intéressé que par un exemple minimal, vous pouvez <strong><a href="https://os.phil-opp.com/fr/freestanding-rust-binary/#resume">aller au résumé</a></strong>.</p>
 <h2 id="desactiver-la-bibliotheque-standard"><a class="zola-anchor" href="#desactiver-la-bibliotheque-standard" aria-label="Anchor link for: desactiver-la-bibliotheque-standard">🔗</a>Désactiver la Bibliothèque Standard</h2>
-<p>Par défaut, tous les crates Rust relient la <a href="https://doc.rust-lang.org/std/">bibliothèque standard</a>, qui dépend du système d’exploitation pour les fonctionnalités telles que les fils d’exécution, les fichiers ou le réseau. Elle dépend aussi de la bibliothèque standard de C <code>libc</code>, qui intéragit de près avec les services de l’OS. Comme notre plan est d’écrire un système d’exploitation, nous ne pouvons pas utiliser des bibliothèques dépendant de l’OS. Nous devons donc désactiver l’inclusion automatique de la bibliothèque standard en utilisant l’<a href="https://doc.rust-lang.org/1.30.0/book/first-edition/using-rust-without-the-standard-library.html">attribut <code>no std</code></a>.</p>
-<p>Nous commencons par créer un nouveau projet d’application cargo. La manière la plus simple de faire est avec la ligne de commande : </p>
+<p>Par défaut, toutes les crates Rust sont liées à la bibliothèque standard, qui repose sur les fonctionnalités du système d’exploitation telles que les fils d’exécution, les fichiers et la connectivité réseau. Elle est également liée à la bibliothèque standard C <code>libc</code>, qui interagit étroitement avec les services fournis par l’OS. Comme notre plan est d’écrire un système d’exploitation, nous ne pouvons pas utiliser des bibliothèques dépendant de l’OS. Nous devons donc désactiver l’inclusion automatique de la bibliothèque standard en utilisant l’<a href="https://doc.rust-lang.org/1.30.0/book/first-edition/using-rust-without-the-standard-library.html">attribut <code>no std</code></a>.</p>
+<p>Nous commençons par créer un nouveau projet d’application cargo. La manière la plus simple de faire est avec la ligne de commande : </p>
 <pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo new blog_os --bin --edition 2018
 </span></code></pre>
-<p>J’ai nommé le projet <code>blog_os</code>, mais vous pouvez bien-sûr choisir le nom qu’il vous convient. Le flag <code>--bin</code> indique que nous voulons créer un exécutable (contrairement à une bibliothèque) et le flag <code>--edition 2018</code> indique que nous voulons utiliser l’<a href="https://doc.rust-lang.org/nightly/edition-guide/rust-2018/index.html">édition 2018</a> de Rust pour notre crate. Quand nous lançons la commande, cargo crée la structure de répertoire suivante pour nous :</p>
+<p>J’ai nommé le projet <code>blog_os</code>, mais vous pouvez évidemment choisir le nom qu’il vous convient. Le flag <code>--bin</code> indique que nous voulons créer un exécutable (contrairement à une bibliothèque) et le flag <code>--edition 2018</code> indique que nous voulons utiliser l’<a href="https://doc.rust-lang.org/nightly/edition-guide/rust-2018/index.html">édition 2018</a> de Rust pour notre crate. Quand nous lançons la commande, cargo crée la structure de répertoire suivante pour nous :</p>
 <pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>blog_os
 </span><span>├── Cargo.toml
 </span><span>└── src
@@ -196,7 +196,7 @@ Cet article décrit les étapes nécessaires pour créer un exécutable Rust aut
 </span></code></pre>
 <p>Le fichier <code>Cargo.toml</code> contient la configuration de la crate, par exemple le nom de la crate, l’auteur, le numéro de <a href="https://semver.org/">versionnage sémantique</a> et les dépendances. Le fichier <code>src/main.rs</code> contient le module racine de notre crate et notre fonction <code>main</code>. Vous pouvez compiler votre crate avec <code>cargo build</code> et ensuite exécuter l’exécutable compilé <code>blog_os</code> dans le sous-dossier <code>target/debug</code>.</p>
 <h3 id="l-attribut-no-std"><a class="zola-anchor" href="#l-attribut-no-std" aria-label="Anchor link for: l-attribut-no-std">🔗</a>L’Attribut <code>no_std</code></h3>
-<p>Pour l’instant, notre crate relie la bilbiothèque standard implicitement. Désactivons cela en ajoutant l’<a href="https://doc.rust-lang.org/1.30.0/book/first-edition/using-rust-without-the-standard-library.html">attribut <code>no std</code></a> : </p>
+<p>Pour l’instant, notre crate relie la bibliothèque standard implicitement. Désactivons cela en ajoutant l’<a href="https://doc.rust-lang.org/1.30.0/book/first-edition/using-rust-without-the-standard-library.html">attribut <code>no std</code></a> : </p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// main.rs
 </span><span>
 </span><span>#![no_std]
