@@ -640,11 +640,11 @@
 <p>以上代码可以对数字按键0-9进行转义，并忽略其他键位。具体到程序逻辑中，就是使用 <a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a> 匹配映射数字0-9，对于其他扫描码则返回 <code>None</code>，然后使用 <a href="https://doc.rust-lang.org/book/ch18-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a> 语句对 <code>key</code> 进行解构取值，在这个语法中，代码块中的 <code>key</code> 会 <a href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">遮蔽</a> 掉代码块外的同名 <code>Option</code> 型变量。</p>
 <p>现在我们就可以向控制台写入数字了：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/hardware-interrupts/qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
-<p>其他扫描码也可以通过同样的手段进行译码，不过真的很麻烦，好在 <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/"><code>pc-keyboard</code></a> crate 已经帮助我们实现了Set-1和Set-2的译码工作，所以无需自己去实现。所以我们只需要将下述内容添加到 <code>Cargo.toml</code>，并在 <code>lib.rs</code> 里进行引用：</p>
+<p>其他扫描码也可以通过同样的手段进行译码，不过真的很麻烦，好在 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/"><code>pc-keyboard</code></a> crate 已经帮助我们实现了Set-1和Set-2的译码工作，所以无需自己去实现。所以我们只需要将下述内容添加到 <code>Cargo.toml</code>，并在 <code>lib.rs</code> 里进行引用：</p>
 <pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
 </span><span>
 </span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">pc-keyboard </span><span>= </span><span style="color:#d69d85;">&quot;0.5.0&quot;
+</span><span style="color:#569cd6;">pc-keyboard </span><span>= </span><span style="color:#d69d85;">&quot;0.7.0&quot;
 </span></code></pre>
 <p>现在我们可以使用新的crate对 <code>keyboard_interrupt_handler</code> 进行改写：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in/src/interrupts.rs
@@ -658,8 +658,8 @@
 </span><span>
 </span><span>    lazy_static! {
 </span><span>        </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
-</span><span>            Mutex::new(Keyboard::new(layouts::Us104Key, ScancodeSet1,
-</span><span>                HandleControl::Ignore)
+</span><span>            Mutex::new(Keyboard::new(ScancodeSet1::new(),
+</span><span>                layouts::Us104Key, HandleControl::Ignore)
 </span><span>            );
 </span><span>    }
 </span><span>
@@ -682,9 +682,9 @@
 </span><span>    }
 </span><span>}
 </span></code></pre>
-<p>首先我们使用 <code>lazy_static</code> 宏创建一个受到Mutex同步锁保护的 <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> 对象，初始化参数为美式键盘布局以及Set-1。至于 <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a>，它可以设定为将 <code>ctrl+[a-z]</code> 映射为Unicode字符 <code>U+0001</code> 至 <code>U+001A</code>，但我们不想这样，所以使用了 <code>Ignore</code> 选项让 <code>ctrl</code> 仅仅表现为一个正常键位。</p>
-<p>对于每一个中断，我们都会为 KEYBOARD 加锁，从键盘控制器获取扫描码并将其传入 <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> 函数，并将其转化为 <code>Option&lt;KeyEvent&gt;</code> 结构。<a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> 包括了触发本次中断的按键信息，以及子动作是按下还是释放。</p>
-<p>要处理KeyEvent，我们还需要将其传入 <a href="https://docs.rs/pc-keyboard/0.5.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> 函数，将其转换为人类可读的字符，若果有必要，也会对字符进行一些处理。典型例子就是，要判断 <code>A</code> 键按下后输入的是小写 <code>a</code> 还是大写 <code>A</code>，这要取决于shift键是否同时被按下。</p>
+<p>首先我们使用 <code>lazy_static</code> 宏创建一个受到Mutex同步锁保护的 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> 对象，初始化参数为美式键盘布局以及Set-1。至于 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a>，它可以设定为将 <code>ctrl+[a-z]</code> 映射为Unicode字符 <code>U+0001</code> 至 <code>U+001A</code>，但我们不想这样，所以使用了 <code>Ignore</code> 选项让 <code>ctrl</code> 仅仅表现为一个正常键位。</p>
+<p>对于每一个中断，我们都会为 KEYBOARD 加锁，从键盘控制器获取扫描码并将其传入 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> 函数，并将其转化为 <code>Option&lt;KeyEvent&gt;</code> 结构。<a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> 包括了触发本次中断的按键信息，以及子动作是按下还是释放。</p>
+<p>要处理KeyEvent，我们还需要将其传入 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> 函数，将其转换为人类可读的字符，若果有必要，也会对字符进行一些处理。典型例子就是，要判断 <code>A</code> 键按下后输入的是小写 <code>a</code> 还是大写 <code>A</code>，这要取决于shift键是否同时被按下。</p>
 <p>进行这些修改之后，我们就可以正常输入英文了：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/hardware-interrupts/qemu-typing.gif" alt="Typing “Hello World” in QEMU" /></p>
 <h3 id="pei-zhi-jian-pan"><a class="zola-anchor" href="#pei-zhi-jian-pan" aria-label="Anchor link for: pei-zhi-jian-pan">🔗</a>配置键盘</h3>
