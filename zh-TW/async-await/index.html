@@ -1,0 +1,1779 @@
+<!doctype html>
+
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="在這篇文章中，我們將探索 協作式多任務 和 Rust 的 async&#x2F;await 功能。我們將詳細了解 Rust 中的 async&#x2F;await 是如何工作的，
+包括 Future trait 的設計、狀態機轉換和 pinning。
+然後，我們通過創建一個異步鍵盤任務和一個基本的執行器，為我們的內核添…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/zh-TW/async-await/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Async&#x2F;Await | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/zh-TW" title="All Posts">« 所有文章</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>目錄</h2>
+    <ol>
+        <li>
+            <a href="#duo-ren-wu">多任務</a>
+            <ol>
+                <li>
+                    <a href="#qiang-zhan-shi-duo-ren-wu">搶佔式多任務</a>
+                </li><li>
+                    <a href="#xie-zuo-shi-duo-ren-wu">協作式多任務</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#async-await-in-rust">Async/Await in Rust</a>
+            <ol>
+                <li>
+                    <a href="#futures">Futures</a>
+                </li><li>
+                    <a href="#tong-futures-yi-qi-gong-zuo">同 Futures 一起工作</a>
+                </li><li>
+                    <a href="#the-async-await-pattern">The Async/Await Pattern</a>
+                </li><li>
+                    <a href="#pinning">Pinning</a>
+                </li><li>
+                    <a href="#zhi-xing-qi-he-huan-xing-qi">執行器 和 喚醒器</a>
+                </li><li>
+                    <a href="#xie-zuo-shi-duo-ren-wu-1">協作式多任務?</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#shi-xian">實現</a>
+            <ol>
+                <li>
+                    <a href="#ren-wu-task">任務 Task</a>
+                </li><li>
+                    <a href="#jian-dan-de-zhi-xing-qi">簡單的執行器</a>
+                </li><li>
+                    <a href="#yi-bu-jian-pan-shu-ru">異步鍵盤輸入</a>
+                </li><li>
+                    <a href="#dai-huan-xing-qi-zhi-chi-de-zhi-xing-qi">帶喚醒器支持的執行器</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#zhai-yao">摘要</a>
+            
+        </li><li>
+            <a href="#xia-yi-bu-yao-gan-ma">下一步要幹嘛?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">評論</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Async&#x2F;Await</h1>
+    <time datetime="2020-03-27" class="post-date">
+        Mar 27, 2020
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>翻譯內容：</b>
+            這是對原文章 <strong><a href="https://os.phil-opp.com/async-await/">Async/Await</a></strong> 的社區中文翻譯。它可能不完整，過時或者包含錯誤。可以在 <a href="https://github.com/phil-opp/blog_os/issues/961">這個 Issue</a> 上評論和提問！
+            </p></div>
+    
+
+    <div class="">
+    <p>在這篇文章中，我們將探索 <em>協作式多任務</em> 和 Rust 的 <em>async/await</em> 功能。我們將詳細了解 Rust 中的 async/await 是如何工作的，
+包括 <code>Future</code> trait 的設計、狀態機轉換和 <em>pinning</em>。
+然後，我們通過創建一個異步鍵盤任務和一個基本的執行器，為我們的內核添加了對 async/await 的基本支持。</p>
+<blockquote>
+<p>本文將 <code>trait</code> 翻譯爲 <code>特型</code>, 不接受什麼 <code>特性</code>，<code>特質</code> 等亂七八糟不知所云的譯法。</p>
+</blockquote>
+<span id="continue-reading"></span>
+<p>本博客在 <a href="https://github.com/phil-opp/blog_os">GitHub</a> 上開源。如果你有任何問題或疑問，請在那裡打開一個 issue。
+你也可以在 <a href="https://os.phil-opp.com/zh-TW/async-await/#comments">at the bottom</a> 留下評論。本文的完整源代碼可以在 <a href="https://github.com/phil-opp/blog_os/tree/post-12"><code>post-12</code></a> 分支中找到。</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>目錄</b></summary>
+        <ul>
+            <li>
+                <a href="#duo-ren-wu">多任務</a>
+                <ul>
+                    <li>
+                        <a href="#qiang-zhan-shi-duo-ren-wu">搶佔式多任務</a>
+                    </li><li>
+                        <a href="#xie-zuo-shi-duo-ren-wu">協作式多任務</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#async-await-in-rust">Async/Await in Rust</a>
+                <ul>
+                    <li>
+                        <a href="#futures">Futures</a>
+                    </li><li>
+                        <a href="#tong-futures-yi-qi-gong-zuo">同 Futures 一起工作</a>
+                    </li><li>
+                        <a href="#the-async-await-pattern">The Async/Await Pattern</a>
+                    </li><li>
+                        <a href="#pinning">Pinning</a>
+                    </li><li>
+                        <a href="#zhi-xing-qi-he-huan-xing-qi">執行器 和 喚醒器</a>
+                    </li><li>
+                        <a href="#xie-zuo-shi-duo-ren-wu-1">協作式多任務?</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#shi-xian">實現</a>
+                <ul>
+                    <li>
+                        <a href="#ren-wu-task">任務 Task</a>
+                    </li><li>
+                        <a href="#jian-dan-de-zhi-xing-qi">簡單的執行器</a>
+                    </li><li>
+                        <a href="#yi-bu-jian-pan-shu-ru">異步鍵盤輸入</a>
+                    </li><li>
+                        <a href="#dai-huan-xing-qi-zhi-chi-de-zhi-xing-qi">帶喚醒器支持的執行器</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#zhai-yao">摘要</a>
+                
+            </li><li>
+                <a href="#xia-yi-bu-yao-gan-ma">下一步要幹嘛?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">評論</a></li>
+        </ul>
+    </details>
+
+<h2 id="duo-ren-wu"><a class="zola-anchor" href="#duo-ren-wu" aria-label="Anchor link for: duo-ren-wu">🔗</a>多任務</h2>
+<p>絕大多數操作系統的一個基本特性是多任務 <a href="https://en.wikipedia.org/wiki/Computer_multitasking"><em>multitasking</em></a> ，它能夠同時執行多個任務。
+例如，你可能在看這篇文章的同時打開了其他程序，比如文本編輯器或終端窗口。
+即使你只打開了一個瀏覽器窗口，也可能有各種後台任務在管理你的桌面窗口、檢查更新或索引文件。</p>
+<p>看起來所有的任務都在同時運行，但實際上一個 CPU 核心一次只能執行一個任務。為了創建任務同時運行的假象，操作系統會快速地在活動任務之間切換，
+這樣每個任務都能取得一點進展。由於計算機的速度很快，我們大多數時候都不會注意到這些切換。</p>
+<p>當單核 CPU 一次只能執行一個任務時，多核 CPU 可以真正並行地運行多個任務。例如，一個有 8 個核心的 CPU 可以同時運行 8 個任務。
+我們將在未來的文章中解釋如何設置多核 CPU。在本文中，我們將專注於單核 CPU，以保持簡單。
+（值得注意的是，所有多核 CPU 都是從只有一個活動核心開始的，所以我們現在可以將它們視為單核 CPU。）</p>
+<p>有兩種形式的多任務：<em>協作式</em> 多任務要求任務定期放棄對 CPU 的控制，以便其他任務可以取得進展。
+<em>抢占式</em> 多任務使用操作系統功能在任意時間點強制暫停線程來切換線程。接下來，我們將更詳細地探討兩種多任務的形式，並討論它們各自的優點和缺點。</p>
+<h3 id="qiang-zhan-shi-duo-ren-wu"><a class="zola-anchor" href="#qiang-zhan-shi-duo-ren-wu" aria-label="Anchor link for: qiang-zhan-shi-duo-ren-wu">🔗</a>搶佔式多任務</h3>
+<p>搶佔式多任務後面的思想是操作系統控制何時切換任務。為此，它利用了操作系統在每次中斷時重新獲得對 CPU 的控制。這使得在系統有新的輸入時切換任務成為可能。例如，當滑鼠移動或網絡數據包到達時，可以切換任務。操作系統還可以通過配置硬件計時器在一段時間後發送中斷來確定任務允許運行的確切時間</p>
+<p>下面的圖形展示了硬件中斷時的任務切換過程：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/regain-control-on-interrupt.svg" alt="" /></p>
+<p>第一行中，CPU 正在執行程序 <code>A</code> 的任務 <code>A1</code>。所有其他任務都被暫停了。在第二行中，硬件中斷到達了 CPU。
+正如在 硬件中斷 <a href="https://os.phil-opp.com/hardware-interrupts/"><em>Hardware Interrupts</em></a> 文章中描述的那樣，CPU 立即停止了任務 <code>A1</code> 的執行，並跳轉到中斷描述符表（IDT）中定義的中斷處理程序。
+通過這個中斷處理程序，操作系統現在再次控制了 CPU，這使得它可以切換到任務 <code>B1</code> 而不是繼續任務 <code>A1</code>。</p>
+<h4 id="bao-cun-zhuang-tai"><a class="zola-anchor" href="#bao-cun-zhuang-tai" aria-label="Anchor link for: bao-cun-zhuang-tai">🔗</a>保存狀態</h4>
+<p>既然任務在任意時間點被中斷，它們可能在一些計算的中間。為了能夠稍後恢復它們，操作系統必須備份任務的整個狀態，
+包括它的調用棧 <a href="https://en.wikipedia.org/wiki/Call_stack">call stack</a> 和所有 CPU 寄存器的值。這個過程被稱為上下文切換 <a href="https://en.wikipedia.org/wiki/Context_switch"><em>context switch</em></a>。</p>
+<p>由於調用棧可能非常大，操作系統通常為每個任務設置一個單獨的調用棧，而不是在每次任務切換時備份調用棧內容。
+這種帶有其自己的棧的認爲被稱為 執行線程 <a href="https://en.wikipedia.org/wiki/Thread_(computing)"><em>thread of execution</em></a> 或簡稱為 線程 <em>thread</em>。
+通過為每個任務使用單獨的棧，只需要在上下文切換時保存寄存器內容（包括程序計數器和棧指針）。 </p>
+<h4 id="tao-lun"><a class="zola-anchor" href="#tao-lun" aria-label="Anchor link for: tao-lun">🔗</a>討論</h4>
+<p>搶佔式多任務主要的好處是操作系統可以完全控制任務的允許執行時間。這樣，它可以保證每個任務都能公平地獲得 CPU 的時間，而不需要信任 任務的合作。
+這在運行第三方任務或多個用戶共享系統時尤為重要。</p>
+<p>搶佔式多任務的缺點是每個任務都需要自己的棧。與共享棧相比，這導致每個任務的內存使用量更高，並且通常限制了系統中的任務數量。
+另一個缺點是操作系統總是需要在每次任務切換時保存完整的 CPU 寄存器狀態，即使任務只使用了寄存器的一小部分。</p>
+<p>搶佔式多任務和線程是操作系統的基本組件，因為它們使得運行不受信任的用戶空間程序成為可能。
+我們將在未來的文章中詳細討論這些概念。然而，在本文中，我們將專注於協作式多任務，它也為我們的內核提供了有用的功能。</p>
+<h3 id="xie-zuo-shi-duo-ren-wu"><a class="zola-anchor" href="#xie-zuo-shi-duo-ren-wu" aria-label="Anchor link for: xie-zuo-shi-duo-ren-wu">🔗</a>協作式多任務</h3>
+<p>協作式多任務讓每個任務運行直到它自願放棄對 CPU 的控制，而不是在任意時間點強制暫停運行的任務。
+這使得任務可以在方便的時間點暫停自己，例如，當它們需要等待 I/O 操作時。</p>
+<p>協作式多任務通常用於語言級別，比如協程 <a href="https://en.wikipedia.org/wiki/Coroutine">coroutines</a> 或 <a href="https://rust-lang.github.io/async-book/01_getting_started/04_async_await_primer.html">async/await</a> 的形式。
+其思想是程序員或編譯器在程序中插入 <a href="https://en.wikipedia.org/wiki/Yield_(multithreading)"><em>yield</em></a> 操作，這樣可以放棄對 CPU 的控制，讓其他任務運行。
+例如，可以在復雜循環的每次迭代後插入一個 yield。</p>
+<p>通常將協作式多任務與 異步操作 <a href="https://en.wikipedia.org/wiki/Asynchronous_I/O">asynchronous operations</a> 結合在一起。
+當一個操作還沒有完成時，它不會阻止其他任務運行，而是返回一個 “未就緒” 的狀態。在這種情況下，等待的任務可以執行一個 yield 操作，讓其他任務運行。</p>
+<h4 id="bao-cun-zhuang-tai-1"><a class="zola-anchor" href="#bao-cun-zhuang-tai-1" aria-label="Anchor link for: bao-cun-zhuang-tai-1">🔗</a>保存狀態</h4>
+<p>既然任務自己定義了暫停點，它們不需要操作系統保存它們的狀態。相反，它們可以在暫停自己之前保存它們需要的狀態，
+這通常會帶來更好的性能。例如，一個剛完成了復雜計算的任務可能只需要備份計算的最終結果，因為它不再需要中間結果。</p>
+<p>協作式多任務的語言級實現通常甚至能夠在暫停之前備份調用棧的必要部分。
+例如，Rust 的 async/await 實現會在暫停之前備份所有仍然需要的本地變量到一個自動生成的結構體中（見下文）。
+通過在暫停之前備份調用棧的相關部分，所有任務都可以共享一個調用棧，這導致每個任務的內存消耗大大降低。
+這使得可以創建幾乎任意數量的協作式任務而不會耗盡內存。</p>
+<h4 id="tao-lun-1"><a class="zola-anchor" href="#tao-lun-1" aria-label="Anchor link for: tao-lun-1">🔗</a>討論</h4>
+<p>協作式多任務的缺點是一個不合作的任務可能運行無限長的時間。因此，一個惡意或有缺陷的任務可能會阻止其他任務運行，從而減慢甚至阻塞整個系統。
+因此，只有當所有任務都知道合作時，協作式多任務才應該使用。舉個反例，讓操作系統依賴於任意用戶級程序的合作是不明智的。</p>
+<p>然而，協作式多任務的強大性能和內存優勢使得它成為程序內部使用的一個好方法，特別是與異步操作結合使用。
+由於操作系統內核是一個與異步硬件交互的性能關鍵型程序，協作式多任務似乎是實現並發性的一個好方法。</p>
+<h2 id="async-await-in-rust"><a class="zola-anchor" href="#async-await-in-rust" aria-label="Anchor link for: async-await-in-rust">🔗</a>Async/Await in Rust</h2>
+<p>Rust 語言提供了對協作式多任務的第一級別支持，這種支持以 async/await 的形式呈現。
+在我們探討 async/await 是什麼以及它是如何工作之前，我們需要了解 Rust 中 <em>futures</em> 和異步編程是如何工作的。</p>
+<h3 id="futures"><a class="zola-anchor" href="#futures" aria-label="Anchor link for: futures">🔗</a>Futures</h3>
+<p>一個 <em>future</em> 代表一個可能還沒有可用的值。這可能是，例如，由另一個任務計算的整數或從網絡下載的文件。
+與等待值可用不同，future 使得可以繼續執行直到需要值。</p>
+<h4 id="li-zi"><a class="zola-anchor" href="#li-zi" aria-label="Anchor link for: li-zi">🔗</a>例子</h4>
+<p>futures 的概念最好通過一個小例子來說明：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/async-example.svg" alt="序列圖： main 調用 read_file 並且被阻塞直到它返回；然後它調用 foo() 並且也被阻塞直到它返回。同樣的過程重複了，但這次調用了 async_read_file，它直接返回一個 future；然後再次調用 foo()，這次它與文件加載並行運行。文件在 foo() 返回之前已經可用了。" /></p>
+<p>這個序列圖展示了一個 <code>main</code> 函數，它從文件系統讀取文件，然後調用一個 <code>foo</code> 函數。
+這個過程重複了兩次：一次是同步的 <code>read_file</code> 調用，一次是異步的 <code>async_read_file</code> 調用。</p>
+<p>使用同步調用，<code>main</code> 函數需要等待直到文件從文件系統加載完畢。只有這樣它才能調用 <code>foo</code> 函數，這需要它再次等待結果。</p>
+<p>使用異步 <code>async_read_file</code> 調用，文件系統直接返回一個 future，並在後台異步加載文件。
+這使得 <code>main</code> 函數可以更早地調用 <code>foo</code>，這樣它可以與文件加載並行運行。
+在這個例子中，文件加載甚至在 <code>foo</code> 返回之前就完成了，所以 <code>main</code> 可以在 <code>foo</code> 返回後直接使用文件而不需要進一步等待。</p>
+<h4 id="futures-in-rust"><a class="zola-anchor" href="#futures-in-rust" aria-label="Anchor link for: futures-in-rust">🔗</a>Futures in Rust</h4>
+<p>在 Rust 中，futures 由 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html"><code>Future</code></a> trait 表示，它看起來像這樣：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub trait </span><span>Future {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Output</span><span>;
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;</span><span style="color:#569cd6;">Self::</span><span>Output&gt;;
+</span><span>}
+</span></code></pre>
+<p>那個 關聯類型 [<code>associated type</code>] <code>Output</code> 指定了異步值的類型。
+例如，上面的示例中的 <code>async_read_file</code> 函數將返回一個 <code>Output</code> 設置為 <code>File</code> 的 <code>Future</code> 實例。</p>
+<p>那個 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>poll</code></a> 方法允許檢查值是否已經可用。它返回一個 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>Poll</code></a> 枚舉，看起來像這樣：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub enum </span><span>Poll&lt;T&gt; {
+</span><span>    Ready(T),
+</span><span>    Pending,
+</span><span>}
+</span></code></pre>
+<p>當那個值已經可用（例如，文件已經完全從磁盤讀取完畢），它被包裝在 <code>Ready</code> 變體中返回。
+否則，返回 <code>Pending</code> 變體，這通知調用者該值尚不可用。</p>
+<p>方法 <code>poll</code> 接受兩個參數：<code>self: Pin&lt;&amp;mut Self&gt;</code> 和 <code>cx: &amp;mut Context</code>。
+前者的行為與普通的 <code>&amp;mut self</code> 引用類似，只是 <code>Self</code> 值被 釘住 <a href="https://doc.rust-lang.org/nightly/core/pin/index.html"><em>pinned</em></a> 在它的內存位置。
+在理解 async/await 是如何工作之前，理解 <code>Pin</code> 以及為什麼它是必要的是困難的。因此，我們將在本文後面解釋它。</p>
+<p>參數 <code>cx: &amp;mut Context</code> 的目的是將一個 喚醒器 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> 實例傳遞給異步任務，例如文件系統加載。
+這個 <code>Waker</code> 允許異步任務發出信號，表明它（或它的一部分）已經完成，例如文件已經從磁盤加載完畢。
+由於主任務知道當 <code>Future</code> 可用時它將被通知，所以它不需要一遍又一遍地調用 <code>poll</code>。
+我們將在本文後面實現自己的 <code>Waker</code> 類型時更詳細地解釋這個過程。</p>
+<h3 id="tong-futures-yi-qi-gong-zuo"><a class="zola-anchor" href="#tong-futures-yi-qi-gong-zuo" aria-label="Anchor link for: tong-futures-yi-qi-gong-zuo">🔗</a>同 Futures 一起工作</h3>
+<p>我們現在知道了 futures 是如何定義的，並且了解了 <code>poll</code> 方法背後的基本思想。然而，我們仍然不知道如何有效地使用 futures。
+問題在於 futures 代表了異步任務的結果，這些結果可能還不可用。然而，在實踐中，我們經常需要這些值來進行進一步的計算。
+所以問題是：當我們需要時，我們如何有效地獲取 future 的值？</p>
+<h4 id="waiting-on-futures"><a class="zola-anchor" href="#waiting-on-futures" aria-label="Anchor link for: waiting-on-futures">🔗</a>Waiting on Futures</h4>
+<p>一個可能的答案是等待直到 future 變得可用。這可能看起來像這樣：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> future = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>);
+</span><span style="color:#569cd6;">let</span><span> file_content = </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>    </span><span style="color:#569cd6;">match</span><span> future.poll(…) {
+</span><span>        Poll::Ready(value) </span><span style="color:#569cd6;">=&gt; break</span><span> value,
+</span><span>        Poll::Pending </span><span style="color:#569cd6;">=&gt; </span><span>{}, </span><span style="color:#608b4e;">// do nothing
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>在這裏我們 <em>主動</em> 等待 future，通過在一個循環中一遍又一遍地調用 <code>poll</code>。這裏 <code>poll</code> 的參數不重要，所以我們省略了它們。
+雖然這個解決方案有效，但它非常低效，因為我們一直佔用 CPU 直到值變得可用。</p>
+<p>更有效的方法可能是 <em>阻塞</em> 當前線程直到 future 變得可用。
+當然，這只有在你有線程的時候才可能，所以這個解決方案對我們的內核來說不起作用，至少目前還不行。
+即使在支持阻塞的系統上，這通常也是不希望的，因為它會將一個異步任務再次變成一個同步任務，從而抑制了並行任務的潛在性能優勢。</p>
+<h4 id="future-zu-he-qi"><a class="zola-anchor" href="#future-zu-he-qi" aria-label="Anchor link for: future-zu-he-qi">🔗</a>Future 組合器</h4>
+<p>一個 等待 的替代方案是使用 future 組合器 (future combinators)。Future 組合器 是像 <code>map</code> 這樣的方法，它允許將 futures 連接和組合在一起，
+類似於 <a href="https://doc.rust-lang.org/stable/core/iter/trait.Iterator.html"><code>Iterator</code></a> trait 的方法。與等待 future 不同，這些 combinator 返回一個 future，它們自己應用 <code>poll</code> 上的映射操作。</p>
+<p>做爲例子，一個簡單的 <code>string_len</code> 組合器，它將 <code>Future&lt;Output = String&gt;</code> 轉換成 <code>Future&lt;Output = usize&gt;</code> 可能看起來像這樣：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">struct </span><span>StringLen&lt;F&gt; {
+</span><span>    inner_future: F,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;F&gt; Future </span><span style="color:#569cd6;">for </span><span>StringLen&lt;F&gt; </span><span style="color:#569cd6;">where</span><span> F: Future&lt;Output = String&gt; {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Output </span><span>= </span><span style="color:#569cd6;">usize</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll(</span><span style="color:#569cd6;">mut </span><span>self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut </span><span>Context&lt;&#39;</span><span style="color:#569cd6;">_</span><span>&gt;) -&gt; Poll&lt;T&gt; {
+</span><span>        </span><span style="color:#569cd6;">match </span><span>self.inner_future.poll(cx) {
+</span><span>            Poll::Ready(s) </span><span style="color:#569cd6;">=&gt; </span><span>Poll::Ready(s.len()),
+</span><span>            Poll::Pending </span><span style="color:#569cd6;">=&gt; </span><span>Poll::Pending,
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>string_len(string: impl Future&lt;Output = String&gt;)
+</span><span>    -&gt; impl Future&lt;Output = </span><span style="color:#569cd6;">usize</span><span>&gt;
+</span><span>{
+</span><span>    StringLen {
+</span><span>        inner_future: string,
+</span><span>    }
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// Usage
+</span><span style="color:#569cd6;">fn </span><span>file_len() -&gt; impl Future&lt;Output = </span><span style="color:#569cd6;">usize</span><span>&gt; {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> file_content_future = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>);
+</span><span>    string_len(file_content_future)
+</span><span>}
+</span></code></pre>
+<p>這段代碼不完全能工作，因為它沒有處理 <a href="https://doc.rust-lang.org/stable/core/pin/index.html"><em>pinning</em></a>，但它足以作為一個例子。
+基本思想是 <code>string_len</code> 函數將給定的 <code>Future</code> 實例包裝到一個新的 <code>StringLen</code> 結構體中，它也實現了 <code>Future</code>。
+當包裝的 future 被調用時，它調用內部 future。如果值還不可用，從包裝的 future 也返回 <code>Poll::Pending</code>。
+如果值已經可用，則從 <code>Poll::Ready</code> 變體中提取字符串並計算它的長度。然後，它再次包裝在 <code>Poll::Ready</code> 中並返回。</p>
+<p>用這個 <code>string_len</code> 函數，我們可以計算一個異步字符串的長度而不需要等待它。由於函數再次返回一個 <code>Future</code>，
+調用者不能直接在返回的值上工作，但需要再次使用 組合器 函數。這樣，整個調用圖變成了異步的，
+我們可以在某個時候有效地等待多個 futures，例如，在 <code>main</code> 函數中。</p>
+<p>因爲手工編寫 組合器 函數是困難的，它們通常由庫提供。雖然 Rust 標準庫本身還沒有提供 組合器 方法，
+但是半官方的（並且 <code>no_std</code> 兼容的） <a href="https://docs.rs/futures/0.3.4/futures/"><code>futures</code></a> 庫提供了。它的 <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html"><code>FutureExt</code></a> trait 提供了高級 組合器 方法，
+比如 <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html#method.map"><code>map</code></a> 或 <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html#method.then"><code>then</code></a>，它們可以用來使用任意的閉包來操作結果。</p>
+<h5 id="you-shi"><a class="zola-anchor" href="#you-shi" aria-label="Anchor link for: you-shi">🔗</a>優勢</h5>
+<p>Future 組合器的一個巨大優勢是它們保持了操作的異步性。與異步 I/O 接口結合使用，這種方法可以帶來非常高的性能。
+Future 組合器作為具有 trait 實現的普通結構體，使得編譯器可以對它們進行極限優化。
+有關更多細節，請參見 <a href="https://aturon.github.io/blog/2016/08/11/futures/"><em>Zero-cost futures in Rust</em></a> 文章，它宣布了將 futures 添加到 Rust 生態系統中。</p>
+<h5 id="drawbacks"><a class="zola-anchor" href="#drawbacks" aria-label="Anchor link for: drawbacks">🔗</a>Drawbacks</h5>
+<p>當 future 組合器 使得編寫非常高效的代碼成為可能時，它們在某些情況下可能很難使用，這是因為類型系統和基於閉包的接口。例如，考慮這樣的代碼：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; impl Future&lt;Output = String&gt; {
+</span><span>    async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>).then(</span><span style="color:#569cd6;">move |</span><span>content</span><span style="color:#569cd6;">| </span><span>{
+</span><span>        </span><span style="color:#569cd6;">if</span><span> content.len() &lt; min_len {
+</span><span>            Either::Left(async_read_file(</span><span style="color:#d69d85;">&quot;bar.txt&quot;</span><span>).map(|s| content + </span><span style="color:#569cd6;">&amp;</span><span>s))
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            Either::Right(future::ready(content))
+</span><span>        }
+</span><span>    })
+</span><span>}
+</span></code></pre>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=91fc09024eecb2448a85a7ef6a97b8d8">Try it on the playground</a>)</p>
+<p>這裏我們讀取文件 <code>foo.txt</code>，然後使用 <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html#method.then"><code>then</code></a> 組合器 來連接 基於文件內容的第二個 future。
+如果內容的長度小於給定的 <code>min_len</code>，我們讀取一個不同的 <code>bar.txt</code> 文件並使用 <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html#method.map"><code>map</code></a> 組合器 將它附加到 <code>content</code> 上。
+否則，我們只返回 <code>foo.txt</code> 的內容。</p>
+<p>我們需要使用 [<code>move</code>] 關鍵字來修復傳遞給 <code>then</code> 的閉包，因為否則 <code>min_len</code> 將會有一個生命週期錯誤。
+我們需要使用 <a href="https://docs.rs/futures/0.3.4/futures/future/enum.Either.html"><code>Either</code></a> 包裝器，因為 <code>if</code> 和 <code>else</code> 塊必須總是有相同的類型。由於我們在塊中返回不同的 future 類型，
+我們必須使用包裝器類型將它們統一到一個類型中。
+<a href="https://docs.rs/futures/0.3.4/futures/future/fn.ready.html"><code>ready</code></a> 函數將一個值包裝到一個 future 中，這個 future 立即就緒。這個函數在這裏是必需的，因為 <code>Either</code> 包裝器期望被包裝的值實現了 <code>Future</code>。</p>
+<p>如你所想，這能很快地導致對於大型項目來說非常複雜的代碼。如果涉及借用和不同的生命週期，它會變得特別複雜。
+因此，Rust 在添加對 async/await 的支持時投入了大量的工作，目標是使編寫異步代碼變得更簡單。</p>
+<h3 id="the-async-await-pattern"><a class="zola-anchor" href="#the-async-await-pattern" aria-label="Anchor link for: the-async-await-pattern">🔗</a>The Async/Await Pattern</h3>
+<p>在 async/await 背後的思想是讓程序員編寫看起來像 正常同步代碼 的代碼，但是被編譯器轉換成異步代碼。
+它基於兩個關鍵字 <code>async</code> 和 <code>await</code>。<code>async</code> 關鍵字可以在函數簽名中使用，將一個同步函數轉換成一個返回 future 的異步函數：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>foo() -&gt; </span><span style="color:#569cd6;">u32 </span><span>{
+</span><span>    </span><span style="color:#b5cea8;">0
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// the above is roughly translated by the compiler to:
+</span><span style="color:#569cd6;">fn </span><span>foo() -&gt; impl Future&lt;Output = </span><span style="color:#569cd6;">u32</span><span>&gt; {
+</span><span>    future::ready(</span><span style="color:#b5cea8;">0</span><span>)
+</span><span>}
+</span></code></pre>
+<p>這個關鍵字單獨使用時並不是很有用。然而，在 <code>async</code> 函數內部，<code>await</code> 關鍵字可以用來獲取 future 的異步值：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; String {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> content = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>).await;
+</span><span>    </span><span style="color:#569cd6;">if</span><span> content.len() &lt; min_len {
+</span><span>        content + </span><span style="color:#569cd6;">&amp;</span><span>async_read_file(</span><span style="color:#d69d85;">&quot;bar.txt&quot;</span><span>).await
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        content
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=d93c28509a1c67661f31ff820281d434">Try it on the playground</a>)</p>
+<p>這個函數是對 <a href="https://os.phil-opp.com/zh-TW/async-await/#drawbacks">上面</a> 的 <code>example</code> 函數的直接翻譯，它使用了組合器函數。
+使用 <code>.await</code> 運算符，我們可以獲取 future 的值而不需要任何閉包或 <code>Either</code> 類型。
+因此，我們可以像編寫正常的同步代碼一樣編寫我們的代碼，只是 <em>這仍然是異步代碼</em>。</p>
+<h4 id="zhuang-tai-ji-zhuan-huan"><a class="zola-anchor" href="#zhuang-tai-ji-zhuan-huan" aria-label="Anchor link for: zhuang-tai-ji-zhuan-huan">🔗</a>狀態機轉換</h4>
+<p>在幕後，編譯器將 <code>async</code> 函數體轉換成一狀態機 <a href="https://en.wikipedia.org/wiki/Finite-state_machine"><em>state machine</em></a>，其中每個 <code>.await</code> 調用代表一個不同的狀態。
+對於上面的 <code>example</code> 函數，編譯器創建了一個具有以下四個狀態的狀態機：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/async-state-machine-states.svg" alt="Four states: start, waiting on foo.txt, waiting on bar.txt, end" /></p>
+<p>每個狀態代表了函數中的一個不同的暫停點。 <em>“Start”</em> 和 <em>“End”</em> 狀態代表了函數在執行的開始和結束。
+<em>“Waiting on foo.txt”</em> 狀態代表了函數當前正在等待第一個 <code>async_read_file</code> 的結果。
+同樣地， <em>“Waiting on bar.txt”</em> 狀態代表了函數正在等待第二個 <code>async_read_file</code> 的結果的暫停點。</p>
+<p>狀態機通過使每個 <code>poll</code> 調用成為一個可能的狀態轉換來實現 <code>Future</code> trait：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/async-state-machine-basic.svg" alt="Four states and their transitions: start, waiting on foo.txt, waiting on bar.txt, end" /></p>
+<p>該圖使用箭頭表示狀態轉換，使用菱形表示替代路徑。例如，如果 <code>foo.txt</code> 文件還沒有準備好，則採用 <em>“no”</em> 路徑，並達到 <em>“Waiting on foo.txt”</em> 狀態。
+否則，採用 <em>“yes”</em> 路徑。沒有標題的小紅色菱形代表 <code>example</code> 函數的 <code>if content.len() &lt; 100</code> 分支。</p>
+<p>我們看到第一個 <code>poll</code> 調用啟動了函數並讓它運行直到它達到一個還未準備好的 future。
+如果所有的 future 都準備好了，函數可以運行到 <em>“End”</em> 狀態，並在 <code>Poll::Ready</code> 中返回它的結果。
+否則，狀態機進入等待狀態並返回 <code>Poll::Pending</code>。在下一個 <code>poll</code> 調用中，狀態機從最後一個等待的狀態開始，並重試最後一個操作。</p>
+<h4 id="bao-cun-zhuang-tai-2"><a class="zola-anchor" href="#bao-cun-zhuang-tai-2" aria-label="Anchor link for: bao-cun-zhuang-tai-2">🔗</a>保存狀態</h4>
+<p>為了能夠從上一個等待狀態繼續，狀態機必須在內部保持當前的狀態。此外，它必須保存所有它需要在下一個 <code>poll</code> 調用中繼續執行的變量。
+這就是編譯器真正發揮作用的地方：因為它知道哪些變量何時使用，它可以自動生成具有確切所需變量的結構體。</p>
+<p>作為一個例子，編譯器為上面的 <code>example</code> 函數生成了像下面這樣的結構體：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// The `example` function again so that you don&#39;t have to scroll up
+</span><span>async </span><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; String {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> content = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>).await;
+</span><span>    </span><span style="color:#569cd6;">if</span><span> content.len() &lt; min_len {
+</span><span>        content + </span><span style="color:#569cd6;">&amp;</span><span>async_read_file(</span><span style="color:#d69d85;">&quot;bar.txt&quot;</span><span>).await
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        content
+</span><span>    }
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// The compiler-generated state structs:
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>StartState {
+</span><span>    min_len: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>WaitingOnFooTxtState {
+</span><span>    min_len: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    foo_txt_future: impl Future&lt;Output = String&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>WaitingOnBarTxtState {
+</span><span>    content: String,
+</span><span>    bar_txt_future: impl Future&lt;Output = String&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>EndState {}
+</span></code></pre>
+<p>在 <em>“start”</em> 和 <em>“Waiting on foo.txt”</em> 狀態中，<code>min_len</code> 參數需要被保存以便與 <code>content.len()</code> 進行後續比較。
+<em>“Waiting on foo.txt”</em> 狀態另外保存了一個 <code>foo_txt_future</code>，它代表了 <code>async_read_file</code> 調用返回的 future。
+當狀態機繼續運行時，這個 future 需要再次被調用，所以它需要被保存。</p>
+<p><em>“Waiting on bar.txt”</em> 狀態包含了 <code>content</code> 變量，以便在 <code>bar.txt</code> 可用時進行字符串連接。
+它還保存了一個 <code>bar_txt_future</code>，它代表了 <code>bar.txt</code> 的異步加載過程。這個結構體不包含 <code>min_len</code> 變量，因為在 <code>content.len()</code> 比較之後它不再需要了。
+在 <em>“end”</em> 狀態中不保存任何變量，因為函數已經運行到了結束。</p>
+<p>請記住，這只是編譯器可能生成的代碼的一個例子。結構體名稱和字段布局是實現細節，可能是不同的。</p>
+<h4 id="wan-zheng-de-zhuang-tai-ji-lei-xing"><a class="zola-anchor" href="#wan-zheng-de-zhuang-tai-ji-lei-xing" aria-label="Anchor link for: wan-zheng-de-zhuang-tai-ji-lei-xing">🔗</a>完整的狀態機類型</h4>
+<p>雖然確切的編譯器生成的代碼是一個實現細節，但它有助於理解想象 <code>example</code> 函數的狀態機 <em>可能</em> 看起來像什麼。
+我們已經定義了表示不同狀態的結構體並包含了所需的變量。為了在它們之上創建一個狀態機，我們可以將它們組合成一個 <a href="https://doc.rust-lang.org/book/ch06-01-defining-an-enum.html"><code>enum</code></a>：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">enum </span><span>ExampleStateMachine {
+</span><span>    Start(StartState),
+</span><span>    WaitingOnFooTxt(WaitingOnFooTxtState),
+</span><span>    WaitingOnBarTxt(WaitingOnBarTxtState),
+</span><span>    End(EndState),
+</span><span>}
+</span></code></pre>
+<p>我們定義了一個獨立的枚舉變體來表示每個狀態，並將相應的狀態結構體作為每個變體的字段添加到其中。
+為了實現狀態轉換，編譯器基於 <code>example</code> 函數生成了 <code>Future</code> trait 的實現：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>Future </span><span style="color:#569cd6;">for </span><span>ExampleStateMachine {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Output </span><span>= String; </span><span style="color:#608b4e;">// return type of `example`
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;</span><span style="color:#569cd6;">Self::</span><span>Output&gt; {
+</span><span>        </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>            </span><span style="color:#569cd6;">match </span><span>self { </span><span style="color:#608b4e;">// TODO: handle pinning
+</span><span>                ExampleStateMachine::Start(state) </span><span style="color:#569cd6;">=&gt; </span><span>{…}
+</span><span>                ExampleStateMachine::WaitingOnFooTxt(state) </span><span style="color:#569cd6;">=&gt; </span><span>{…}
+</span><span>                ExampleStateMachine::WaitingOnBarTxt(state) </span><span style="color:#569cd6;">=&gt; </span><span>{…}
+</span><span>                ExampleStateMachine::End(state) </span><span style="color:#569cd6;">=&gt; </span><span>{…}
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>該 future 的 <code>Output</code> 類型是 <code>String</code>，因為它是 <code>example</code> 函數的返回類型。
+為了實現 <code>poll</code> 函數，我們在一個 <code>loop</code> 中使用 <code>match</code> 語句對當前狀態進行分支。
+我們的想法是只要可能就切換到下一個狀態，並在無法繼續時使用顯式的 <code>return Poll::Pending</code>。</p>
+<p>為了簡化，我們只顯示簡化的代碼並且不處理 <a href="https://doc.rust-lang.org/stable/core/pin/index.html">釘住</a>、所有權、生命週期等。因此，這裏和下面的代碼應該被視為偽代碼，不應該直接使用。
+當然，真正的編譯器生成的代碼可以正確地處理所有事情，盡管可能是以與這裏展示的不同的方式。</p>
+<p>爲了使代碼片段更小，我們分別展示每個 <code>match</code> 分支的代碼。讓我們從 <code>Start</code> 狀態開始：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>ExampleStateMachine::Start(state) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// from body of `example`
+</span><span>    </span><span style="color:#569cd6;">let</span><span> foo_txt_future = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>);
+</span><span>    </span><span style="color:#608b4e;">// `.await` operation
+</span><span>    </span><span style="color:#569cd6;">let</span><span> state = WaitingOnFooTxtState {
+</span><span>        min_len: state.min_len,
+</span><span>        foo_txt_future,
+</span><span>    };
+</span><span>    *self = ExampleStateMachine::WaitingOnFooTxt(state);
+</span><span>}
+</span></code></pre>
+<p>狀態機在函數的開始時處於 <code>Start</code> 狀態。在這種情況下，我們執行 <code>example</code> 函數的所有代碼直到第一個 <code>.await</code>。
+為了處理 <code>.await</code> 操作，我們將狀態機 <code>self</code> 的狀態更改為 <code>WaitingOnFooTxt</code>，這包括了 <code>WaitingOnFooTxtState</code> 結構體的構造.</p>
+<p>因爲 <code>match self {…}</code> 語句在一個循環中執行，所以執行直接跳到 <code>WaitingOnFooTxt</code> 分支：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>ExampleStateMachine::WaitingOnFooTxt(state) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>    </span><span style="color:#569cd6;">match</span><span> state.foo_txt_future.poll(cx) {
+</span><span>        Poll::Pending </span><span style="color:#569cd6;">=&gt; return </span><span>Poll::Pending,
+</span><span>        Poll::Ready(content) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#608b4e;">// from body of `example`
+</span><span>            </span><span style="color:#569cd6;">if</span><span> content.len() &lt; state.min_len {
+</span><span>                </span><span style="color:#569cd6;">let</span><span> bar_txt_future = async_read_file(</span><span style="color:#d69d85;">&quot;bar.txt&quot;</span><span>);
+</span><span>                </span><span style="color:#608b4e;">// `.await` operation
+</span><span>                </span><span style="color:#569cd6;">let</span><span> state = WaitingOnBarTxtState {
+</span><span>                    content,
+</span><span>                    bar_txt_future,
+</span><span>                };
+</span><span>                *self = ExampleStateMachine::WaitingOnBarTxt(state);
+</span><span>            } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>                *self = ExampleStateMachine::End(EndState);
+</span><span>                </span><span style="color:#569cd6;">return </span><span>Poll::Ready(content);
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>在這個 <code>match</code> 分支中，我們首先調用 <code>foo_txt_future</code> 的 <code>poll</code> 函數。如果它還沒有準備好，我們退出循環並返回 <code>Poll::Pending</code>。
+由於在這種情況下 <code>self</code> 保持在 <code>WaitingOnFooTxt</code> 狀態，下一個 <code>poll</code> 調用將進入相同的 <code>match</code> 分支並重試 <code>foo_txt_future</code> 的輪詢。</p>
+<p>當 <code>foo_txt_future</code> 準備好時，我們將結果分配給 <code>content</code> 變量並繼續執行 <code>example</code> 函數的代碼：
+如果 <code>content.len()</code> 小於狀態結構體中保存的 <code>min_len</code>，我們異步讀取 <code>bar.txt</code> 文件。
+我們再次將 <code>.await</code> 操作轉換成一個狀態變化，這次是到 <code>WaitingOnBarTxt</code> 狀態。
+由於我們在一個循環中執行 <code>match</code>，所以執行直接跳到新狀態的 <code>match</code> 分支，並輪詢 <code>bar_txt_future</code>。</p>
+<p>如果我們進入 <code>else</code> 分支，則不會進行進一步的 <code>.await</code> 操作。我們達到函數的結尾並將 <code>content</code> 包裝在 <code>Poll::Ready</code> 中返回。
+我們還將當前的狀態更改為 <code>End</code> 狀態。</p>
+<p>狀態 <code>WaitingOnBarTxt</code> 的代碼如下：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>ExampleStateMachine::WaitingOnBarTxt(state) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>    </span><span style="color:#569cd6;">match</span><span> state.bar_txt_future.poll(cx) {
+</span><span>        Poll::Pending </span><span style="color:#569cd6;">=&gt; return </span><span>Poll::Pending,
+</span><span>        Poll::Ready(bar_txt) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            *self = ExampleStateMachine::End(EndState);
+</span><span>            </span><span style="color:#608b4e;">// from body of `example`
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Poll::Ready(state.content + </span><span style="color:#569cd6;">&amp;</span><span>bar_txt);
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>類似於 <code>WaitingOnFooTxt</code> 狀態，我們首先輪詢 <code>bar_txt_future</code>。如果它還沒有準備好，我們退出循環並返回 <code>Poll::Pending</code>。
+反之，我們可以執行 <code>example</code> 函數的最後一個操作：將 <code>content</code> 變量與 future 的結果連接起來。
+我們將狀態機更改為 <code>End</code> 狀態並在 <code>Poll::Ready</code> 中返回結果。</p>
+<p>最後，<code>End</code> 狀態的代碼如下：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>ExampleStateMachine::End(</span><span style="color:#569cd6;">_</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>    panic!(</span><span style="color:#d69d85;">&quot;poll called after Poll::Ready was returned&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Future 在返回 <code>Poll::Ready</code> 後不應再次被輪詢到，所以如果在 <code>End</code> 狀態下調用 <code>poll</code>，我們會 panic。</p>
+<p>我們現在知道了編譯器生成的狀態機及其對 <code>Future</code> trait 的實現 <em>可能</em> 看起來的樣子。 真實情況下，編譯器以不同的方式生成代碼。
+（如果你感興趣，看看目前的基於 <a href="https://doc.rust-lang.org/stable/unstable-book/language-features/coroutines.html"><em>coroutines</em></a> 的實現，但這只是個實現細節之一。）</p>
+<p>整個狀態機的最後一塊拼圖是 <code>example</code> 函數本身的生成代碼。記住，函數頭部是這樣定義的：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; String
+</span></code></pre>
+<p>因爲完整函數體現在被狀態機實現，函數唯一需要做的事情就是初始化狀態機並返回它。生成的代碼可能看起來像這樣：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; ExampleStateMachine {
+</span><span>    ExampleStateMachine::Start(StartState {
+</span><span>        min_len,
+</span><span>    })
+</span><span>}
+</span></code></pre>
+<p>該函數不再有 <code>async</code> 修飾符，因為它現在明確地返回一個實現了 <code>Future</code> trait 的 <code>ExampleStateMachine</code> 類型。
+正如預期的那樣，狀態機在 <code>Start</code> 狀態中構造，相應的狀態結構體被初始化為 <code>min_len</code> 參數。</p>
+<p>注意，這個函數不開始狀態機的執行。這是 Rust 中 futures 的一個基本設計決策：它們在第一次輪詢之前不做任何事情。</p>
+<h3 id="pinning"><a class="zola-anchor" href="#pinning" aria-label="Anchor link for: pinning">🔗</a>Pinning</h3>
+<p>我們已經在本文中多次遇到了 <em>釘住</em> (<em>pinning</em>) 這個詞。現在終於是時候探索 <em>釘住操作</em> 是什麼以及為什麼它是必需的。</p>
+<h4 id="self-referential-structs"><a class="zola-anchor" href="#self-referential-structs" aria-label="Anchor link for: self-referential-structs">🔗</a>Self-Referential Structs</h4>
+<p>自引用結構體 (Self-Referential Structs)</p>
+<p>正如上面所解釋的，狀態機轉換將每個暫停點的本地變量存儲在一個結構體中。
+對於像我們的 <code>example</code> 函數這樣的小例子來說，這是直接的，並且不會導致任何問題。
+然而，當變量相互引用時，事情將變得更加困難起來。例如，考慮這個函數：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>pin_example() -&gt; </span><span style="color:#569cd6;">i32 </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> array = [</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">2</span><span>, </span><span style="color:#b5cea8;">3</span><span>];
+</span><span>    </span><span style="color:#569cd6;">let</span><span> element = </span><span style="color:#569cd6;">&amp;</span><span>array[</span><span style="color:#b5cea8;">2</span><span>];
+</span><span>    async_write_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>, element.to_string()).await;
+</span><span>    *element
+</span><span>}
+</span></code></pre>
+<p>這函數創建了一個包含 <code>1</code>、<code>2</code> 和 <code>3</code> 的小 <code>array</code>。然後它創建了對最後一個數組元素的引用並將它存儲在一個 <code>element</code> 變量中。
+接下來，它異步地將數字轉換為字符串寫入到 <code>foo.txt</code> 文件中。最後，它返回 <code>element</code> 引用的數字。</p>
+<p>由於函數使用了單個 <code>await</code> 操作，生成的狀態機有三個狀態：開始、結束和 <em>“等待寫入”</em>。該函數不接受任何參數，所以開始狀態的結構體是空的。
+就像之前一樣，結束狀態的結構體是空的，因為函數在這一點上已經完成了。 <em>“等待寫入”</em> 狀態的結構體更有趣：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">struct </span><span>WaitingOnWriteState {
+</span><span>    array: [1, 2, 3],
+</span><span>    element: 0x1001c, </span><span style="color:#608b4e;">// address of the last array element
+</span><span>}
+</span></code></pre>
+<p>我們需要存儲 <code>array</code> 和 <code>element</code> 變量的值，因為 <code>element</code> 是返回值的一部分，而 <code>array</code> 被 <code>element</code> 所引用。
+由於 <code>element</code> 是一個引用，它存儲了一個指向被引用元素的 <em>指針</em>（即，一個內存地址）。我們在這裏使用 <code>0x1001c</code> 為例指代該地址。
+實際上，它需要是 <code>array</code> 字段的最後一個元素的地址，所以它取決於結構體在內存中的位置。
+具有這種內部指針的結構體被稱為 <em>自引用</em> 結構體，因為它們從它們自己的一個字段中引用自己。</p>
+<h4 id="zi-yin-yong-jie-gou-ti-de-wen-ti"><a class="zola-anchor" href="#zi-yin-yong-jie-gou-ti-de-wen-ti" aria-label="Anchor link for: zi-yin-yong-jie-gou-ti-de-wen-ti">🔗</a>自引用結構體的問題</h4>
+<p>自引用結構體的內部指針導致了一個基本問題，當我們觀察它們的內存布局時就會變得明顯：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/self-referential-struct.svg" alt="array at 0x10014 with fields 1, 2, and 3; element at address 0x10020, pointing to the last array element at 0x1001c" /></p>
+<p><code>array</code> 字段從地址 <code>0x10014</code> 開始，<code>element</code> 字段從地址 <code>0x10020</code> 開始。它指向地址 <code>0x1001c</code>，因為最後一個數組元素位於這個地址。在這一點上，一切都還好。然而，當我們將這個結構體移動到不同的內存地址時，問題就出現了：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/self-referential-struct-moved.svg" alt="array at 0x10024 with fields 1, 2, and 3; element at address 0x10030, still pointing to 0x1001c, even though the last array element now lives at 0x1002c" /></p>
+<p>我們移動了結構體，使它現在從地址 <code>0x10024</code> 開始。這可能發生在我們將結構體作為函數參數傳遞或將它賦值給不同的棧變量時。問題在於 <code>element</code> 字段仍然指向地址 <code>0x1001c</code>，即使最後一個 <code>array</code> 元素現在位於地址 <code>0x1002c</code>。因此，指針是懸空的，這導致下一個 <code>poll</code> 調用時發生未定義的行為。</p>
+<h4 id="ke-neng-de-jie-jue-fang-an"><a class="zola-anchor" href="#ke-neng-de-jie-jue-fang-an" aria-label="Anchor link for: ke-neng-de-jie-jue-fang-an">🔗</a>可能的解決方案</h4>
+<p>有三個基本方法來解決懸空指針問題：</p>
+<ul>
+<li>
+<p><strong>在移動時更新指針:</strong> 這個方法的想法是在結構體在內存中移動時更新內部指針，以便它在移動後仍然有效。不幸的是，這種方法需要對 Rust 進行大量的更改，這可能導致巨大的性能損失。原因是某種類型的運行時需要跟踪所有結構體字段的類型，並在每次移動操作時檢查是否需要更新指針。</p>
+</li>
+<li>
+<p><strong>存儲偏移量而不是自引用:</strong> 為了避免更新指針的要求，編譯器可以嘗試將自引用存儲為結構體開始的偏移量。例如，上面的 <code>WaitingOnWriteState</code> 結構體的 <code>element</code> 字段可以以 <code>element_offset</code> 字段的形式存儲，其值為 8，因為引用的數組元素在結構體開始的 8 字節後開始。由於結構體移動時偏移量保持不變，因此不需要進行字段更新。</p>
+<p>這個方法的問題在於它需要編譯器檢測所有的自引用。這在編譯時是不可能的，因為引用的值可能取決於用戶輸入，所以我們需要一個運行時系統來分析引用並正確地創建狀態結構體。這不僅會導致運行時成本，還會阻止某些編譯器優化，這將導致大量的性能損失。</p>
+</li>
+<li>
+<p><strong>禁止移動結構體:</strong> 正如我們上面看到的，懸空指針只有在我們移動結構體時才會出現。通過完全禁止對自引用結構體的移動操作，問題也可以避免。這種方法的巨大優勢在於它可以在類型系統級別實現而不需要額外的運行時成本。缺點是它將 可能的自引用結構體的移動操作 的 處理負擔 放在了程序員身上。</p>
+</li>
+</ul>
+<p>Rust 選擇了第三種解決方案，因為它的原則是提供 <em>零成本抽象</em>，這意味著抽象不應該帶來額外的運行時成本。 釘住 <a href="https://doc.rust-lang.org/stable/core/pin/index.html"><em>pinning</em></a> API 是為此目的而提出的，它在 <a href="https://github.com/rust-lang/rfcs/blob/master/text/2349-pin.md">RFC 2349</a>。
+在接下來的內容中，我們將簡要介紹這個 API，並解釋它如何與 async/await 和 futures 一起工作。</p>
+<h4 id="dui-shang-zhi-shu-zhi"><a class="zola-anchor" href="#dui-shang-zhi-shu-zhi" aria-label="Anchor link for: dui-shang-zhi-shu-zhi">🔗</a>堆上之數值</h4>
+<p>第一個觀察是， 堆分配的 <a href="https://os.phil-opp.com/heap-allocation/">heap-allocated</a> 值大多數情況下已經有一個固定的內存地址。
+它們是通過調用 <code>allocate</code> 函數創建的，然後通過指針類型（如 <code>Box&lt;T&gt;</code>）引用。
+雖然移動指針類型是可能的，但指針指向的堆值保持在相同的內存地址，直到它再次通過 <code>deallocate</code> 調用被釋放。</p>
+<p>使用堆分配，我們可以嘗試創建一個自引用結構體：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>main() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> heap_value = Box::new(SelfReferential {
+</span><span>        self_ptr: </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">as *const _</span><span>,
+</span><span>    });
+</span><span>    </span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#569cd6;">&amp;</span><span>*heap_value </span><span style="color:#569cd6;">as *const</span><span> SelfReferential;
+</span><span>    heap_value.self_ptr = ptr;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;heap value at: </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, heap_value);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;internal reference: </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, heap_value.self_ptr);
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>SelfReferential {
+</span><span>    self_ptr: </span><span style="color:#569cd6;">*const Self</span><span>,
+</span><span>}
+</span></code></pre>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=ce1aff3a37fcc1c8188eeaf0f39c97e8">Try it on the playground</a>)</p>
+<p>我們創建了一個名為 <code>SelfReferential</code> 的簡單結構體，它包含一個單指針字段。首先，我們使用空指針初始化這個結構體，然後使用 <code>Box::new</code> 在堆上分配它。然後，我們確定堆分配的結構體的內存地址並將其存儲在 <code>ptr</code> 變量中。最後，我們通過將 <code>ptr</code> 變量賦值給 <code>self_ptr</code> 字段使結構體成為自引用。</p>
+<p>當我們執行這段代碼 <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=ce1aff3a37fcc1c8188eeaf0f39c97e8">on the playground</a> 時，我們看到堆值的地址和它的內部指針是相等的，
+這意味著 <code>self_ptr</code> 字段是一個有效的自引用。由於 <code>heap_value</code> 變量只是一個指針，
+移動它（例如，通過將它傳遞給一個函數）不會改變結構體本身的地址，所以 <code>self_ptr</code> 即使指針被移動也保持有效。</p>
+<p>然而，這仍然有個辦法破壞這個例子：我們可以移出一個 <code>Box&lt;T&gt;</code> 或替換它的內容：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> stack_value = mem::replace(</span><span style="color:#569cd6;">&amp;mut </span><span>*heap_value, SelfReferential {
+</span><span>    self_ptr: </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">as *const _</span><span>,
+</span><span>});
+</span><span>println!(</span><span style="color:#d69d85;">&quot;value at: </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#569cd6;">&amp;</span><span>stack_value);
+</span><span>println!(</span><span style="color:#d69d85;">&quot;internal reference: </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, stack_value.self_ptr);
+</span></code></pre>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=e160ee8a64cba4cebc1c0473dcecb7c8">Try it on the playground</a>)</p>
+<p>這裏我們使用 <a href="https://doc.rust-lang.org/nightly/core/mem/fn.replace.html"><code>mem::replace</code></a> 函數將堆分配的值替換為一個新的結構體實例。
+這允許我們將原始的 <code>heap_value</code> 移動到棧上，而結構體的 <code>self_ptr</code> 字段現在是一個懸空指針，它仍然指向舊的堆地址。
+當你在 playground 上嘗試運行這個例子時，你會看到打印的 <em>“value at:”</em> 和 <em>“internal reference:”</em> 行確實顯示了不同的指針。
+因此，僅僅堆分配一個值並不足以使自引用安全。</p>
+<p>這裏根本的問題是 <code>Box&lt;T&gt;</code> 允許我們獲得對堆分配值的 <code>&amp;mut T</code> 引用。這個 <code>&amp;mut</code> 引用使得我們可以使用 <a href="https://doc.rust-lang.org/nightly/core/mem/fn.replace.html"><code>mem::replace</code></a> 或 <a href="https://doc.rust-lang.org/nightly/core/mem/fn.swap.html"><code>mem::swap</code></a> 這樣的方法來使堆分配的值失效。為了解決這個問題，我們必須防止創建對自引用結構體的 <code>&amp;mut</code> 引用。</p>
+<h4 id="pin-box-t-and-unpin"><a class="zola-anchor" href="#pin-box-t-and-unpin" aria-label="Anchor link for: pin-box-t-and-unpin">🔗</a><code>Pin&lt;Box&lt;T&gt;&gt;</code> and <code>Unpin</code></h4>
+<p>釘住 pinning API 提供了一個對 <code>&amp;mut T</code> 問題的解決方案，即 <a href="https://doc.rust-lang.org/stable/core/pin/struct.Pin.html"><code>Pin</code></a> 包裝類型和 <a href="https://doc.rust-lang.org/nightly/std/marker/trait.Unpin.html"><code>Unpin</code></a> 標記特型 trait。
+這些類型後面的想法是，在 <code>Pin</code> 的所有方法上設置門檻，這些方法可以用來獲得對包裝值的 <code>&amp;mut</code> 引用（例如 <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.get_mut"><code>get_mut</code></a> 或 <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.deref_mut"><code>deref_mut</code></a>），這些門檻是 <code>Unpin</code> 特型。
+<code>Unpin</code> 特型是一個 <a href="https://doc.rust-lang.org/reference/special-types-and-traits.html#auto-traits"><em>auto trait</em></a>，Rust自動爲所有類型實現了它，除了那些明確地選擇了不實現的類型。
+通過使自引用結構體選擇不實現 <code>Unpin</code> 的類型，對於它們來說，要從 <code>Pin&lt;Box&lt;T&gt;&gt;</code> 類型獲得 <code>&amp;mut T</code> 是沒有（安全的）的辦法的。</p>
+<p>舉個例子，讓我們更新上面的 <code>SelfReferential</code> 類型來選擇不實現 <code>Unpin</code>：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>core::marker::PhantomPinned;
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>SelfReferential {
+</span><span>    self_ptr: </span><span style="color:#569cd6;">*const Self</span><span>,
+</span><span>    _pin: PhantomPinned,
+</span><span>}
+</span></code></pre>
+<p>我們選擇性地添加了另一個 <a href="https://doc.rust-lang.org/nightly/core/marker/struct.PhantomPinned.html"><code>PhantomPinned</code></a> 類型的 <code>_pin</code> 字段到結構體。它是個零大小的標記類型，它的唯一目的是 <em>不</em> 實現 <code>Unpin</code> 特型。
+由於 <a href="https://doc.rust-lang.org/reference/special-types-and-traits.html#auto-traits">auto traits</a> 的工作方式，一個不是 <code>Unpin</code> 的字段足以阻止整個結構體實現 <code>Unpin</code>。</p>
+<p>第二步是將示例中的 <code>Box&lt;SelfReferential&gt;</code> 類型更改為 <code>Pin&lt;Box&lt;SelfReferential&gt;&gt;</code> 類型。
+最簡單的方法是使用 <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.pin"><code>Box::pin</code></a> 函數而不是 <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a> 來創建堆分配的值：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let mut</span><span> heap_value = Box::pin(SelfReferential {
+</span><span>    self_ptr: </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">as *const _</span><span>,
+</span><span>    _pin: PhantomPinned,
+</span><span>});
+</span></code></pre>
+<p>除了將 <code>Box::new</code> 更改為 <code>Box::pin</code> 之外，我們還需要在結構體初始化程序中添加新的 <code>_pin</code> 字段。由於 <code>PhantomPinned</code> 是一個零大小的類型，我們只需要它的類型名稱來初始化它。</p>
+<p>當我們 <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=961b0db194bbe851ff4d0ed08d3bd98a">嘗試運行我們調整後的例子</a> 時，我們看到它不再工作：</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0594]: cannot assign to data in a dereference of `std::pin::Pin&lt;std::boxed::Box&lt;SelfReferential&gt;&gt;`
+</span><span>  --&gt; src/main.rs:10:5
+</span><span>   |
+</span><span>10 |     heap_value.self_ptr = ptr;
+</span><span>   |     ^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign
+</span><span>   |
+</span><span>   = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `std::pin::Pin&lt;std::boxed::Box&lt;SelfReferential&gt;&gt;`
+</span><span>
+</span><span>error[E0596]: cannot borrow data in a dereference of `std::pin::Pin&lt;std::boxed::Box&lt;SelfReferential&gt;&gt;` as mutable
+</span><span>  --&gt; src/main.rs:16:36
+</span><span>   |
+</span><span>16 |     let stack_value = mem::replace(&amp;mut *heap_value, SelfReferential {
+</span><span>   |                                    ^^^^^^^^^^^^^^^^ cannot borrow as mutable
+</span><span>   |
+</span><span>   = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `std::pin::Pin&lt;std::boxed::Box&lt;SelfReferential&gt;&gt;`
+</span></code></pre>
+<p>由於 <code>Pin&lt;Box&lt;SelfReferential&gt;&gt;</code> 類型不再實現 <code>DerefMut</code> 特型，所以這兩個錯誤都發生了。
+這正是我們想要的，因為 <code>DerefMut</code> 特型會返回一個 <code>&amp;mut</code> 引用，而我們想要防止這種情況發生。
+這只是因為我們選擇了不實現 <code>Unpin</code>，並將 <code>Box::new</code> 更改為 <code>Box::pin</code>。</p>
+<p>現在的問題是編譯器不僅阻止了在第16行移動類型，而且還禁止了在第10行初始化 <code>self_ptr</code> 字段。
+這是因為編譯器無法區分 <code>&amp;mut</code> 引用的有效和無效使用。為了讓初始化再次工作，我們必須使用不安全的 <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.get_unchecked_mut"><code>get_unchecked_mut</code></a> 方法：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// safe because modifying a field doesn&#39;t move the whole struct
+</span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> mut_ref = Pin::as_mut(</span><span style="color:#569cd6;">&amp;mut</span><span> heap_value);
+</span><span>    Pin::get_unchecked_mut(mut_ref).self_ptr = ptr;
+</span><span>}
+</span></code></pre>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=b9ebbb11429d9d79b3f9fffe819e2018">Try it on the playground</a>)</p>
+<p><a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.get_unchecked_mut"><code>get_unchecked_mut</code></a> 函數在 <code>Pin&lt;&amp;mut T&gt;</code> 上工作，而不是在 <code>Pin&lt;Box&lt;T&gt;&gt;</code> 上，因此我們必須使用 <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.as_mut"><code>Pin::as_mut</code></a> 來轉換值。
+然後我們可以使用 <code>get_unchecked_mut</code> 返回的 <code>&amp;mut</code> 引用來設置 <code>self_ptr</code> 字段。</p>
+<p>現在唯一剩下的錯誤是，我們所期待的在 <code>mem::replace</code> 上出現的錯誤。
+記住，這個操作嘗試將堆分配的值移動到棧上，這將破壞存儲在 <code>self_ptr</code> 字段中的自引用。 
+通過選擇不實現 <code>Unpin</code> 並使用 <code>Pin&lt;Box&lt;T&gt;&gt;</code>，我們可以在編譯時阻止這個操作，從而安全地使用自引用結構體。
+正如我們所看到的，編譯器無法證明創建自引用是安全的（目前是這樣），所以我們需要使用一個不安全的塊並自己驗證其正確性。</p>
+<h4 id="zhan-shang-ding-zhu-he-pin-mut-t"><a class="zola-anchor" href="#zhan-shang-ding-zhu-he-pin-mut-t" aria-label="Anchor link for: zhan-shang-ding-zhu-he-pin-mut-t">🔗</a>棧上釘住和 <code>Pin&lt;&amp;mut T&gt;</code></h4>
+<p>前一節中，我們學習了如何使用 <code>Pin&lt;Box&lt;T&gt;&gt;</code> 安全地創建堆分配的自引用值。
+雖然這種方法運行良好並且相對安全（除了不安全的構造），但所需的堆分配會帶來性能成本。
+由於 Rust 力求在可能的情況下提供 <em>零成本抽象</em>，釘住 pinning API 也允許創建指向棧分配值的 <code>Pin&lt;&amp;mut T&gt;</code> 實例。</p>
+<p>不像 <code>Pin&lt;Box&lt;T&gt;&gt;</code> 实例拥有被包装的值的 <em>所有权</em>，<code>Pin&lt;&amp;mut T&gt;</code> 实例只是暂时借用了被包装的值。
+这使得事情变得更加复杂，因为它要求程序员自己确保额外的保证。
+最重要的是，<code>Pin&lt;&amp;mut T&gt;</code> 必须在整个 <code>T</code> 的引用生命周期内保持固定，對於基於棧的變量來說，这可能很难验证。
+为了帮助解决这个问题，存在像 <a href="https://docs.rs/pin-utils/0.1.0-alpha.4/pin_utils/"><code>pin-utils</code></a> 这样的 crate，但我仍然不建议将 釘住操作 应用到栈上，除非你真的知道你在做什么。</p>
+<p>更多資訊，請查看 <a href="https://doc.rust-lang.org/nightly/core/pin/index.html"><code>pin</code> module</a> 的文檔和 <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.new_unchecked"><code>Pin::new_unchecked</code></a> 方法。</p>
+<h4 id="ding-zhu-cao-zuo-he-futures"><a class="zola-anchor" href="#ding-zhu-cao-zuo-he-futures" aria-label="Anchor link for: ding-zhu-cao-zuo-he-futures">🔗</a>釘住操作和 Futures</h4>
+<p>就如我們已在本文中看到的那樣，<a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>Future::poll</code></a> 方法使用釘住操作，它的形式是一個 <code>Pin&lt;&amp;mut Self&gt;</code> 參數：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>poll(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;</span><span style="color:#569cd6;">Self::</span><span>Output&gt;
+</span></code></pre>
+<p>該方法帶有 <code>self: Pin&lt;&amp;mut Self&gt;</code> 而不是普通的 <code>&amp;mut self</code> 的原因是，從 async/await 創建的 future 實例通常是自引用的，正如我們 <a href="https://os.phil-opp.com/zh-TW/async-await/#self-referential-structs">上面</a> 所看到的。
+通過將 <code>Self</code> 包裝到 <code>Pin</code> 中，並讓編譯器為從 async/await 生成的自引用 future 選擇不實現 <code>Unpin</code>，可以保證在 <code>poll</code> 調用之間不會在內存中移動 future。這確保了所有內部引用仍然有效。</p>
+<p>值得注意的是，在第一次 <code>poll</code> 調用之前移動 future 是沒問題的。這是因為 future 是惰性的，直到第一次被輪詢之前它們不會做任何事情。
+生成的狀態機的 <code>start</code> 狀態因此只包含函數參數，而沒有內部引用。為了調用 <code>poll</code>，調用者必須首先將 future 包裝到 <code>Pin</code> 中，
+這確保了 future 在內存中不會再被移動。由於 棧上 釘住操作 更難正確使用，我建議總是使用 <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.pin"><code>Box::pin</code></a> 結合 <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.as_mut"><code>Pin::as_mut</code></a> 來實現。</p>
+<p>如果你有興趣了解如何安全地使用 棧上 釘住操作 自己實現一個 future 組合器 函數，請查看 <code>futures</code> crate 的相對短的 <a href="https://docs.rs/futures-util/0.3.4/src/futures_util/future/future/map.rs.html">source of the <code>map</code> combinator method</a> 和釘住操作文檔的 <a href="https://doc.rust-lang.org/stable/std/pin/index.html#projections-and-structural-pinning">projections and structural pinning</a> 部分。</p>
+<h3 id="zhi-xing-qi-he-huan-xing-qi"><a class="zola-anchor" href="#zhi-xing-qi-he-huan-xing-qi" aria-label="Anchor link for: zhi-xing-qi-he-huan-xing-qi">🔗</a>執行器 和 喚醒器</h3>
+<p>使用 <code>async/await</code>，我們可以使用完全異步的方式舒適地使用 futures。然而，正如我們上面所學到的，futures 在被輪詢之前不會做任何事情。這意味著我們必須在某個時候調用 <code>poll</code>，否則異步代碼永遠不會被執行。</p>
+<p>使用單個 future，我們總是可以 <a href="https://os.phil-opp.com/zh-TW/async-await/#waiting-on-futures">如上所述</a> 地使用循環手動等待每個 future。
+然而，這種方法非常低效，對於創建大量 future 的程序來說並不實用。這個問題的最常見解決方案是定義一個全局的 <em>執行器</em>，它負責輪詢系統中的所有 future 直到它們完成。</p>
+<h4 id="zhi-xing-qi-executors"><a class="zola-anchor" href="#zhi-xing-qi-executors" aria-label="Anchor link for: zhi-xing-qi-executors">🔗</a>執行器 Executors</h4>
+<p>執行器的目的是允許將 future 作為獨立任務進行生成，通常通過某種 <code>spawn</code> 方法。然後執行器負責輪詢所有 future 直到它們完成。
+管理所有 future 的一個重要優勢是，當 future 返回 <code>Poll::Pending</code> 時，執行器可以切換到另一個 future。
+因此，異步操作是並行運行的，並且 CPU 保持忙碌。</p>
+<p>許多執行器的實現也可以利用具有多個 CPU 核心的系統。它們創建了一個 線程池 <a href="https://en.wikipedia.org/wiki/Thread_pool">thread pool</a>，如果有足夠的工作可用，
+它可以利用所有核心，並使用諸如 <a href="https://en.wikipedia.org/wiki/Work_stealing">work stealing</a> 之類的技術來平衡核心之間的負載。
+還有一些針對嵌入式系統的特殊執行器實現，它們優化了低延遲和內存開銷。</p>
+<p>為了避免重複輪詢 future 的開銷，執行器通常利用 Rust 的 futures 支持的 喚醒器 <em>waker</em> API。</p>
+<h4 id="huan-xing-qi-wakers"><a class="zola-anchor" href="#huan-xing-qi-wakers" aria-label="Anchor link for: huan-xing-qi-wakers">🔗</a>喚醒器 Wakers</h4>
+<p>喚醒器 API 的想法是，一個特殊的 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> 類型被傳遞給每個 <code>poll</code> 調用，它被包裝在 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a> 類型中。
+這個 <code>Waker</code> 類型是由執行器創建的，可以被異步任務用來通知它的（部分）完成。
+因此，執行器不需要在之前返回 <code>Poll::Pending</code> 的 future 上調用 <code>poll</code>，直到它被相應的喚醒器通知。</p>
+<p>這最好通過一個小例子來說明：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>write_file() {
+</span><span>    async_write_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>, </span><span style="color:#d69d85;">&quot;Hello&quot;</span><span>).await;
+</span><span>}
+</span></code></pre>
+<p>這個函數異步地將字符串 “Hello” 寫入到 <code>foo.txt</code> 文件中。由於硬盤寫入需要一些時間，這個 future 的第一次 <code>poll</code> 調用可能會返回 <code>Poll::Pending</code>。
+然而，硬盤驅動程序將內部存儲傳遞給 <code>poll</code> 調用的 <code>Waker</code>，並在文件寫入到硬盤時使用它來通知執行器。
+這樣，執行器在收到喚醒器通知之前不需要浪費任何時間嘗試再次 <code>poll</code> 這個 future。</p>
+<p>我們將在本文的實現部分中看到 <code>Waker</code> 類型的工作原理，當我們創建一個具有喚醒器支持的執行器時。</p>
+<h3 id="xie-zuo-shi-duo-ren-wu-1"><a class="zola-anchor" href="#xie-zuo-shi-duo-ren-wu-1" aria-label="Anchor link for: xie-zuo-shi-duo-ren-wu-1">🔗</a>協作式多任務?</h3>
+<p>在本文的開頭，我們談到了抢占式和協作式多任務。雖然抢占式多任務依賴於操作系統強制在運行任務之間切換，
+但協作式多任務要求任務定期通過 <em>yield</em> 操作自願放棄 CPU 控制。協作式方法的一個巨大優勢是任務可以自己保存它們的狀態，
+這導致更有效的上下文切換，並且使得可以在任務之間共享相同的調用棧。</p>
+<p>這可能不是顯而易見的，但 futures 和 async/await 是協作式多任務模式的一種實現：</p>
+<ul>
+<li>
+<p>每個添加到執行器的 future 基本上是一個協作式任務。</p>
+</li>
+<li>
+<p>不同於顯式的使用 yield 操作，futures 通過返回 <code>Poll::Pending</code> 來放棄 CPU 控制（或者在結束時返回 <code>Poll::Ready</code>）。</p>
+<ul>
+<li>
+<p>沒有任何東西強制 futures 放棄 CPU 控制。如果他們想要，他們可以永遠不從 <code>poll</code> 返回，例如，通過在循環中無休止地旋轉。</p>
+</li>
+<li>
+<p>由於每個 future 都可以阻塞執行器中的其他 future 的執行，我們需要相信它們不是惡意的。</p>
+</li>
+</ul>
+</li>
+<li>
+<p>Futures 內部存儲了所有它們需要的狀態，以便在下一次 <code>poll</code> 調用時繼續執行。 使用 async/await，編譯器自動檢測所有需要的變量並將它們存儲在生成的狀態機中。</p>
+<ul>
+<li>
+<p>只保存了繼續執行所需的最小狀態。</p>
+</li>
+<li>
+<p>翻譯上面的文字： 由於 <code>poll</code> 方法在返回時放棄了調用棧，因此可以使用相同的棧來輪詢其他 futures。</p>
+</li>
+</ul>
+</li>
+</ul>
+<p>我們看到 futures 和 async/await 完美地適應了協作式多任務模式；它們只是使用了一些不同的術語。
+在接下來的內容中，我們將 “任務” 和 “future” 兩個術語混着使用。</p>
+<h2 id="shi-xian"><a class="zola-anchor" href="#shi-xian" aria-label="Anchor link for: shi-xian">🔗</a>實現</h2>
+<p>現在我們了解了基於 futures 和 async/await 的協作式多任務在 Rust 中是如何工作的，是時候將對它的支持添加到我們的內核中了。
+由於 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html"><code>Future</code></a> trait 是 <code>core</code> 库的一部分，而 async/await 是語言本身的一個特性，我們在 <code>#![no_std]</code> 內核中使用它時不需要做任何特殊的事情。
+唯一的要求是我們至少使用 Rust 的 nightly 版本 <code>2020-03-25</code>，因為在此之前，async/await 不兼容 <code>no_std</code>。</p>
+<p>就着足夠新的 nightly 版本，我們可以在 <code>main.rs</code> 中開始使用 async/await：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>async </span><span style="color:#569cd6;">fn </span><span>async_number() -&gt; </span><span style="color:#569cd6;">u32 </span><span>{
+</span><span>    </span><span style="color:#b5cea8;">42
+</span><span>}
+</span><span>
+</span><span>async </span><span style="color:#569cd6;">fn </span><span>example_task() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> number = async_number().await;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;async number: </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, number);
+</span><span>}
+</span></code></pre>
+<p>函數 <code>async_number</code> 是一個 <code>async fn</code>，所以編譯器將它轉換為一個實現了 <code>Future</code> 的狀態機。
+由於函數只返回 <code>42</code>，所以生成的 future 將在第一次 <code>poll</code> 調用時直接返回 <code>Poll::Ready(42)</code>。
+像 <code>async_number</code> 一樣，<code>example_task</code> 函數也是一個 <code>async fn</code>。它等待 <code>async_number</code> 返回的數字，然後使用 <code>println</code> 宏打印它。</p>
+<p>爲運行 <code>example_task</code> 返回的 future，我們需要在它上調用 <code>poll</code> 直到它通過返回 <code>Poll::Ready</code> 來標誌它的完成。
+為了做到這一點，我們需要創建一個簡單的執行器類型。</p>
+<h3 id="ren-wu-task"><a class="zola-anchor" href="#ren-wu-task" aria-label="Anchor link for: ren-wu-task">🔗</a>任務 Task</h3>
+<p>實現執行器之前，我們先創建一個新的 <code>task</code> 模塊，裡面包含一個 <code>Task</code> 類型：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>task;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::{future::Future, pin::Pin};
+</span><span style="color:#569cd6;">use </span><span>alloc::boxed::Box;
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>Task {
+</span><span>    future: Pin&lt;Box&lt;dyn Future&lt;Output = ()&gt;&gt;&gt;,
+</span><span>}
+</span></code></pre>
+<p><code>Task</code> 結構體是一個對堆分配的、釘住的、動態分發的 future 的新型包裝，它的輸出類型是空類型 <code>()</code>。讓我們逐一詳細說明：</p>
+<ul>
+<li>
+<p>我們要求與任務關聯的 future 返回 <code>()</code>。這意味着任務不返回任何結果，它們只是執行它們的副作用。例如，我們上面定義的 <code>example_task</code> 函數沒有返回值，但它作為副作用打印了一些東西到屏幕上。</p>
+</li>
+<li>
+<p>關鍵字 <code>dyn</code> 表示我們在 <code>Box</code> 中存儲了一個 <a href="https://doc.rust-lang.org/book/ch17-02-trait-objects.html"><em>trait object</em></a>。這意味着 future 上的方法是 動態分發  <a href="https://doc.rust-lang.org/book/ch17-02-trait-objects.html#trait-objects-perform-dynamic-dispatch"><em>dynamically dispatched</em></a> 的，允許不同類型的 future 存儲在 <code>Task</code> 類型中。這一點很重要，因為每個 <code>async fn</code> 都有自己的類型，我們希望能夠創建多個不同的任務。</p>
+</li>
+<li>
+<p>正如我們在 釘住操作 部分 <a href="https://os.phil-opp.com/zh-TW/async-await/#pinning">section about pinning</a> 學到的，<code>Pin&lt;Box&gt;</code> 類型通過將值放在堆上並防止創建對它的 <code>&amp;mut</code> 引用來確保值在內存中不會被移動。這一點很重要，因為由 async/await 生成的 future 可能是自引用的，即包含指向自己的指針，當 future 被移動時這些指針將失效。</p>
+</li>
+</ul>
+<p>爲允許從 future 創建新的 <code>Task</code> 結構體，我們創建一個 <code>new</code> 函數：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Task {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new(future: impl Future&lt;Output = ()&gt; + </span><span style="color:#569cd6;">&#39;static</span><span>) -&gt; Task {
+</span><span>        Task {
+</span><span>            future: Box::pin(future),
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>函數帶有一個任意的 future，它的輸出類型是 <code>()</code>，並通過 <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.pin"><code>Box::pin</code></a> 函數在內存中釘住它。
+然後它將被包裝的 future 放到 <code>Task</code> 結構體中並返回它。這裡需要 <code>'static</code> 生命周期，因為返回的 <code>Task</code> 可以存活在任意時間，
+所以 future 也需要在那個時間內有效。</p>
+<p>我們還加了一個 <code>poll</code> 方法，允許執行器輪詢持有的 future：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::task::{Context, Poll};
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Task {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll(</span><span style="color:#569cd6;">&amp;mut </span><span>self, context: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;()&gt; {
+</span><span>        self.future.as_mut().poll(context)
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>由於 <code>Future</code> trait 的 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>poll</code></a> 方法期望在 <code>Pin&lt;&amp;mut T&gt;</code> 類型上調用，我們首先使用 <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.as_mut"><code>Pin::as_mut</code></a> 方法將 <code>self.future</code> 字段從 <code>Pin&lt;Box&lt;T&gt;&gt;</code> 類型轉換為 <code>Pin&lt;&amp;mut T&gt;</code> 類型。然後我們在轉換後的 <code>self.future</code> 字段上調用 <code>poll</code>，並返回結果。
+由於 <code>Task::poll</code> 方法只應該由我們即將創建的執行器調用，我們將函數保持為 <code>task</code> 模塊的私有。</p>
+<h3 id="jian-dan-de-zhi-xing-qi"><a class="zola-anchor" href="#jian-dan-de-zhi-xing-qi" aria-label="Anchor link for: jian-dan-de-zhi-xing-qi">🔗</a>簡單的執行器</h3>
+<p>因爲執行器可能相當複雜，我們故意在實現更多功能的執行器之前先創建一個非常基本的執行器。為此，我們首先創建一個新的 <code>task::simple_executor</code> 子模塊：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>simple_executor;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/simple_executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::Task;
+</span><span style="color:#569cd6;">use </span><span>alloc::collections::VecDeque;
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>SimpleExecutor {
+</span><span>    task_queue: VecDeque&lt;Task&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>SimpleExecutor {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new() -&gt; SimpleExecutor {
+</span><span>        SimpleExecutor {
+</span><span>            task_queue: VecDeque::new(),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>spawn(</span><span style="color:#569cd6;">&amp;mut </span><span>self, task: Task) {
+</span><span>        self.task_queue.push_back(task)
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>這結構體包含一個 <code>task_queue</code> 字段，類型是 <a href="https://doc.rust-lang.org/stable/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a>，它基本上是一個允許在兩端進行推送和彈出操作的向量。
+使用這種類型的想法是，我們通過 <code>spawn</code> 方法在末尾插入新的任務，並從前面彈出下一個任務進行執行。
+這樣，我們得到了一個簡單的 <a href="https://en.wikipedia.org/wiki/FIFO_(computing_and_electronics)">FIFO queue</a>（<em>“first in, first out”</em> 先進先出）隊列容器。</p>
+<h4 id="bai-she-xing-huan-xing-qi-dummy-waker"><a class="zola-anchor" href="#bai-she-xing-huan-xing-qi-dummy-waker" aria-label="Anchor link for: bai-she-xing-huan-xing-qi-dummy-waker">🔗</a>擺設型喚醒器 Dummy Waker</h4>
+<p>爲了調用 <code>poll</code> 方法，我們需要創建一個 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a> 類型，它包裝了一個 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> 類型。
+為了簡單起見，我們首先創建一個什麼都不做的假貨喚醒器。
+為此，我們創建了一個 <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> 實例，它定義了 <code>Waker</code> 的各種方法的實現，然後使用 <a href="https://doc.rust-lang.org/stable/core/task/struct.Waker.html#method.from_raw"><code>Waker::from_raw</code></a> 函數將它轉換為 <code>Waker</code>：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/simple_executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::task::{Waker, RawWaker};
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>dummy_raw_waker() -&gt; RawWaker {
+</span><span>    todo!();
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>dummy_waker() -&gt; Waker {
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ Waker::from_raw(dummy_raw_waker()) }
+</span><span>}
+</span></code></pre>
+<p>函數 <code>from_raw</code> 是不安全的，因為如果程序員不遵守 <code>RawWaker</code> 的文檔要求，就可能發生未定義的行為。
+在我們查看 <code>dummy_raw_waker</code> 函數的實現之前，我們首先試圖理解 <code>RawWaker</code> 類型的工作原理。</p>
+<h5 id="rawwaker"><a class="zola-anchor" href="#rawwaker" aria-label="Anchor link for: rawwaker">🔗</a><code>RawWaker</code></h5>
+<p>類型 <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> 要求程序員明確地定義一個 <a href="https://en.wikipedia.org/wiki/Virtual_method_table"><em>virtual method table</em></a> (<em>vtable</em>)，它指定了在 <code>RawWaker</code> 被克隆、喚醒或丟棄時應該調用的函數。
+這個 vtable 的佈局由 <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWakerVTable.html"><code>RawWakerVTable</code></a> 類型定義。每個函數接收一個 <code>*const ()</code> 參數，這是一個對某個值的 <em>type-erased</em> 指針。
+使用 <code>*const ()</code> 指針而不是正確的引用的原因是，<code>RawWaker</code> 類型應該是非泛型的，但仍然支持任意類型。
+通過將它放入 <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html#method.new"><code>RawWaker::new</code></a> 的 <code>data</code> 參數中提供，這個函數只是初始化了一個 <code>RawWaker</code>。
+然後 <code>Waker</code> 使用這個 <code>RawWaker</code> 來使用 <code>data</code> 調用 vtable 函數。</p>
+<p>通常，<code>RawWaker</code> 是為一些堆分配的結構體創建的，它被包裝到 <a href="https://doc.rust-lang.org/stable/alloc/boxed/struct.Box.html"><code>Box</code></a> 或 <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> 類型中。
+對於這樣的類型，可以使用 <a href="https://doc.rust-lang.org/stable/alloc/boxed/struct.Box.html#method.into_raw"><code>Box::into_raw</code></a> 這樣的方法將 <code>Box&lt;T&gt;</code> 轉換為 <code>*const T</code> 指針。
+然後可以將這個指針轉換為匿名的 <code>*const ()</code> 指針並傳遞給 <code>RawWaker::new</code>。
+由於每個 vtable 函數都接收相同的 <code>*const ()</code> 作為參數，所以函數可以安全地將指針轉換回 <code>Box&lt;T&gt;</code> 或 <code>&amp;T</code> 來操作它。
+正如你所預料的，這個過程是非常危險的，並且很容易在出錯時導致未定義的行為。因此，除非必要，否則不建議手動創建 <code>RawWaker</code>。</p>
+<h5 id="bai-she-xing-rawwaker"><a class="zola-anchor" href="#bai-she-xing-rawwaker" aria-label="Anchor link for: bai-she-xing-rawwaker">🔗</a>擺設型 <code>RawWaker</code></h5>
+<p>既然手工創建 <code>RawWaker</code> 不被推薦，目前沒有其他方法可以創建一個什麼都不做的假貨喚醒器 <code>Waker</code>。
+幸運的是，我們想要什麼都不做這一事實使得實現 <code>dummy_raw_waker</code> 函數相對安全：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/simple_executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::task::RawWakerVTable;
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>dummy_raw_waker() -&gt; RawWaker {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>no_op(</span><span style="color:#569cd6;">_</span><span>: </span><span style="color:#569cd6;">*const </span><span>()) {}
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>clone(</span><span style="color:#569cd6;">_</span><span>: </span><span style="color:#569cd6;">*const </span><span>()) -&gt; RawWaker {
+</span><span>        dummy_raw_waker()
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> vtable = </span><span style="color:#569cd6;">&amp;</span><span>RawWakerVTable::new(clone, no_op, no_op, no_op);
+</span><span>    RawWaker::new(</span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">as *const </span><span>(), vtable)
+</span><span>}
+</span></code></pre>
+<p>首先，我們定義了兩個內部函數 <code>no_op</code> 和 <code>clone</code>。<code>no_op</code> 函數接收一個 <code>*const ()</code> 指針並且什麼都不做。
+<code>clone</code> 函數也接收一個 <code>*const ()</code> 指針並且通過再次調用 <code>dummy_raw_waker</code> 返回一個新的 <code>RawWaker</code>。
+我們使用這兩個函數來創建一個最小的 <code>RawWakerVTable</code>：<code>clone</code> 函數用於克隆操作，<code>no_op</code> 函數用於所有其他操作。
+由於 <code>RawWaker</code> 什麼都不做，所以我們從 <code>clone</code> 返回一個新的 <code>RawWaker</code> 而不是克隆它，這並不重要。</p>
+<p>創建 <code>vtable</code> 後，我們使用 <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html#method.new"><code>RawWaker::new</code></a> 函數創建 <code>RawWaker</code>。
+傳遞的 <code>*const ()</code> 沒有關係，因為 vtable 函數都不使用它。因此，我們只是簡單地傳遞了一個空指針。</p>
+<h4 id="run-fang-fa"><a class="zola-anchor" href="#run-fang-fa" aria-label="Anchor link for: run-fang-fa">🔗</a><code>run</code> 方法</h4>
+<p>現在我們有了創建 <code>Waker</code> 實例的方法，我們可以使用它來在執行器上實現一個 <code>run</code> 方法。
+最簡單的 <code>run</code> 方法是重複地在循環中輪詢所有排隊的任務，直到它們全部完成。
+這並不是非常高效，因為它沒有利用 <code>Waker</code> 類型的通知，但這是一個讓執行器運行起來的簡單方法：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/simple_executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::task::{Context, Poll};
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>SimpleExecutor {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>run(</span><span style="color:#569cd6;">&amp;mut </span><span>self) {
+</span><span>        </span><span style="color:#569cd6;">while let </span><span>Some(</span><span style="color:#569cd6;">mut</span><span> task) = self.task_queue.pop_front() {
+</span><span>            </span><span style="color:#569cd6;">let</span><span> waker = dummy_waker();
+</span><span>            </span><span style="color:#569cd6;">let mut</span><span> context = Context::from_waker(</span><span style="color:#569cd6;">&amp;</span><span>waker);
+</span><span>            </span><span style="color:#569cd6;">match</span><span> task.poll(</span><span style="color:#569cd6;">&amp;mut</span><span> context) {
+</span><span>                Poll::Ready(()) </span><span style="color:#569cd6;">=&gt; </span><span>{} </span><span style="color:#608b4e;">// task done
+</span><span>                Poll::Pending </span><span style="color:#569cd6;">=&gt; </span><span>self.task_queue.push_back(task),
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>函數使用 <code>while let</code> 循環來處理 <code>task_queue</code> 中的所有任務。
+對於每個任務，它首先通過包裝 <code>dummy_waker</code> 函數返回的 <code>Waker</code> 實例來創建一個 <code>Context</code> 類型。
+然後它使用這個 <code>context</code> 調用 <code>Task::poll</code> 方法。如果 <code>poll</code> 方法返回 <code>Poll::Ready</code>，則任務已完成，我們可以繼續下一個任務。
+如果任務仍然是 <code>Poll::Pending</code>，我們將它再次添加到隊列的末尾，這樣它將在後續的循環迭代中再次被輪詢。</p>
+<h4 id="trying-it"><a class="zola-anchor" href="#trying-it" aria-label="Anchor link for: trying-it">🔗</a>Trying It</h4>
+<p>就着我們的 <code>SimpleExecutor</code> 類型，我們現在可以嘗試在 <code>main.rs</code> 中運行 <code>example_task</code> 函數返回的任務了：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::task::{Task, simple_executor::SimpleExecutor};
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// […] initialization routines, including `init_heap`
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> executor = SimpleExecutor::new();
+</span><span>    executor.spawn(Task::new(example_task()));
+</span><span>    executor.run();
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// […] test_main, &quot;it did not crash&quot; message, hlt_loop
+</span><span>}
+</span><span>
+</span><span>
+</span><span style="color:#608b4e;">// Below is the example_task function again so that you don&#39;t have to scroll up
+</span><span>
+</span><span>async </span><span style="color:#569cd6;">fn </span><span>async_number() -&gt; </span><span style="color:#569cd6;">u32 </span><span>{
+</span><span>    </span><span style="color:#b5cea8;">42
+</span><span>}
+</span><span>
+</span><span>async </span><span style="color:#569cd6;">fn </span><span>example_task() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> number = async_number().await;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;async number: </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, number);
+</span><span>}
+</span></code></pre>
+<p>在我們運行它時，我們看到了預期的 <em>“async number: 42”</em> 消息被打印到屏幕上：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/qemu-simple-executor.png" alt="QEMU printing “Hello World”, “async number: 42”, and “It did not crash!”" /></p>
+<p>讓我們總結一下這個例子中發生的各種步驟：</p>
+<ul>
+<li>
+<p>首先，創建了一個新的 <code>SimpleExecutor</code> 類型的實例，它的 <code>task_queue</code> 是空的。</p>
+</li>
+<li>
+<p>其次，我們調用異步 <code>example_task</code> 函數，它返回一個 future。我們將這個 future 包裝在 <code>Task</code> 類型中，這將它移動到堆上並釘住它，然後通過 <code>spawn</code> 方法將任務添加到執行器的 <code>task_queue</code> 中。</p>
+</li>
+<li>
+<p>我們然後調用 <code>run</code> 方法來開始執行隊列中的單個任務。這包括：</p>
+<ul>
+<li>從 <code>task_queue</code> 的前端彈出任務。</li>
+<li>爲任務創建一個 <code>RawWaker</code>，將它轉換為 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> 實例，然後從中創建一個 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a> 實例。</li>
+<li>使用我們剛剛創建的 <code>Context</code> 調用任務的 future 的 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>poll</code></a> 方法。</li>
+<li>因爲 <code>example_task</code> 不等待任何東西，它可以在第一次 <code>poll</code> 調用時直接運行到結束。這就是 <em>“async number: 42”</em> 行被打印的地方。</li>
+<li>因爲 <code>example_task</code> 直接返回 <code>Poll::Ready</code>，它不會再次添加到任務隊列中。</li>
+</ul>
+</li>
+<li>
+<p>方法 <code>run</code> 在 <code>task_queue</code> 變為空後返回。我們的 <code>kernel_main</code> 函數的執行繼續進行，並打印了 <em>“It did not crash!”</em> 消息。</p>
+</li>
+</ul>
+<h3 id="yi-bu-jian-pan-shu-ru"><a class="zola-anchor" href="#yi-bu-jian-pan-shu-ru" aria-label="Anchor link for: yi-bu-jian-pan-shu-ru">🔗</a>異步鍵盤輸入</h3>
+<p>我們的簡單執行器沒有利用 <code>Waker</code> 通知，只是循環遍歷所有任務，直到它們完成。
+這對我們的例子來說並不是問題，因為我們的 <code>example_task</code> 可以直接在第一次 <code>poll</code> 調用時運行到結束。
+為了看到正確的 <code>Waker</code> 實現的性能優勢，我們首先需要創建一個真正異步的任務，即一個任務，它可能在第一次 <code>poll</code> 調用時返回 <code>Poll::Pending</code>。</p>
+<p>我們已經有一些我們可以用來實現這一點的系統異步性：硬件中斷。正如我們在 <a href="https://os.phil-opp.com/hardware-interrupts/"><em>Interrupts</em></a> 文章中了解到的，硬件中斷可以在任意時間點發生，由某個外部設備決定。
+例如，硬件計時器在某個預定的時間後向 CPU 發送一個中斷。當 CPU 收到一個中斷時，它立即將控制權轉移到中斷描述符表（IDT）中定義的相應處理函數。</p>
+<p>在接下來的內容中，我們將基於鍵盤中斷創建一個異步任務。鍵盤中斷是一個很好的候選者，因為它既是非確定性的，又是延遲關鍵的。
+非確定性意味着沒有辦法預測下一次按鍵何時發生，因為它完全取決於用戶。
+延遲關鍵意味着我們希望及時處理鍵盤輸入，否則用戶會感到延遲。為了支持這樣的任務，執行器對 <code>Waker</code> 通知的支持是至關重要的。</p>
+<h4 id="sao-miao-ma-dui-lie-scancode-queue"><a class="zola-anchor" href="#sao-miao-ma-dui-lie-scancode-queue" aria-label="Anchor link for: sao-miao-ma-dui-lie-scancode-queue">🔗</a>掃描碼隊列 Scancode Queue</h4>
+<p>目前，我們直接在中斷處理程序中處理鍵盤輸入。這對長期來說並不是一個好主意，因為中斷處理程序應該保持盡可能短，因為它們可能會中斷重要的工作。
+相反，中斷處理程序應該只執行必要的最小工作（例如，讀取鍵盤掃描碼），並將其餘的工作（例如，解釋掃描碼）留給後台任務。</p>
+<p>將工作委派給後台任務的常見模式是創建某種類型的隊列。中斷處理程序將工作單元推送到隊列，後台任務處理隊列中的工作。應用到我們的鍵盤中斷，這意味着中斷處理程序只從鍵盤讀取掃描碼，將其推送到隊列，然後返回。鍵盤任務位於隊列的另一端，解釋和處理推送到它的每個掃描碼：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/scancode-queue.svg" alt="Scancode queue with 8 slots on the top. Keyboard interrupt handler on the bottom left with a “push scancode” arrow to the left of the queue. Keyboard task on the bottom right with a “pop scancode” arrow coming from the right side of the queue." /></p>
+<p>那隊列的一個簡單實現可以是一個互斥保護的 <a href="https://doc.rust-lang.org/stable/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a>。然而，在中斷處理程序中使用互斥鎖並不是一個好主意，因為它很容易導致死鎖。
+例如，當用戶在鍵盤任務鎖定隊列時按下一個鍵，中斷處理程序再次嘗試獲取鎖，這會導致無限期地掛起。
+這種方法的另一個問題是，當 <code>VecDeque</code> 變滿時，它會自動通過執行新的堆分配來增加其容量。
+這可能再次導致死鎖，因為我們的分配器也在內部使用互斥鎖。進一步的問題是，當堆被碎片化時，堆分配可能會失敗或花費相當多的時間。</p>
+<p>T爲避免這些問題，我們需要一個隊列實現，它不需要互斥鎖或堆分配來進行 <code>push</code> 操作。
+這樣的隊列可以通過使用無鎖的 原子操作 <a href="https://doc.rust-lang.org/core/sync/atomic/index.html">atomic operations</a> 來實現，用於推送和彈出元素。
+這樣，可以創建只需要 <code>&amp;self</code> 引用的 <code>push</code> 和 <code>pop</code> 操作，因此可以在沒有互斥鎖的情況下使用。
+爲了避免在 <code>push</code> 上進行分配，隊列可以由一個預先分配的固定大小的緩衝區支持。
+雖然這使得隊列 <em>有界</em>（即，它有一個最大長度），但實際上通常可以定義合理的隊列長度上限，因此這並不是一個大問題。</p>
+<h5 id="the-crossbeam-crate"><a class="zola-anchor" href="#the-crossbeam-crate" aria-label="Anchor link for: the-crossbeam-crate">🔗</a>The <code>crossbeam</code> Crate</h5>
+<p>正確而高效地實現這樣一個隊列是非常困難的，所以我建議使用現有的經過充分測試的實現。
+一個流行的 Rust 項目，它實現了各種無鎖類型來進行並發編程，就是 <a href="https://github.com/crossbeam-rs/crossbeam"><code>crossbeam</code></a>。
+它提供了一個名為 <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html"><code>ArrayQueue</code></a> 的類型，這正是我們在這種情況下所需要的。而且我們很幸運：這個類型完全兼容 具有分配支持的 <code>no_std</code> 庫。</p>
+<p>爲使用這個類型，我們需要在 <code>Cargo.toml</code> 中添加對 <code>crossbeam-queue</code> 的依賴：</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies.crossbeam-queue</span><span>]
+</span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;0.2.1&quot;
+</span><span style="color:#569cd6;">default-features </span><span>= </span><span style="color:#569cd6;">false
+</span><span style="color:#569cd6;">features </span><span>= [</span><span style="color:#d69d85;">&quot;alloc&quot;</span><span>]
+</span></code></pre>
+<p>翻譯上面的文字： 默認情況下，這個 crate 依賴於標準庫。為了使它兼容 <code>no_std</code>，我們需要禁用它的默認功能，並啓用 <code>alloc</code> 功能。 <span class="gray">（注意，我們也可以添加對主要的 <code>crossbeam</code> crate 的依賴，它重新導出了 <code>crossbeam-queue</code> crate，但這將導致更多的依賴和更長的編譯時間。）</span></p>
+<h5 id="queue-implementation"><a class="zola-anchor" href="#queue-implementation" aria-label="Anchor link for: queue-implementation">🔗</a>Queue Implementation</h5>
+<p>使用 <code>ArrayQueue</code> 類型，我們現在可以在一個新的 <code>task::keyboard</code> 模塊中創建一個全局的掃描碼隊列：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>keyboard;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/keyboard.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>conquer_once::spin::OnceCell;
+</span><span style="color:#569cd6;">use </span><span>crossbeam_queue::ArrayQueue;
+</span><span>
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">SCANCODE_QUEUE</span><span>: OnceCell&lt;ArrayQueue&lt;</span><span style="color:#569cd6;">u8</span><span>&gt;&gt; = OnceCell::uninit();
+</span></code></pre>
+<p>由於 <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html#method.new"><code>ArrayQueue::new</code></a> 執行了堆分配，這在編譯時是不可能的（<a href="https://github.com/rust-lang/const-eval/issues/20">目前不可能，但有可能</a>）。我們不能直接初始化靜態變量。
+相反，我們使用 <a href="https://docs.rs/conquer-once/0.2.0/conquer_once/index.html"><code>conquer_once</code></a> crate 的 <a href="https://docs.rs/conquer-once/0.2.0/conquer_once/raw/struct.OnceCell.html"><code>OnceCell</code></a> 類型，它使得可以對靜態值進行安全的一次性初始化。
+要包含這個 crate，我們需要在 <code>Cargo.toml</code> 中將它添加為依賴：</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies.conquer-once</span><span>]
+</span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;0.2.0&quot;
+</span><span style="color:#569cd6;">default-features </span><span>= </span><span style="color:#569cd6;">false
+</span></code></pre>
+<p>異於 <a href="https://docs.rs/conquer-once/0.2.0/conquer_once/raw/struct.OnceCell.html"><code>OnceCell</code></a> 源語，我們也可以在這裡使用 <a href="https://docs.rs/lazy_static/1.4.0/lazy_static/index.html"><code>lazy_static</code></a> 宏。
+然而，<code>OnceCell</code> 類型的優點是我們可以確保初始化不會在中斷處理程序中進行，從而防止中斷處理程序執行堆分配。</p>
+<h4 id="tian-chong-sao-miao-ma-dui-lie"><a class="zola-anchor" href="#tian-chong-sao-miao-ma-dui-lie" aria-label="Anchor link for: tian-chong-sao-miao-ma-dui-lie">🔗</a>填充掃描碼隊列</h4>
+<p>爲填充掃描碼隊列，我們創建一個新的 <code>add_scancode</code> 函數，我們將從中斷處理程序中調用：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/keyboard.rs
+</span><span>
+</span><span style="color:#569cd6;">use crate</span><span>::println;
+</span><span>
+</span><span style="color:#608b4e;">/// Called by the keyboard interrupt handler
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Must not block or allocate.
+</span><span style="color:#569cd6;">pub</span><span>(</span><span style="color:#569cd6;">crate</span><span>) </span><span style="color:#569cd6;">fn </span><span>add_scancode(scancode: </span><span style="color:#569cd6;">u8</span><span>) {
+</span><span>    </span><span style="color:#569cd6;">if let </span><span>Ok(queue) = </span><span style="color:#b4cea8;">SCANCODE_QUEUE</span><span>.try_get() {
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Err(</span><span style="color:#569cd6;">_</span><span>) = queue.push(scancode) {
+</span><span>            println!(</span><span style="color:#d69d85;">&quot;WARNING: scancode queue full; dropping keyboard input&quot;</span><span>);
+</span><span>        }
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        println!(</span><span style="color:#d69d85;">&quot;WARNING: scancode queue uninitialized&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>我們使用 <a href="https://docs.rs/conquer-once/0.2.0/conquer_once/raw/struct.OnceCell.html#method.try_get"><code>OnceCell::try_get</code></a> 來獲取初始化的隊列的引用。如果隊列還沒有初始化，我們忽略鍵盤掃描碼並打印一個警告。
+重要的是，我們不應該在這個函數中嘗試初始化隊列，因為它將被中斷處理程序調用，而中斷處理程序不應該執行堆分配。
+由於這個函數不應該從我們的 <code>main.rs</code> 中調用，我們使用 <code>pub(crate)</code> 可見性來使它只對我們的 <code>lib.rs</code> 可用。</p>
+<p>方法 <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html#method.push"><code>ArrayQueue::push</code></a> 只需要一個 <code>&amp;self</code> 引用，這使得在靜態隊列上調用這個方法非常簡單。
+<code>ArrayQueue</code> 類型自己執行所有必要的同步，所以我們這裡不需要一個互斥鎖包裝器。如果隊列已滿，我們也打印一個警告。</p>
+<p>爲在鍵盤中斷上調用 <code>add_scancode</code> 函數，我們更新 <code>interrupts</code> 模塊中的 <code>keyboard_interrupt_handler</code> 函數：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame
+</span><span>) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
+</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
+</span><span>    </span><span style="color:#569cd6;">crate</span><span>::task::keyboard::add_scancode(scancode); </span><span style="color:#608b4e;">// new
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>我們移除了這個函數中的所有鍵盤處理代碼，並添加了一個對 <code>add_scancode</code> 函數的調用。這個函數的其餘部分與之前的一樣。</p>
+<p>符合預期，當我們使用 <code>cargo run</code> 運行我們的項目時，按鍵不再被打印到屏幕上。相反，我們看到了每次按鍵都會警告說掃描碼隊列未初始化。</p>
+<h4 id="sao-miao-ma-liu-scancode-stream"><a class="zola-anchor" href="#sao-miao-ma-liu-scancode-stream" aria-label="Anchor link for: sao-miao-ma-liu-scancode-stream">🔗</a>掃描碼流 Scancode Stream</h4>
+<p>爲初始化 <code>SCANCODE_QUEUE</code> 並以異步方式從隊列中讀取掃描碼，我們創建了一個新的 <code>ScancodeStream</code> 類型：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/keyboard.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>ScancodeStream {
+</span><span>    _private: (),
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>ScancodeStream {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">SCANCODE_QUEUE</span><span>.try_init_once(|| ArrayQueue::new(</span><span style="color:#b5cea8;">100</span><span>))
+</span><span>            .expect(</span><span style="color:#d69d85;">&quot;ScancodeStream::new should only be called once&quot;</span><span>);
+</span><span>        ScancodeStream { _private: () }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>字段 <code>_private</code> 的目的是防止從模塊外部構造結構。這使得 <code>new</code> 函數成為構造類型的唯一方法。在這個函數中，我們首先嘗試初始化 <code>SCANCODE_QUEUE</code> 靜態變量。
+如果它已經初始化，我們會 panic，以確保只能創建單一 <code>ScancodeStream</code> 實例。</p>
+<p>爲了使掃描碼對異步任務可用，下一步是實現一個類似 <code>poll</code> 的方法，它嘗試從隊列中彈出下一個掃描碼。
+雖然這聽起來像是我們應該爲我們的類型實現 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html"><code>Future</code></a> trait，但這並不完全適用於這裡。
+問題是 <code>Future</code> trait 只是對單個異步值進行抽象，並且期望 <code>poll</code> 方法在返回 <code>Poll::Ready</code> 後不再被調用。
+然而，我們的掃描碼隊列包含多個異步值，所以保持對它的輪詢是可以的。</p>
+<h5 id="the-stream-trait"><a class="zola-anchor" href="#the-stream-trait" aria-label="Anchor link for: the-stream-trait">🔗</a>The <code>Stream</code> Trait</h5>
+<p>由於產生多個異步值的類型很常見，<a href="https://docs.rs/futures/0.3.4/futures/"><code>futures</code></a> crate 提供了一種對這類型的有用抽象：<a href="https://rust-lang.github.io/async-book/05_streams/01_chapter.html"><code>Stream</code></a> trait。該 特型 trait 的定義如下：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub trait </span><span>Stream {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Item</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll_next(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context)
+</span><span>        -&gt; Poll&lt;Option&lt;</span><span style="color:#569cd6;">Self::</span><span>Item&gt;&gt;;
+</span><span>}
+</span></code></pre>
+<p>這個定義與 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html"><code>Future</code></a> trait 非常相似，但有以下區別：</p>
+<ul>
+<li>
+<p>關聯類型命名為 <code>Item</code> 而不是 <code>Output</code>。</p>
+</li>
+<li>
+<p>不同於 <code>pool</code> 方法返回 <code>Poll&lt;Self::Item&gt;</code>，<code>Stream</code> trait 定義了一個 <code>poll_next</code> 方法，它返回 <code>Poll&lt;Option&lt;Self::Item&gt;&gt;</code>（注意額外的 <code>Option</code>）。</p>
+</li>
+</ul>
+<p>還有個語義上的區別：<code>poll_next</code> 可以被重複調用，直到它返回 <code>Poll::Ready(None)</code> 來表示流結束。
+在這方面，這個方法類似於 <a href="https://doc.rust-lang.org/stable/core/iter/trait.Iterator.html#tymethod.next"><code>Iterator::next</code></a> 方法，它在最後一個值之後也返回 <code>None</code>。</p>
+<h5 id="shi-xian-stream"><a class="zola-anchor" href="#shi-xian-stream" aria-label="Anchor link for: shi-xian-stream">🔗</a>實現 <code>Stream</code></h5>
+<p>我們來爲 <code>ScancodeStream</code> 實現 <code>Stream</code> trait，以提供 <code>SCANCODE_QUEUE</code> 的值。
+爲此，我們首先需要添加對 <code>futures-util</code> crate 的依賴，它包含了 <code>Stream</code> 類型：</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies.futures-util</span><span>]
+</span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;0.3.4&quot;
+</span><span style="color:#569cd6;">default-features </span><span>= </span><span style="color:#569cd6;">false
+</span><span style="color:#569cd6;">features </span><span>= [</span><span style="color:#d69d85;">&quot;alloc&quot;</span><span>]
+</span></code></pre>
+<p>我們禁用了默認功能，以使這個 crate 兼容 <code>no_std</code>，並啓用 <code>alloc</code> 功能以使其 基於分配的類型 可用（我們稍後會需要這個）。
+<span class="gray">（注意，我們也可以添加對主要的 <code>futures</code> crate 的依賴，它重新導出了 <code>futures-util</code> crate，但這將導致更多的依賴和更長的編譯時間。）</span></p>
+<p>現在我們可以導入並實現 <code>Stream</code> trait：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/keyboard.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::{pin::Pin, task::{Poll, Context}};
+</span><span style="color:#569cd6;">use </span><span>futures_util::stream::Stream;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Stream </span><span style="color:#569cd6;">for </span><span>ScancodeStream {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Item </span><span>= </span><span style="color:#569cd6;">u8</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll_next(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;Option&lt;</span><span style="color:#569cd6;">u8</span><span>&gt;&gt; {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> queue = </span><span style="color:#b4cea8;">SCANCODE_QUEUE</span><span>.try_get().expect(</span><span style="color:#d69d85;">&quot;not initialized&quot;</span><span>);
+</span><span>        </span><span style="color:#569cd6;">match</span><span> queue.pop() {
+</span><span>            Ok(scancode) </span><span style="color:#569cd6;">=&gt; </span><span>Poll::Ready(Some(scancode)),
+</span><span>            Err(crossbeam_queue::PopError) </span><span style="color:#569cd6;">=&gt; </span><span>Poll::Pending,
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>我們首先使用 <a href="https://docs.rs/conquer-once/0.2.0/conquer_once/raw/struct.OnceCell.html#method.try_get"><code>OnceCell::try_get</code></a> 方法來獲取初始化的掃描碼隊列的引用。
+這應該永遠不會失敗，因為我們在 <code>new</code> 函數中初始化了隊列，所以我們可以安全地使用 <code>expect</code> 方法來在它未初始化時 panic。
+接下來，我們使用 <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html#method.pop"><code>ArrayQueue::pop</code></a> 方法來嘗試從隊列中獲取下一個元素。如果成功，我們返回包裝在 <code>Poll::Ready(Some(…))</code> 中的掃描碼。
+如果失敗，這意味着隊列是空的。在這種情況下，我們返回 <code>Poll::Pending</code>。</p>
+<h4 id="huan-xing-qi-waker-zhi-chi"><a class="zola-anchor" href="#huan-xing-qi-waker-zhi-chi" aria-label="Anchor link for: huan-xing-qi-waker-zhi-chi">🔗</a>喚醒器 Waker 支持</h4>
+<p>就像 <code>Futures::poll</code> 方法一樣，<code>Stream::poll_next</code> 方法要求異步任務在返回 <code>Poll::Pending</code> 後讓執行器知道它何時變得可用。
+這樣，執行器就不需要再次輪詢同一個任務，直到它被通知，這大大減少了等待任務的性能開銷。</p>
+<p>爲發送這個通知，任務應該從傳遞的 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a> 引用中提取 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a>，並將它存儲在某個地方。
+當任務變得可用時，它應該在存儲的 <code>Waker</code> 上調用 <a href="https://doc.rust-lang.org/stable/core/task/struct.Waker.html#method.wake"><code>wake</code></a> 方法，以通知執行器該任務應該再次被輪詢。</p>
+<h5 id="atomicwaker"><a class="zola-anchor" href="#atomicwaker" aria-label="Anchor link for: atomicwaker">🔗</a>AtomicWaker</h5>
+<p>爲實現 <code>ScancodeStream</code> 的 <code>Waker</code> 通知，我們需要在輪詢調用之間找個地方來存儲 <code>Waker</code>。
+我們不能將它存儲為 <code>ScancodeStream</code> 本身的字段，因為它需要從 <code>add_scancode</code> 函數中訪問。
+這個問題的解決方案是使用 <code>futures-util</code> crate 提供的 <a href="https://docs.rs/futures-util/0.3.4/futures_util/task/struct.AtomicWaker.html"><code>AtomicWaker</code></a> 類型的靜態變量。
+像 <code>ArrayQueue</code> 類型一樣，這個類型基於原子指令，可以安全地存儲在 <code>static</code> 靜態變量 中並且可以並發修改。</p>
+<p>我們使用 <a href="https://docs.rs/futures-util/0.3.4/futures_util/task/struct.AtomicWaker.html"><code>AtomicWaker</code></a> 類型來定義一個靜態的 <code>WAKER</code>：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/keyboard.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>futures_util::task::AtomicWaker;
+</span><span>
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">WAKER</span><span>: AtomicWaker = AtomicWaker::new();
+</span></code></pre>
+<p>意思就是 <code>poll_next</code> 實現將當前的 waker 存儲在這個靜態變量中，而 <code>add_scancode</code> 函數在將新的掃描碼添加到隊列時在它上調用 <code>wake</code> 函數。</p>
+<h5 id="cun-chu-huan-xing-qi-storing-a-waker"><a class="zola-anchor" href="#cun-chu-huan-xing-qi-storing-a-waker" aria-label="Anchor link for: cun-chu-huan-xing-qi-storing-a-waker">🔗</a>存儲喚醒器 Storing a Waker</h5>
+<p>由 <code>poll</code>/<code>poll_next</code> 定義的規則要求當任務返回 <code>Poll::Pending</code> 時，它應該爲傳遞的 <code>Waker</code> 註冊一個喚醒動作。
+我們修改我們的 <code>poll_next</code> 實現來滿足這個要求：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/keyboard.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Stream </span><span style="color:#569cd6;">for </span><span>ScancodeStream {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Item </span><span>= </span><span style="color:#569cd6;">u8</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll_next(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;Option&lt;</span><span style="color:#569cd6;">u8</span><span>&gt;&gt; {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> queue = </span><span style="color:#b4cea8;">SCANCODE_QUEUE
+</span><span>            .try_get()
+</span><span>            .expect(</span><span style="color:#d69d85;">&quot;scancode queue not initialized&quot;</span><span>);
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// fast path
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Ok(scancode) = queue.pop() {
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Poll::Ready(Some(scancode));
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#b4cea8;">WAKER</span><span>.register(</span><span style="color:#569cd6;">&amp;</span><span>cx.waker());
+</span><span>        </span><span style="color:#569cd6;">match</span><span> queue.pop() {
+</span><span>            Ok(scancode) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                </span><span style="color:#b4cea8;">WAKER</span><span>.take();
+</span><span>                Poll::Ready(Some(scancode))
+</span><span>            }
+</span><span>            Err(crossbeam_queue::PopError) </span><span style="color:#569cd6;">=&gt; </span><span>Poll::Pending,
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>像之前一樣，我們首先使用 <a href="https://docs.rs/conquer-once/0.2.0/conquer_once/raw/struct.OnceCell.html#method.try_get"><code>OnceCell::try_get</code></a> 函數來獲取初始化的掃描碼隊列的引用。然後我們嘗試從隊列中 <code>pop</code> 掃描碼，並在成功時返回 <code>Poll::Ready</code>。
+這樣，我們可以避免在隊列不為空時註冊一個喚醒器的性能開銷。</p>
+<p>如果 <code>queue.pop()</code> 的第一次調用不成功，隊列可能是空的。只是可能，因爲中斷處理程序可能在檢查後立即異步填充了隊列。
+由於這種競態條件可能再次發生在下一次檢查中，我們需要在第二次檢查之前在 <code>WAKER</code> 靜態變量中註冊 <code>Waker</code>。
+這樣，一個喚醒動作可能會在我們返回 <code>Poll::Pending</code> 之前發生，但可以保證我們會在檢查後推送的任何掃描碼上得到一個喚醒動作。</p>
+<p>在通過函數 <a href="https://docs.rs/futures-util/0.3.4/futures_util/task/struct.AtomicWaker.html#method.register"><code>AtomicWaker::register</code></a> 註冊了傳遞的 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a> 中包含的 <code>Waker</code> 之後，我們嘗試第二次從隊列中彈出。
+如果這次成功，我們返回 <code>Poll::Ready</code>。我們還使用 <a href="https://docs.rs/futures/0.3.4/futures/task/struct.AtomicWaker.html#method.take"><code>AtomicWaker::take</code></a> 再次移除註冊的喚醒器，因爲不再需要喚醒通知。
+如果 <code>queue.pop()</code> 第二次失敗，我們像之前一樣返回 <code>Poll::Pending</code>，但這次帶有一個已註冊的喚醒動作。</p>
+<p>注意，對於一個（可能還）沒有返回 <code>Poll::Pending</code> 的任務，有兩種方式可以進行喚醒。
+一種方式是上面提到的競態條件，當喚醒在返回 <code>Poll::Pending</code> 之前立即發生。
+另一種方式是在註冊喚醒器後隊列不再為空，這樣 <code>Poll::Ready</code> 就會被返回。
+由於這些虛假的喚醒是無法防止的，執行器需要能夠正確地處理它們。</p>
+<h5 id="huan-xing-cun-chu-de-huan-xing-qi-waker"><a class="zola-anchor" href="#huan-xing-cun-chu-de-huan-xing-qi-waker" aria-label="Anchor link for: huan-xing-cun-chu-de-huan-xing-qi-waker">🔗</a>喚醒存儲的喚醒器 Waker</h5>
+<p>要喚醒存儲的 <code>Waker</code>，我們在 <code>add_scancode</code> 函數中添加一個對 <code>WAKER.wake()</code> 的調用：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/keyboard.rs
+</span><span>
+</span><span style="color:#569cd6;">pub</span><span>(</span><span style="color:#569cd6;">crate</span><span>) </span><span style="color:#569cd6;">fn </span><span>add_scancode(scancode: </span><span style="color:#569cd6;">u8</span><span>) {
+</span><span>    </span><span style="color:#569cd6;">if let </span><span>Ok(queue) = </span><span style="color:#b4cea8;">SCANCODE_QUEUE</span><span>.try_get() {
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Err(</span><span style="color:#569cd6;">_</span><span>) = queue.push(scancode) {
+</span><span>            println!(</span><span style="color:#d69d85;">&quot;WARNING: scancode queue full; dropping keyboard input&quot;</span><span>);
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            </span><span style="color:#b4cea8;">WAKER</span><span>.wake(); </span><span style="color:#608b4e;">// new
+</span><span>        }
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        println!(</span><span style="color:#d69d85;">&quot;WARNING: scancode queue uninitialized&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>我們做出的唯一更改是在成功推送到掃描碼隊列時添加了一個對 <code>WAKER.wake()</code> 的調用。
+如果在 <code>WAKER</code> 靜態變量中註冊了一個喚醒器，這個方法將在它上面調用同名的 <a href="https://doc.rust-lang.org/stable/core/task/struct.Waker.html#method.wake"><code>wake</code></a> 方法，這將通知執行器。否則，這個操作是一個空操作，即，什麼也不會發生。</p>
+<p>很重要的是，我們只在推送到隊列後調用 <code>wake</code>，否則任務可能會在隊列仍然為空時被過早地喚醒。
+這可能發生在使用多線程執行器時，它在不同的 CPU 核心上同時啓動被喚醒的任務。雖然我們還沒有線程支持，但我們很快就會添加它，並且不希望事情在那時候出問題。</p>
+<h4 id="jian-pan-ren-wu"><a class="zola-anchor" href="#jian-pan-ren-wu" aria-label="Anchor link for: jian-pan-ren-wu">🔗</a>鍵盤任務</h4>
+<p>我們現在爲 <code>ScancodeStream</code> 實現了 <code>Stream</code> trait，我們可以使用它來創建一個異步鍵盤任務：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/keyboard.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>futures_util::stream::StreamExt;
+</span><span style="color:#569cd6;">use </span><span>pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
+</span><span style="color:#569cd6;">use crate</span><span>::print;
+</span><span>
+</span><span style="color:#569cd6;">pub</span><span> async </span><span style="color:#569cd6;">fn </span><span>print_keypresses() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> scancodes = ScancodeStream::new();
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> keyboard = Keyboard::new(layouts::Us104Key, ScancodeSet1,
+</span><span>        HandleControl::Ignore);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">while let </span><span>Some(scancode) = scancodes.next().await {
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Ok(Some(key_event)) = keyboard.add_byte(scancode) {
+</span><span>            </span><span style="color:#569cd6;">if let </span><span>Some(key) = keyboard.process_keyevent(key_event) {
+</span><span>                </span><span style="color:#569cd6;">match</span><span> key {
+</span><span>                    DecodedKey::Unicode(character) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, character),
+</span><span>                    DecodedKey::RawKey(key) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, key),
+</span><span>                }
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>代碼與我們之前在 <a href="https://os.phil-opp.com/hardware-interrupts/#interpreting-the-scancodes">keyboard interrupt handler</a> 中的代碼非常相似，只是我們不再從 I/O 端口讀取掃描碼，而是從 <code>ScancodeStream</code> 中獲取它。
+爲此，我們首先創建一個新的 <code>Scancode</code> 流，然後重複使用由 <a href="https://docs.rs/futures-util/0.3.4/futures_util/stream/trait.StreamExt.html"><code>StreamExt</code></a> trait 提供的 <a href="https://docs.rs/futures-util/0.3.4/futures_util/stream/trait.StreamExt.html#method.next"><code>next</code></a> 方法來獲取一個 <code>Future</code>，它解析爲流中的下一個元素。
+通過在它上使用 <code>await</code> 運算符，我們異步等待 future 的結果。</p>
+<p>我們使用 <code>while let</code> 循環直到流返回 <code>None</code> 標誌它的結束。由於我們的 <code>poll_next</code> 方法從不返回 <code>None</code>，
+這實際上是一個無限循環，所以 <code>print_keypresses</code> 任務永遠不會結束。</p>
+<p>我們在 <code>main.rs</code> 中將 <code>print_keypresses</code> 任務添加到執行器中，以便再次獲得鍵盤輸入：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::task::keyboard; </span><span style="color:#608b4e;">// new
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// […] initialization routines, including init_heap, test_main
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> executor = SimpleExecutor::new();
+</span><span>    executor.spawn(Task::new(example_task()));
+</span><span>    executor.spawn(Task::new(keyboard::print_keypresses())); </span><span style="color:#608b4e;">// new
+</span><span>    executor.run();
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// […] &quot;it did not crash&quot; message, hlt_loop
+</span><span>}
+</span></code></pre>
+<p>現在我們執行 <code>cargo run</code>，我們會看到鍵盤輸入再次可用了：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/qemu-keyboard-output.gif" alt="QEMU printing “…..H…e…l…l..o….. …W..o..r….l…d…!”" /></p>
+<p>如果你在你的計算機上保持對 CPU 利用率的關注，你會看到 <code>QEMU</code> 進程現在讓 CPU 非常忙碌。
+這是因爲我們的 <code>SimpleExecutor</code> 在一個循環中一遍又一遍地輪詢任務。
+所以即使我們沒有在鍵盤上按任何鍵，執行器也會一遍又一遍地調用我們的 <code>print_keypresses</code> 任務的 <code>poll</code> 方法，即使該任務無法取得任何進展，並且每次都會返回 <code>Poll::Pending</code>。</p>
+<h3 id="dai-huan-xing-qi-zhi-chi-de-zhi-xing-qi"><a class="zola-anchor" href="#dai-huan-xing-qi-zhi-chi-de-zhi-xing-qi" aria-label="Anchor link for: dai-huan-xing-qi-zhi-chi-de-zhi-xing-qi">🔗</a>帶喚醒器支持的執行器</h3>
+<p>爲修復性能問題，我們需要創建一個執行器，它正確地利用了 <code>Waker</code> 通知。
+這樣，當下一個鍵盤中斷發生時，執行器就會被通知，所以它不需要一遍又一遍地輪詢 <code>print_keypresses</code> 任務。</p>
+<h4 id="task-id"><a class="zola-anchor" href="#task-id" aria-label="Anchor link for: task-id">🔗</a>Task Id</h4>
+<p>創建具有正確的喚醒器通知支持的 執行器 的第一步是給每個任務分配一個唯一的 ID。
+這是必需的，因為我們需要一種方法來指定應該喚醒哪個任務。我們首先創建一個新的 <code>TaskId</code> 包裝類型：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/mod.rs
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+</span><span style="color:#569cd6;">struct </span><span>TaskId(</span><span style="color:#569cd6;">u64</span><span>);
+</span></code></pre>
+<p>結構體 <code>TaskId</code> 是一個簡單的 <code>u64</code> 包裝類型。我們爲它衍生了一些特性，使它可以被打印、複製、比較和排序。
+後者很重要，因爲我們希望在一會兒使用 <code>TaskId</code> 作爲 <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a> 的鍵類型。</p>
+<p>爲了創建一個新的唯一 ID，我們創建了一個 <code>TaskId::new</code> 函數：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>core::sync::atomic::{AtomicU64, Ordering};
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>TaskId {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        </span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">NEXT_ID</span><span>: AtomicU64 = AtomicU64::new(</span><span style="color:#b5cea8;">0</span><span>);
+</span><span>        TaskId(</span><span style="color:#b4cea8;">NEXT_ID</span><span>.fetch_add(</span><span style="color:#b5cea8;">1</span><span>, Ordering::Relaxed))
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>函數使用了一個 <a href="https://doc.rust-lang.org/core/sync/atomic/struct.AtomicU64.html"><code>AtomicU64</code></a> 類型的靜態變量 <code>NEXT_ID</code> 來確保每個 ID 只分配一次。<a href="https://doc.rust-lang.org/core/sync/atomic/struct.AtomicU64.html#method.fetch_add"><code>fetch_add</code></a> 方法以原子方式增加值並在一個原子操作中返回先前的值。
+這意味着即使 <code>TaskId::new</code> 方法並行調用，每個 ID 都只返回一次。<a href="https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html"><code>Ordering</code></a> 參數定義了編譯器是否允許重新排列指令流中的 <code>fetch_add</code> 操作。
+由於我們只需要 ID 是唯一的，這種情況下最弱的要求 <code>Relaxed</code> 排序就足夠了。</p>
+<p>現在我們可以通過添加一個額外的 <code>id</code> 字段來擴展我們的 <code>Task</code> 類型：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>Task {
+</span><span>    id: TaskId, </span><span style="color:#608b4e;">// new
+</span><span>    future: Pin&lt;Box&lt;dyn Future&lt;Output = ()&gt;&gt;&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Task {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new(future: impl Future&lt;Output = ()&gt; + </span><span style="color:#569cd6;">&#39;static</span><span>) -&gt; Task {
+</span><span>        Task {
+</span><span>            id: TaskId::new(), </span><span style="color:#608b4e;">// new
+</span><span>            future: Box::pin(future),
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>新的 <code>id</code> 字段使得可以唯一地命名一個任務，這是喚醒特定任務所必需的。</p>
+<h4 id="the-executor-type"><a class="zola-anchor" href="#the-executor-type" aria-label="Anchor link for: the-executor-type">🔗</a>The <code>Executor</code> Type</h4>
+<p>我們在 <code>task::executor</code> 模塊中創建我們的新 <code>Executor</code> 類型：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>executor;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::{Task, TaskId};
+</span><span style="color:#569cd6;">use </span><span>alloc::{collections::BTreeMap, sync::Arc};
+</span><span style="color:#569cd6;">use </span><span>core::task::Waker;
+</span><span style="color:#569cd6;">use </span><span>crossbeam_queue::ArrayQueue;
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>Executor {
+</span><span>    tasks: BTreeMap&lt;TaskId, Task&gt;,
+</span><span>    task_queue: Arc&lt;ArrayQueue&lt;TaskId&gt;&gt;,
+</span><span>    waker_cache: BTreeMap&lt;TaskId, Waker&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Executor {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        Executor {
+</span><span>            tasks: BTreeMap::new(),
+</span><span>            task_queue: Arc::new(ArrayQueue::new(</span><span style="color:#b5cea8;">100</span><span>)),
+</span><span>            waker_cache: BTreeMap::new(),
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>不同於我們在 <code>SimpleExecutor</code> 中使用 <a href="https://doc.rust-lang.org/stable/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a> 存儲任務，我們使用了一個任務 ID 的 <code>task_queue</code> 和一個名爲 <code>tasks</code> 的 <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a>，它包含了實際的 <code>Task</code> 實例。這個 map 是由 <code>TaskId</code> 索引的，這樣可以高效地繼續特定的任務。</p>
+<p>字段 <code>task_queue</code> 是任務 ID 的 <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html"><code>ArrayQueue</code></a> 類型的容器，包裝在 <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> 類型中， Arc 實現了 <em>引用計數</em>。
+引用計數使得可以在多個所有者之間共享值的所有權。它通過在堆上分配值並計算對它的活動引用數量來工作。
+當活動引用的數量達到零時，就不再需要這個值，它可以被釋放。</p>
+<p>我們使用這個 <code>Arc&lt;ArrayQueue&gt;</code> 類型來存儲 <code>task_queue</code>，因爲它將在執行器和喚醒器之間共享。
+這個設計的基本思想是喚醒器將被喚醒的任務的 ID 推送到隊列中。
+執行器則在隊列的接收端，通過 ID 從 <code>tasks</code> map 中檢索被喚醒的任務，然後運行它們。
+使用固定大小的隊列而不是像 <a href="https://docs.rs/crossbeam-queue/0.2.1/crossbeam_queue/struct.SegQueue.html"><code>SegQueue</code></a> 這樣的無界隊列的原因是中斷處理程序不應該在推送到這個隊列時分配內存。</p>
+<p>翻譯上面的文字： 除了 <code>task_queue</code> 和 <code>tasks</code> map 之外，<code>Executor</code> 類型還有一個 <code>waker_cache</code> 字段，它也是一個 map。
+這個 map 在創建後緩存了任務的 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a>。這有兩個原因：首先，它通過重用同一個任務的多次喚醒而不是每次都創建一個新的喚醒器來提高性能。
+其次，它確保引用計數的喚醒器不會在中斷處理程序中被釋放，因爲這可能導致死鎖（下面有更多細節）。</p>
+<p>要創建一個 執行器 <code>Executor</code>，我們提供了一個簡單的 <code>new</code> 函數。我們選擇了 100 的容量作爲 <code>task_queue</code>，這應該足夠應付可預見的未來。如果我們的系統在某個時候有超過 100 個並發任務，我們可以輕鬆地增加這個大小。</p>
+<h4 id="spawning-tasks"><a class="zola-anchor" href="#spawning-tasks" aria-label="Anchor link for: spawning-tasks">🔗</a>Spawning Tasks</h4>
+<p>就像 <code>SimpleExecutor</code> 一樣，我們在 執行器 <code>Executor</code> 類型上提供了一個 <code>spawn</code> 方法，
+它將給定的任務添加到 <code>tasks</code> map 中，並立即通過將它的 ID 推送到 <code>task_queue</code> 中來喚醒它：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Executor {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>spawn(</span><span style="color:#569cd6;">&amp;mut </span><span>self, task: Task) {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> task_id = task.id;
+</span><span>        </span><span style="color:#569cd6;">if </span><span>self.tasks.insert(task.id, task).is_some() {
+</span><span>            panic!(</span><span style="color:#d69d85;">&quot;task with same ID already in tasks&quot;</span><span>);
+</span><span>        }
+</span><span>        self.task_queue.push(task_id).expect(</span><span style="color:#d69d85;">&quot;queue full&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>如果 map 中已經有一個具有相同 ID 的任務，[<code>BTreeMap::insert</code>] 方法會返回它。
+這應該永遠不會發生，因爲每個任務都有一個唯一的 ID，所以在這種情況下我們會 panic，因爲這表明我們的代碼中有一個 bug。
+同樣，如果我們選擇了足夠大的隊列大小，當 <code>task_queue</code> 滿時我們也會 panic，因爲這應該永遠不會發生。</p>
+<h4 id="yun-xing-ren-wu-running-tasks"><a class="zola-anchor" href="#yun-xing-ren-wu-running-tasks" aria-label="Anchor link for: yun-xing-ren-wu-running-tasks">🔗</a>運行任務 Running Tasks</h4>
+<p>爲在 <code>task_queue</code> 中運行所有任務，我們創建了一個私有的 <code>run_ready_tasks</code> 方法：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::task::{Context, Poll};
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Executor {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run_ready_tasks(</span><span style="color:#569cd6;">&amp;mut </span><span>self) {
+</span><span>        </span><span style="color:#608b4e;">// destructure `self` to avoid borrow checker errors
+</span><span>        </span><span style="color:#569cd6;">let Self </span><span>{
+</span><span>            tasks,
+</span><span>            task_queue,
+</span><span>            waker_cache,
+</span><span>        } = self;
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">while let </span><span>Ok(task_id) = task_queue.pop() {
+</span><span>            </span><span style="color:#569cd6;">let</span><span> task = </span><span style="color:#569cd6;">match</span><span> tasks.get_mut(</span><span style="color:#569cd6;">&amp;</span><span>task_id) {
+</span><span>                Some(task) </span><span style="color:#569cd6;">=&gt;</span><span> task,
+</span><span>                None </span><span style="color:#569cd6;">=&gt; continue</span><span>, </span><span style="color:#608b4e;">// task no longer exists
+</span><span>            };
+</span><span>            </span><span style="color:#569cd6;">let</span><span> waker = waker_cache
+</span><span>                .entry(task_id)
+</span><span>                .or_insert_with(|| TaskWaker::new(task_id, task_queue.clone()));
+</span><span>            </span><span style="color:#569cd6;">let mut</span><span> context = Context::from_waker(waker);
+</span><span>            </span><span style="color:#569cd6;">match</span><span> task.poll(</span><span style="color:#569cd6;">&amp;mut</span><span> context) {
+</span><span>                Poll::Ready(()) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                    </span><span style="color:#608b4e;">// task done -&gt; remove it and its cached waker
+</span><span>                    tasks.remove(</span><span style="color:#569cd6;">&amp;</span><span>task_id);
+</span><span>                    waker_cache.remove(</span><span style="color:#569cd6;">&amp;</span><span>task_id);
+</span><span>                }
+</span><span>                Poll::Pending </span><span style="color:#569cd6;">=&gt; </span><span>{}
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>這函數基本的想法與我們的 <code>SimpleExecutor</code> 類型相似：循環遍歷 <code>task_queue</code> 中的所有任務，爲每個任務創建一個喚醒器，然後輪詢它們。
+然而，與將待定任務添加回 <code>task_queue</code> 的 <code>SimpleExecutor</code> 不同，我們讓我們的 <code>TaskWaker</code> 實現來處理將被喚醒的任務添加回隊列。
+這個喚醒器類型的實現將在下面展示。</p>
+<p>讓我們來看看這個 <code>run_ready_tasks</code> 方法的一些實現細節：</p>
+<ul>
+<li>
+<p>我們使用 <a href="https://doc.rust-lang.org/book/ch18-03-pattern-syntax.html#destructuring-to-break-apart-values"><em>destructuring</em></a> 將 <code>self</code> 分成它的三個字段，以避免一些借用檢查錯誤。
+換句話說，我們的實現需要從一個閉包中訪問 <code>self.task_queue</code>，這個閉包目前嘗試完全借用 <code>self</code>。
+這是一個基本的借用檢查問題，將在 <a href="https://github.com/rust-lang/rfcs/pull/2229">RFC 2229</a> 被 <a href="https://github.com/rust-lang/rust/issues/53488">實現</a> 時解決。</p>
+</li>
+<li>
+<p>對於每個彈出的任務 ID，我們從 <code>tasks</code> map 中獲取了一個對應任務的可變引用。由於我們的 <code>ScancodeStream</code> 實現在檢查任務是否需要睡眠之前註冊了喚醒器，可能會發生一個任務不存在的情況。在這種情況下，我們只是忽略這個喚醒，並繼續處理隊列中的下一個 ID。</p>
+</li>
+<li>
+<p>爲避免在每次輪詢時創建喚醒器的性能開銷，我們使用 <code>waker_cache</code> map 來存儲每個任務的喚醒器。爲此，我們使用了 <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html#method.entry"><code>BTreeMap::entry</code></a> 方法和 <a href="https://doc.rust-lang.org/alloc/collections/btree_map/enum.Entry.html#method.or_insert_with"><code>Entry::or_insert_with</code></a> 來在它不存在時創建一個新的喚醒器，然後獲取一個對它的可變引用。爲創建一個新的喚醒器，我們克隆了 <code>task_queue</code>，並將它與任務 ID 一起傳遞給 <code>TaskWaker::new</code> 函數（下面展示了實現）。由於 <code>task_queue</code> 被包裝在一個 <code>Arc</code> 中，<code>clone</code> 只增加了值的引用計數，但仍然指向同一個堆分配的隊列。請注意，像這樣重用喚醒器對於所有的喚醒器實現來說都是不可能的，但我們的 <code>TaskWaker</code> 類型將允許它。</p>
+</li>
+</ul>
+<p>當任務返回 <code>Poll::Ready</code> 時，它就完成了。在這種情況下，我們使用 <a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html#method.remove"><code>BTreeMap::remove</code></a> 方法從 <code>tasks</code> map 中移除它。如果它的緩存喚醒器存在，我們也會移除它。</p>
+<h4 id="huan-xing-qi-waker-she-ji"><a class="zola-anchor" href="#huan-xing-qi-waker-she-ji" aria-label="Anchor link for: huan-xing-qi-waker-she-ji">🔗</a>喚醒器 Waker 設計</h4>
+<p>喚醒器的工作是將被喚醒的任務的 ID 推送到執行器的 <code>task_queue</code> 中。
+我們通過創建一個新的 <code>TaskWaker</code> 結構來實現這一點，它存儲任務 ID 和對 <code>task_queue</code> 的引用：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>TaskWaker {
+</span><span>    task_id: TaskId,
+</span><span>    task_queue: Arc&lt;ArrayQueue&lt;TaskId&gt;&gt;,
+</span><span>}
+</span></code></pre>
+<p>因爲 <code>task_queue</code> 的所有權在執行器和喚醒器之間共享，我們使用了 <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> 包裝類型來實現共享的引用計數所有權。</p>
+<p>喚醒操作的實現非常簡單：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>TaskWaker {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>wake_task(</span><span style="color:#569cd6;">&amp;</span><span>self) {
+</span><span>        self.task_queue.push(self.task_id).expect(</span><span style="color:#d69d85;">&quot;task_queue full&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>我們推送 <code>task_id</code> 到引用的 <code>task_queue</code>。由於對 <a href="https://docs.rs/crossbeam/0.7.3/crossbeam/queue/struct.ArrayQueue.html"><code>ArrayQueue</code></a> 類型的修改只需要一個共享引用，我們可以在 <code>&amp;self</code> 上實現這個方法，而不是在 <code>&amp;mut self</code> 上。</p>
+<h5 id="the-wake-trait"><a class="zola-anchor" href="#the-wake-trait" aria-label="Anchor link for: the-wake-trait">🔗</a>The <code>Wake</code> Trait</h5>
+<p>爲了使用我們的 <code>TaskWaker</code> 類型來輪詢 future，我們首先需要將它轉換爲一個 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> 實例。
+這是必需的，因爲 <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>Future::poll</code></a> 方法接受一個 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a> 實例作爲參數，這個實例只能從 <code>Waker</code> 類型構建。
+雖然我們可以通過提供 <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> 類型的實現來做到這一點，但通過實現基於 <code>Arc</code> 的 <a href="https://doc.rust-lang.org/nightly/alloc/task/trait.Wake.html"><code>Wake</code></a> trait 並使用標准庫提供的 <a href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html"><code>From</code></a> 實現來構建 <code>Waker</code> 來說，這既更簡單又更安全。</p>
+<p>這個 trait 實現看起來像這樣：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>alloc::task::Wake;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Wake </span><span style="color:#569cd6;">for </span><span>TaskWaker {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>wake(self: Arc&lt;</span><span style="color:#569cd6;">Self</span><span>&gt;) {
+</span><span>        self.wake_task();
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>wake_by_ref(self: </span><span style="color:#569cd6;">&amp;</span><span>Arc&lt;</span><span style="color:#569cd6;">Self</span><span>&gt;) {
+</span><span>        self.wake_task();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>由於喚醒器通常在執行器和異步任務之間共享，這個 trait 的方法要求 <code>Self</code> 實例被包裝在 <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a> 類型中，<code>Arc</code> 實現了引用計數所有權。
+這意味着我們必須將我們的 <code>TaskWaker</code> 移動到一個 <code>Arc</code> 中才能調用它們。</p>
+<p>在 <code>wake</code> 和 <code>wake_by_ref</code> 方法之間的區別是，後者只需要一個對 <code>Arc</code> 的引用，而前者需要對 <code>Arc</code> 的所有權，因此通常需要增加引用計數。
+並不是所有的類型都支持通過引用喚醒，所以實現 <code>wake_by_ref</code> 方法是可選的。
+然而，它可以帶來更好的性能，因爲它避免了不必要的引用計數修改。
+在我們的情況下，我們可以將這兩個 trait 方法簡單地轉發到我們的 <code>wake_task</code> 函數，這個函數只需要一個共享的 <code>&amp;self</code> 引用。</p>
+<h5 id="chuang-jian-huan-xing-qi-creating-wakers"><a class="zola-anchor" href="#chuang-jian-huan-xing-qi-creating-wakers" aria-label="Anchor link for: chuang-jian-huan-xing-qi-creating-wakers">🔗</a>創建喚醒器 Creating Wakers</h5>
+<p>既然 <code>Waker</code> 類型支持所有實現了 <code>Wake</code> trait 的 <code>Arc</code> 包裝值的 <a href="https://doc.rust-lang.org/nightly/core/convert/trait.From.html"><code>From</code></a> 轉換器，
+我們現在可以實現 <code>TaskWaker::new</code> 函數，這是我們的 <code>Executor::run_ready_tasks</code> 方法所需要的：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>TaskWaker {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>new(task_id: TaskId, task_queue: Arc&lt;ArrayQueue&lt;TaskId&gt;&gt;) -&gt; Waker {
+</span><span>        Waker::from(Arc::new(TaskWaker {
+</span><span>            task_id,
+</span><span>            task_queue,
+</span><span>        }))
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>We create the <code>TaskWaker</code> using the passed <code>task_id</code> and <code>task_queue</code>. We then wrap the <code>TaskWaker</code> in an <code>Arc</code> and use the <code>Waker::from</code> implementation to convert it to a <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a>. This <code>from</code> method takes care of constructing a <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWakerVTable.html"><code>RawWakerVTable</code></a> and a <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> instance for our <code>TaskWaker</code> type. In case you’re interested in how it works in detail, check out the <a href="https://github.com/rust-lang/rust/blob/cdb50c6f2507319f29104a25765bfb79ad53395c/src/liballoc/task.rs#L58-L87">implementation in the <code>alloc</code> crate</a>.</p>
+<p>我們使用傳遞的 <code>task_id</code> 和 <code>task_queue</code> 創建了 <code>TaskWaker</code>。
+然後我們將 <code>TaskWaker</code> 包裝在一個 <code>Arc</code> 中，並使用 <code>Waker::from</code> 實現來將它轉換爲一個 <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a>。
+這個 <code>from</code> 方法負責構建一個 <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWakerVTable.html"><code>RawWakerVTable</code></a> 和一個 <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> 實例，用於我們的 <code>TaskWaker</code> 類型。
+如果你對它的工作細節感興趣，可以查看 <a href="https://github.com/rust-lang/rust/blob/cdb50c6f2507319f29104a25765bfb79ad53395c/src/liballoc/task.rs#L58-L87"><code>alloc</code> crate 中的實現</a>。</p>
+<h4 id="a-run-method"><a class="zola-anchor" href="#a-run-method" aria-label="Anchor link for: a-run-method">🔗</a>A <code>run</code> Method</h4>
+<p>就着我們的喚醒器實現，我們最終可以爲我們的執行器構建一個 <code>run</code> 方法：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Executor {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>run(</span><span style="color:#569cd6;">&amp;mut </span><span>self) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>        </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>            self.run_ready_tasks();
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>這個方法只是在一個循環中調用 <code>run_ready_tasks</code> 函數。雖然我們理論上可以在 <code>tasks</code> map 變爲空時從函數中返回，但這永遠不會發生，因爲我們的 <code>keyboard_task</code> 永遠不會結束，所以一個簡單的 <code>loop</code> 就足夠了。由於這個函數永遠不會返回，我們使用 <code>!</code> 返回類型來將函數標記爲 <a href="https://doc.rust-lang.org/stable/rust-by-example/fn/diverging.html">diverging</a> 給編譯器。</p>
+<p>現在可以將我們的 <code>kernel_main</code> 改爲使用新 <code>Executor</code> 而不是 <code>SimpleExecutor</code> 了：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::task::executor::Executor; </span><span style="color:#608b4e;">// new
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// […] initialization routines, including init_heap, test_main
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> executor = Executor::new(); </span><span style="color:#608b4e;">// new
+</span><span>    executor.spawn(Task::new(example_task()));
+</span><span>    executor.spawn(Task::new(keyboard::print_keypresses()));
+</span><span>    executor.run();
+</span><span>}
+</span></code></pre>
+<p>我們只需要改變導入和類型名稱。由於我們的 <code>run</code> 函數被標記爲 diverging，編譯器知道它永遠不會返回，所以我們不再需要在 <code>kernel_main</code> 函數的末尾調用 <code>hlt_loop</code>。</p>
+<p>我們用 <code>cargo run</code> 運行我們的內核，現在我們可以看到鍵盤輸入仍然在起作用：</p>
+<p><img src="https://os.phil-opp.com/zh-TW/async-await/qemu-keyboard-output-again.gif" alt="QEMU printing “…..H…e…l…l..o….. …a..g..a….i…n…!”" /></p>
+<p>然而，QEMU 的 CPU 利用率並沒有得到改善。這是因爲我們仍然讓 CPU 一直忙碌。
+我們不再輪詢任務直到它們再次被喚醒，但我們仍然在一個忙碌的循環中檢查 <code>task_queue</code>。
+爲了解決這個問題，我們需要在沒有更多工作要做時讓 CPU 進入睡眠狀態。</p>
+<h4 id="kong-xian-shi-shui-mian"><a class="zola-anchor" href="#kong-xian-shi-shui-mian" aria-label="Anchor link for: kong-xian-shi-shui-mian">🔗</a>空閒時睡眠</h4>
+<p>基本的思路是，當 <code>task_queue</code> 爲空時執行 [<code>hlt</code> 指令]。這個指令將 CPU 進入睡眠狀態，直到下一個中斷到來。
+CPU 在中斷時立即變爲活動狀態的事實確保了當中斷處理程序推送到 <code>task_queue</code> 時我們仍然可以直接做出反應。</p>
+<p>爲實現這一點，我們在執行器中創建了一個新的 <code>sleep_if_idle</code> 方法，並從我們的 <code>run</code> 方法中調用它：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Executor {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>run(</span><span style="color:#569cd6;">&amp;mut </span><span>self) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>        </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>            self.run_ready_tasks();
+</span><span>            self.sleep_if_idle();   </span><span style="color:#608b4e;">// new
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>sleep_if_idle(</span><span style="color:#569cd6;">&amp;</span><span>self) {
+</span><span>        </span><span style="color:#569cd6;">if </span><span>self.task_queue.is_empty() {
+</span><span>            x86_64::instructions::hlt();
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>由於我們直接在 <code>run_ready_tasks</code> 返回後調用 <code>sleep_if_idle</code>，而 <code>run_ready_tasks</code> 會一直循環直到 <code>task_queue</code> 變爲空，
+所以再次檢查隊列可能看起來是不必要的。然而，硬件中斷可能會在 <code>run_ready_tasks</code> 返回後直接發生，
+所以在調用 <code>sleep_if_idle</code> 函數時可能已經有一個新的任務在隊列中。只有在隊列仍然爲空時，
+我們才通過 <a href="https://docs.rs/x86_64/0.14.2/x86_64/index.html"><code>x86_64</code></a> 提供的 <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/fn.hlt.html"><code>instructions::hlt</code></a> 包裝函數執行 <code>hlt</code> 指令將 CPU 進入睡眠狀態。</p>
+<p>不幸的是，這個實現中仍然存在一個微妙的競爭條件。由於中斷是異步的，可以在任何時候發生，所以有可能在 <code>is_empty</code> 檢查和 <code>hlt</code> 調用之間發生中斷：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">if </span><span>self.task_queue.is_empty() {
+</span><span>    </span><span style="color:#608b4e;">/// &lt;--- interrupt can happen here
+</span><span>    x86_64::instructions::hlt();
+</span><span>}
+</span></code></pre>
+<p>在這種情況下，如果這個中斷推送到 <code>task_queue</code>，即使現在有一個準備好的任務，我們也會讓 CPU 進入睡眠狀態。
+在最壞的情況下，這可能會延遲處理鍵盤中斷，直到下一次按鍵或下一次計時器中斷。那麼，我們如何防止這種情況呢？</p>
+<p>答案就是，在檢查之前在 CPU 上禁用中斷，然後在 <code>hlt</code> 指令之後原子地再次啓用它們。
+這樣，所有在中間發生的中斷都會在 <code>hlt</code> 指令之後延遲，這樣就不會錯過任何喚醒。
+爲了實現這種方法，我們可以使用 <a href="https://docs.rs/x86_64/0.14.2/x86_64/index.html"><code>x86_64</code></a> 庫提供的 <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.enable_and_hlt.html"><code>interrupts::enable_and_hlt</code></a> 函數。</p>
+<p>更新後的 <code>sleep_if_idle</code> 函數的實現如下：</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/task/executor.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Executor {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>sleep_if_idle(</span><span style="color:#569cd6;">&amp;</span><span>self) {
+</span><span>        </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts::{self, enable_and_hlt};
+</span><span>
+</span><span>        interrupts::disable();
+</span><span>        </span><span style="color:#569cd6;">if </span><span>self.task_queue.is_empty() {
+</span><span>            enable_and_hlt();
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            interrupts::enable();
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>爲避免競爭條件，我們在檢查 <code>task_queue</code> 是否爲空之前禁用中斷。
+如果爲空，我們使用 <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.enable_and_hlt.html"><code>enable_and_hlt</code></a> 函數將中斷啓用並將 CPU 進入睡眠狀態作爲一個單一的原子操作。
+如果隊列不再爲空，這意味着一個中斷在 <code>run_ready_tasks</code> 返回後喚醒了一個任務。在這種情況下，我們再次啓用中斷，並直接繼續執行而不執行 <code>hlt</code>。</p>
+<p>現在，當沒有任務要執行時，我們的執行器可以正確地讓 CPU 進入睡眠狀態。
+我們可以看到，當我們再次使用 <code>cargo run</code> 運行我們的內核時，QEMU 進程的 CPU 利用率大大降低。</p>
+<h4 id="ke-neng-de-kuo-zhan"><a class="zola-anchor" href="#ke-neng-de-kuo-zhan" aria-label="Anchor link for: ke-neng-de-kuo-zhan">🔗</a>可能的擴展</h4>
+<p>我們的執行器現在能夠以高效的方式運行任務。它利用喚醒器通知來避免輪詢等待的任務，並在當前沒有工作要做時讓 CPU 進入睡眠狀態。然而，我們的執行器仍然相當基本，有許多可能的擴展功能：</p>
+<ul>
+<li>
+<p><strong>排程</strong>：對於我們的 <code>task_queue</code>，我們目前使用 <a href="https://doc.rust-lang.org/stable/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a> 類型來實現 <em>先進先出</em>（FIFO）策略，這通常也被稱爲 <em>輪詢</em> 排程。這種策略可能不適用於所有的工作負載。例如，優先考慮優先處理延遲關鍵的任務或執行大量 I/O 的任務。有關更多信息，請參見 <a href="http://pages.cs.wisc.edu/~remzi/OSTEP/"><em>Operating Systems: Three Easy Pieces</em></a> 書籍的 排程章節 <a href="http://pages.cs.wisc.edu/~remzi/OSTEP/cpu-sched.pdf">scheduling chapter</a> 或 <a href="https://en.wikipedia.org/wiki/Scheduling_(computing)">Wikipedia 上的排程文章</a>。</p>
+</li>
+<li>
+<p><strong>任務生成</strong>：我們的 <code>Executor::spawn</code> 方法目前需要一個 <code>&amp;mut self</code> 引用，因此在調用 <code>run</code> 方法後不再可用。爲了解決這個問題，我們可以創建一個額外的 <code>Spawner</code> 類型，它與執行器共享某種隊列，並允許任務在任務自身內部創建。隊列可以直接是 <code>task_queue</code>，也可以是執行器在其運行循環中檢查的一個獨立的隊列。</p>
+</li>
+<li>
+<p><strong>利用線程</strong>：我們還沒有支持線程，但我們將在下一篇文章中添加它。這將使得在不同的線程中啟動執行器的多個實例成為可能。這種方法的優點是，由於其他任務可以並行運行，因此可以減少長時間運行任務所帶來的延遲。這種方法還允許它利用多個CPU核心。</p>
+</li>
+<li>
+<p><strong>負載均衡</strong>：在添加線程支持時，了解如何在執行器之間分配任務以確保所有 CPU 核心都得到利用，變得很重要。這方面的一個常見技術是 <a href="https://en.wikipedia.org/wiki/Work_stealing"><em>work stealing</em></a>。</p>
+</li>
+</ul>
+<h2 id="zhai-yao"><a class="zola-anchor" href="#zhai-yao" aria-label="Anchor link for: zhai-yao">🔗</a>摘要</h2>
+<p>我們首先介紹了 <strong>多任務</strong>，並區分了 <em>抢占式</em> 多任務和 <em>協作式</em> 多任務。前者會定期強制中斷正在運行的任務，而後者則讓任務運行，直到它們自願放棄 CPU 控制權。</p>
+<p>然後，我們探索了 Rust 對 <strong>async/await</strong> 的支持，它提供了協作式多任務的語言級實現。Rust 基於 基於輪詢的 <code>Future</code> trait 實現，這個 trait 抽象了異步任務。
+使用 async/await，我們可以幾乎像使用普通同步代碼一樣使用 future。
+不同之處在於，異步函數再次返回一個 <code>Future</code>，這個 <code>Future</code> 需要在某個時候添加到執行器中才能運行它。</p>
+<p>在幕後，編譯器將 async/await 代碼轉換爲 <em>狀態機</em>，其中每個 <code>.await</code> 操作對應於一個可能的暫停點。
+通過利用它對程序的了解，編譯器能夠僅保存每個暫停點的最小狀態，從而使每個任務的內存消耗非常小。
+一個挑戰是生成的狀態機可能包含 <em>自引用</em> 的結構，例如當異步函數的局部變量相互引用時。
+爲了防止指針失效，Rust 使用 <code>Pin</code> 類型來確保 future 在第一次輪詢後不能再在內存中移動。</p>
+<p>對於我們的 <strong>實現</strong>，我們首先創建了一個非常基本的執行器，它在一個忙碌的循環中輪詢所有的任務，而不使用 <code>Waker</code> 類型。
+然後，我們通過實現一個異步鍵盤任務來展示喚醒通知的優勢。
+這個任務定義了一個靜態變量 <code>SCANCODE_QUEUE</code>，使用 <code>crossbeam</code> 庫提供的無互斥鎖的 <code>ArrayQueue</code> 類型。
+現在，鍵盤中斷處理程序不再直接處理按鍵，而是將所有接收到的掃描碼放入隊列，然後喚醒註冊的 <code>Waker</code> 來通知有新的輸入可用了。
+在接收端，我們創建了一個 <code>ScancodeStream</code> 類型，它提供了一個 <code>Future</code>，解析隊列中的下一個掃描碼。
+這使得我們可以創建一個使用 async/await 來解釋和打印隊列中掃描碼的異步 <code>print_keypresses</code> 任務。</p>
+<p>爲了利用鍵盤任務的喚醒通知，我們創建了一個新的 <code>Executor</code> 類型，它使用一個 共享 <code>Arc</code> 的 <code>task_queue</code> 來存儲準備好的任務。
+我們實現了一個 <code>TaskWaker</code> 類型，它將被喚醒的任務的 ID 直接推送到這個 <code>task_queue</code>，然後由執行器再次輪詢。
+爲了在沒有任務可運行時節省電力，我們添加了使用 <code>hlt</code> 指令將 CPU 進入睡眠狀態的支持。
+最後，我們討論了我們的執行器的一些潛在擴展，例如提供多核支持。</p>
+<h2 id="xia-yi-bu-yao-gan-ma"><a class="zola-anchor" href="#xia-yi-bu-yao-gan-ma" aria-label="Anchor link for: xia-yi-bu-yao-gan-ma">🔗</a>下一步要幹嘛?</h2>
+<p>使用 async/await，我們現在在內核中基本支持了協作式多任務。雖然協作式多任務非常高效，但當單個任務運行時間過長時，會導致延遲問題，從而阻止其他任務運行。
+因此，我們的內核也應該添加對抢占式多任務的支持。</p>
+<p>下一篇文章中，我們將介紹 <em>線程</em> 作爲最常見的抢占式多任務形式。除了解決長時間運行任務的問題外，線程還將爲我們利用多個 CPU 核心和在將來運行不受信任的用戶程序做準備。</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Support Me</h2>
+<p>Creating and maintaining this blog and the associated libraries is a lot of work, but I really enjoy doing it. By supporting me, you allow me to invest more time in new content, new features, and continuous maintenance. The best way to support me is to <a href="https://github.com/sponsors/phil-opp"><em>sponsor me on GitHub</em></a>. Thank you!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/zh-TW/freestanding-rust-binary/">&laquo; 獨立的 Rust 二進制檔</a>
+        
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">評論</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Do you have a problem, want to share feedback, or discuss further ideas? Feel free to leave a comment here! Please stick to English and follow Rust's <a href="https://www.rust-lang.org/policies/code-of-conduct">code of conduct</a>. This comment thread directly maps to a <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Async/Await%20%28zh-TW%29%22%20in%3Atitle"><em>discussion on GitHub</em></a>, so you can also comment there if you prefer.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Async&#x2F;Await (zh-TW)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="zh-TW"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Async/Await%20%28zh-TW%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            請儘可能使用英語評論。
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/async-await/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/async-await/">
+                        Japanese
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>
