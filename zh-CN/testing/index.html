@@ -233,7 +233,7 @@
 </span><span>   Compiling blog_os v0.1.0 (/…/blog_os)
 </span><span>error[E0463]: can&#39;t find crate for `test`
 </span></code></pre>
-<p>由于 <code>test</code> 库依赖于标准库，所以它在我们的裸机目标上并不可用。虽然将 <code>test</code> 库移植到一个 <code>#[no_std]</code> 上下文环境中是<a href="https://github.com/japaric/utest">可能的</a>，但是这样做是高度不稳定的，并且还会需要一些特殊的hacks，例如重定义 <code>panic</code> 宏。 </p>
+<p>由于 <code>test</code> 库依赖于标准库，所以它在我们的裸机目标上并不可用。虽然将 <code>test</code> 库移植到一个 <code>#[no_std]</code> 上下文环境中是<a href="https://github.com/japaric/utest">可能的</a>，但是这样做是高度不稳定的，并且还会需要一些特殊的hacks，例如重定义 <code>panic</code> 宏。</p>
 <h3 id="zi-ding-yi-ce-shi-kuang-jia"><a class="zola-anchor" href="#zi-ding-yi-ce-shi-kuang-jia" aria-label="Anchor link for: zi-ding-yi-ce-shi-kuang-jia">🔗</a>自定义测试框架</h3>
 <p>幸运的是，Rust支持通过使用不稳定的<strong>自定义测试框架</strong>（<a href="https://doc.rust-lang.org/unstable-book/language-features/custom-test-frameworks.html"><code>custom_test_frameworks</code></a>） 功能来替换默认的测试框架。该功能不需要额外的库，因此在 <code>#[no_std]</code>环境中它也可以工作。它的工作原理是收集所有标注了 <code>#[test_case]</code>属性的函数，然后将这个测试函数的列表作为参数传递给用户指定的runner函数。因此，它实现了对测试过程的最大控制。</p>
 <p>与默认的测试框架相比，它的缺点是有一些高级功能诸如 <a href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html#checking-for-panics-with-should_panic"><code>should_panic</code> tests</a> 都不可用了。相对的，如果需要这些功能，我们需要自己来实现。当然，这点对我们来说是好事，因为我们的环境非常特殊，在这个环境里，这些高级功能的默认实现无论如何都是无法工作的，举个例子， <code>#[should_panic]</code> 属性依赖于栈展开来捕获内核panic，而我们的内核早已将其禁用了。</p>
@@ -251,10 +251,10 @@
 </span><span>    }
 </span><span>}
 </span></code></pre>
-<p>我们的runner会打印一个简短的debug信息然后调用列表中的每个测试函数。参数类型 <code>&amp;[&amp;dyn Fn()]</code> 是<a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a> trait的 <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/trait-objects.html"><em>trait object</em></a> 引用的一个 <a href="https://doc.rust-lang.org/std/primitive.slice.html"><em>slice</em></a>。它基本上可以被看做一个可以像函数一样被调用的类型的引用列表。由于这个函数在不进行测试的时候没有什么用，这里我们使用 <code>#[cfg(test)]</code>属性保证它只会出现在测试中。 </p>
+<p>我们的runner会打印一个简短的debug信息然后调用列表中的每个测试函数。参数类型 <code>&amp;[&amp;dyn Fn()]</code> 是<a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a> trait的 <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/trait-objects.html"><em>trait object</em></a> 引用的一个 <a href="https://doc.rust-lang.org/std/primitive.slice.html"><em>slice</em></a>。它基本上可以被看做一个可以像函数一样被调用的类型的引用列表。由于这个函数在不进行测试的时候没有什么用，这里我们使用 <code>#[cfg(test)]</code>属性保证它只会出现在测试中。</p>
 <p>现在当我们运行 <code>cargo test</code> ，我们可以发现运行成功了。然而，我们看到的仍然是“Hello World“而不是我们的 <code>test_runner</code>传递来的信息。这是由于我们的入口点仍然是 <code>_start</code> 函数——自定义测试框架会生成一个<code>main</code>函数来调用<code>test_runner</code>，但是由于我们使用了 <code>#[no_main]</code>并提供了我们自己的入口点，所以这个<code>main</code>函数就被忽略了。</p>
 <div class = "warning">
-<p><strong>Note:</strong> cargo目前有个bug，就是某些测试用例会在执行 <code>cargo test</code> 时抛出 <code>duplicate lang item</code> 错误。目前已知的复现条件是在你的 <code>Cargo.toml</code> 中配置 <code>panic = &quot;abort&quot;</code>，只要移除掉，<code>cargo test</code> 即可正常执行。如果你对这个bug感兴趣，可以关注一下这个 <a href="https://github.com/rust-lang/cargo/issues/7359">cargo issue</a>。</p>
+<p><strong>Note:</strong> cargo目前有个bug，就是某些测试用例会在执行 <code>cargo test</code> 时抛出 <code>duplicate lang item</code> 错误。目前已知的复现条件是在你的 <code>Cargo.toml</code> 中配置 <code>panic = "abort"</code>，只要移除掉，<code>cargo test</code> 即可正常执行。如果你对这个bug感兴趣，可以关注一下这个 <a href="https://github.com/rust-lang/cargo/issues/7359">cargo issue</a>。</p>
 </div>
 <p>为了修复这个问题，我们需要通过 <code>reexport_test_harness_main</code>属性来将生成的函数的名称更改为与<code>main</code>不同的名称。然后我们可以在我们的<code>_start</code>函数里调用这个重命名的函数:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
@@ -625,7 +625,7 @@
 <p>该函数定义了一个测试字符串，并通过 <code>println</code>将其输出，然后遍历静态 <code>WRITER</code> 也就是vga字符缓冲区的屏幕字符。由于 <code>println</code> 在将字符串打印到屏幕上最后一行后会立刻附加一个新行(即输出完后有一个换行符)，所以这个字符串应该会出现在第 <code>BUFFER_HEIGHT - 2</code>行。</p>
 <p>通过使用<a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a> ，我们统计了变量 <code>i</code> 的迭代次数，然后用它来加载对应于<code>c</code>的屏幕字符。 通过比较屏幕字符的 <code>ascii_character</code> 和 <code>c</code> ，我们可以确保字符串的每个字符确实出现在vga文本缓冲区中。</p>
 <p>如你所想，我们可以创建更多的测试函数：例如一个用来测试当打印一个很长的且包装正确的行时是否会发生panic的函数，或是一个用于测试换行符、不可打印字符、非unicode字符是否能被正确处理的函数。</p>
-<p>在这篇文章的剩余部分，我们还会解释如何创建一个 <em>集成测试</em> 以测试不同组建之间的交互。 </p>
+<p>在这篇文章的剩余部分，我们还会解释如何创建一个 <em>集成测试</em> 以测试不同组建之间的交互。</p>
 <h2 id="ji-cheng-ce-shi"><a class="zola-anchor" href="#ji-cheng-ce-shi" aria-label="Anchor link for: ji-cheng-ce-shi">🔗</a>集成测试</h2>
 <p>在Rust中，<strong>集成测试</strong>（<a href="https://doc.rust-lang.org/book/ch11-03-test-organization.html#integration-tests">integration tests</a>）的约定是将其放到项目根目录中的 <code>tests</code> 目录下(即 <code>src</code> 的同级目录)。无论是默认测试框架还是自定义测试框架都将自动获取并执行该目录下所有的测试。</p>
 <p>所有的集成测试都是它们自己的可执行文件，并且与我们的 <code>main.rs</code> 完全独立。这也就意味着每个测试都需要定义它们自己的函数入口点。让我们创建一个名为 <code>basic_boot</code> 的例子来看看集成测试的工作细节吧：</p>
@@ -655,7 +655,7 @@
 </span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
 </span><span>}
 </span></code></pre>
-<p>由于集成测试都是单独的可执行文件，所以我们需要再次提供所有的crate属性(<code>no_std</code>, <code>no_main</code>, <code>test_runner</code>, 等等)。我们还需要创建一个新的入口点函数 <code>_start</code>，用于调用测试入口函数 <code>test_main</code>。我们不需要任何的 <code>cfg(test)</code> 属性，因为集成测试的二进制文件在非测试模式下根本不会被编译构建。 </p>
+<p>由于集成测试都是单独的可执行文件，所以我们需要再次提供所有的crate属性(<code>no_std</code>, <code>no_main</code>, <code>test_runner</code>, 等等)。我们还需要创建一个新的入口点函数 <code>_start</code>，用于调用测试入口函数 <code>test_main</code>。我们不需要任何的 <code>cfg(test)</code> 属性，因为集成测试的二进制文件在非测试模式下根本不会被编译构建。</p>
 <p>这里我们采用<a href="https://doc.rust-lang.org/core/macro.unimplemented.html"><code>unimplemented</code></a>宏，充当 <code>test_runner</code> 暂未实现的占位符；添加简单的 <code>loop {}</code> 循环，作为 <code>panic</code> 处理器的内容。理想情况下，我们希望能向我们在 <code>main.rs</code> 里所做的一样使用 <code>serial_println</code> 宏和 <code>exit_qemu</code> 函数来实现这个函数。但问题是，由于这些测试的构建和我们的 <code>main.rs</code> 的可执行文件是完全独立的，我们没有办法使用这些函数。</p>
 <p>如果现阶段你运行 <code>cargo test</code>，你将进入一个无限循环，因为目前panic的处理就是进入无限循环。你需要使用快捷键 <code>Ctrl+c</code>，才可以退出QEMU。</p>
 <h3 id="chuang-jian-yi-ge-ku"><a class="zola-anchor" href="#chuang-jian-yi-ge-ku" aria-label="Anchor link for: chuang-jian-yi-ge-ku">🔗</a>创建一个库</h3>
@@ -810,7 +810,7 @@
 </span><span>}
 </span></code></pre>
 <p>现在当我们运行<code>cargo test</code>时，我们可以看到它会寻找并执行这些测试函数。</p>
-<p>由于该测试和vga缓冲区测试中的一个几乎完全相同，所以目前它看起来似乎没什么用。然而在将来，我们的 <code>main.rs</code> 和 <code>lib.rs</code> 中的 <code>_start</code> 函数的内容会不断增长，并且在运行 <code>test_main</code> 之前需要调用一系列的初始化进程，所以这两个测试将会运行在完全不同的环境中(译者注:也就是说虽然现在看起来差不多，但是在将来该测试和vga buffer中的测试会很不一样，有必要单独拿出来，这两者并没有重复)。 </p>
+<p>由于该测试和vga缓冲区测试中的一个几乎完全相同，所以目前它看起来似乎没什么用。然而在将来，我们的 <code>main.rs</code> 和 <code>lib.rs</code> 中的 <code>_start</code> 函数的内容会不断增长，并且在运行 <code>test_main</code> 之前需要调用一系列的初始化进程，所以这两个测试将会运行在完全不同的环境中(译者注:也就是说虽然现在看起来差不多，但是在将来该测试和vga buffer中的测试会很不一样，有必要单独拿出来，这两者并没有重复)。</p>
 <p>通过在 <code>basic_boot</code> 环境里不调用任何初始化例程的 <code>_start</code> 中测试 <code>println</code> 函数，我们可以确保 <code>println</code> 在启动（boot）后可以正常工作。这一点非常重要，因为我们有很多部分依赖于 <code>println</code>，例如打印panic信息。</p>
 <h3 id="wei-lai-de-ce-shi"><a class="zola-anchor" href="#wei-lai-de-ce-shi" aria-label="Anchor link for: wei-lai-de-ce-shi">🔗</a>未来的测试</h3>
 <p>集成测试的强大之处在于，它们可以被看成是完全独立的可执行文件；这也给了它们完全控制环境的能力，使得他们能够测试代码和CPU或是其他硬件的交互是否正确。</p>
