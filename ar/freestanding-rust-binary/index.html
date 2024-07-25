@@ -1,0 +1,273 @@
+<!doctype html>
+
+<html lang="ar">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="تتمثل الخطوة الأولى في إنشاء نواة نظام التشغيل الخاصة بنا في إنشاء ملف Rust قابل للتنفيذ لا يربط المكتبة القياسية. هذا يجعل من الممكن تشغيل شيفرة Rust…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/ar/freestanding-rust-binary/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>A Freestanding Rust Binary | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/ar" title="All Posts">« All Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Table of Contents</h2>
+    <ol>
+        <li>
+            <a href="#mqdm">مقدمة</a>
+            
+        </li><li>
+            <a href="#t-tyl-lmktb-lqysy">تعطيل المكتبة القياسية</a>
+            <ol>
+                <li>
+                    <a href="#lsm-no-std">السمة ‘no_std’</a>
+                </li>
+            </ol>
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comments</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>A Freestanding Rust Binary</h1>
+    <time datetime="2018-02-10" class="post-date">
+        Feb 10, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Translated Content:</b>
+            This is a community translation of the <strong><a href="https://os.phil-opp.com/freestanding-rust-binary/">A Freestanding Rust Binary</a></strong> post. It might be incomplete, outdated or contain errors. Please report any issues!
+            </p>
+            <p>
+                Translation by <a href="https://github.com/ZAAFHachemrachid">@ZAAFHachemrachid</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>تتمثل الخطوة الأولى في إنشاء نواة نظام التشغيل الخاصة بنا في إنشاء ملف Rust قابل للتنفيذ لا يربط المكتبة القياسية. هذا يجعل من الممكن تشغيل شيفرة Rust على <a href="https://en.wikipedia.org/wiki/Bare_machine">bare metal</a> دون نظام تشغيل أساسي.</p>
+<span id="continue-reading"></span>
+<p>تم تطوير هذه المدونة بشكل مفتوح على <a href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح مشكلة هناك. يمكنك أيضًا ترك تعليقات [في الأسفل]. يمكن العثور على الشيفرة المصدرية الكاملة لهذا المنشور في فرع <a href="https://github.com/phil-opp/blog_os/tree/post-01">post-01</a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Table of Contents</b></summary>
+        <ul>
+            <li>
+                <a href="#mqdm">مقدمة</a>
+                
+            </li><li>
+                <a href="#t-tyl-lmktb-lqysy">تعطيل المكتبة القياسية</a>
+                <ul>
+                    <li>
+                        <a href="#lsm-no-std">السمة ‘no_std’</a>
+                    </li>
+                </ul>
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comments</a></li>
+        </ul>
+    </details>
+
+<h2 id="mqdm"><a class="zola-anchor" href="#mqdm" aria-label="Anchor link for: mqdm">🔗</a>مقدمة</h2>
+<p>لكتابة نواة نظام تشغيل، نحتاج إلى شيفرة لا تعتمد على أي ميزات نظام تشغيل. هذا يعني أنه لا يمكننا استخدام سلاسل الرسائل(threads) أو الملفات(File System) أو Heap ram أو الشبكة أو الأرقام العشوائية أو الإخراج القياسي(I/O) أو أي ميزات أخرى تتطلب تجريدات نظام التشغيل أو أجهزة معينة. وهذا منطقي، لأننا نحاول كتابة نظام التشغيل الخاص بنا (OS) وبرامج التشغيل الخاصة بنا (drivers).</p>
+<p>هذا يعني أنه لا يمكننا استخدام معظم <a href="https://doc.rust-lang.org/std/">Rust standard library</a>، ولكن هناك الكثير من ميزات Rust التي _يمكننا استخدامها. على سبيل المثال، يمكننا استخدام <a href="https://doc.rust-lang.org/book/ch13-02-iterators.html">iterators</a> و <a href="https://doc.rust-lang.org/book/ch13-01-closures.html">closures</a> و <a href="https://doc.rust-lang.org/book/ch06-00-enums.html">pattern matching</a> و <a href="https://doc.rust-lang.org/core/option/">option</a> و [اresult] و <a href="https://doc.rust-lang.org/core/macro.write.html">string formatting</a> وبالطبع <a href="https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html">ownership system</a>. هذه الميزات تجعل من الممكن كتابة نواة بطريقة معبرة جدًا وعالية المستوى دون القلق بشأن <a href="https://www.nayuki.io/page/undefined-behavior-in-c-and-cplusplus-programs">undefined behavior</a> أو <a href="https://tonyarcieri.com/it-s-time-for-a-memory-safety-intervention">memory safety</a>.</p>
+<p>من أجل إنشاء نواة نظام تشغيل في Rust، نحتاج إلى إنشاء ملف قابل للتنفيذ يمكن تشغيله بدون نظام تشغيل أساسي. غالبًا ما يُطلق على هذا الملف القابل للتنفيذ اسم الملف القابل للتنفيذ ”القائم بذاته“ أو ”المعدني العاري“.</p>
+<p>يصف هذا المنشور الخطوات اللازمة لإنشاء ثنائي Rust قائم بذاته ويشرح سبب الحاجة إلى هذه الخطوات. إذا كنت مهتمًا بمثال بسيط فقط، يمكنك <strong>[الانتقال إلى الملخص] (#ملخص)</strong>.</p>
+<h2 id="t-tyl-lmktb-lqysy"><a class="zola-anchor" href="#t-tyl-lmktb-lqysy" aria-label="Anchor link for: t-tyl-lmktb-lqysy">🔗</a>تعطيل المكتبة القياسية</h2>
+<p>بشكل افتراضي، تربط جميع صناديق Rust <a href="https://doc.rust-lang.org/std/">standard library</a>، والتي تعتمد على نظام التشغيل لميزات (مثل threads, files, or networking). كما أنها تعتمد أيضًا على مكتبة C القياسية ‘libc’، والتي تتفاعل بشكل وثيق مع خدمات نظام التشغيل. نظرًا لأن خطتنا هي كتابة نظام تشغيل، لا يمكننا استخدام أي مكتبات تعتمد على نظام التشغيل. لذا يجب علينا تعطيل التضمين التلقائي للمكتبة القياسية من خلال سمة [no_std].</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo new blog_os --bin --edition 2018
+</span></code></pre>
+<p>لقد أطلقتُ على المشروع اسم ”Blog_os“، ولكن بالطبع يمكنك اختيار اسمك الخاص. تُحدّد علامة ”bin“ أننا نريد إنشاء نسخة binary قابلة للتنفيذ (على عكس المكتبة) وتحدّد علامة ”— Edition 2018“ أننا نريد استخدام <a href="https://doc.rust-lang.org/nightly/edition-guide/rust-2018/index.html">2018 edition</a> من Rust لصندوقنا. عندما نُشغّل الأمر، تُنشئ لنا الشحنة بنية الدليل التالية:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>blog_os
+</span><span>├── Cargo.toml
+</span><span>└── src
+</span><span>    └── main.rs
+</span></code></pre>
+<p>يحتوي ملف ‘Cargo.toml’ على تكوين الصندوق، على سبيل المثال اسم الصندوق، والمؤلف، ورقم <a href="https://semver.org/">semantic version</a>، والتبعيات. يحتوي الملف ‘src/main.rs’ على الوحدة النمطية الجذرية للصندوق والدالة ‘الرئيسية’. يمكنك تجميع قفصك من خلال ‘cargo build’ ثم تشغيل الملف الثنائي ‘blog_os’ المجمّع في المجلد الفرعي ‘target/debug’.</p>
+<h3 id="lsm-no-std"><a class="zola-anchor" href="#lsm-no-std" aria-label="Anchor link for: lsm-no-std">🔗</a>السمة ‘no_std’</h3>
+<p>يربط صندوقنا الآن المكتبة القياسية ضمنيًا بالمكتبة القياسية. دعونا نحاول تعطيل ذلك بإضافة سمة [no_std]:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// main.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>main() {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello, world!&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>عندما نحاول بناءه الآن (عن طريق تشغيل ”cargo build“)، يحدث الخطأ التالي:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: cannot find macro `println!` in this scope
+</span><span> --&gt; src/main.rs:4:5
+</span><span>  |
+</span><span>4 |     println!(&quot;Hello, world!&quot;);
+</span><span>  |     ^^^^^^^
+</span></code></pre>
+<p>والسبب في هذا الخطأ هو أن <a href="https://doc.rust-lang.org/std/macro.println.html"><code>println</code> macro</a> هو جزء من المكتبة القياسية، والتي لم نعد نضمّنها. لذا لم يعد بإمكاننا طباعة الأشياء. هذا أمر منطقي، لأن ‘println’ يكتب إلى <a href="https://en.wikipedia.org/wiki/Standard_streams#Standard_output_.28stdout.29">standard output</a>، وهو واصف ملف خاص يوفره نظام التشغيل.</p>
+<p>لذا دعنا نحذف الطباعة ونحاول مرة أخرى بدالة رئيسية فارغة:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// main.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>main() {}
+</span></code></pre>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build
+</span><span>error: `#[panic_handler]` function required, but not found
+</span><span>error: language item required, but not found: `eh_personality`
+</span></code></pre>
+<p>يفتقد بناء المترجمات البرمجية الآن إلى <code>#[panic_handler]</code>  دالة و <em>language item</em>.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Support Me</h2>
+<p>Creating and maintaining this blog and the associated libraries is a lot of work, but I really enjoy doing it. By supporting me, you allow me to invest more time in new content, new features, and continuous maintenance. The best way to support me is to <a href="https://github.com/sponsors/phil-opp"><em>sponsor me on GitHub</em></a>. Thank you!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comments</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Do you have a problem, want to share feedback, or discuss further ideas? Feel free to leave a comment here! Please stick to English and follow Rust's <a href="https://www.rust-lang.org/policies/code-of-conduct">code of conduct</a>. This comment thread directly maps to a <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22A%20Freestanding%20Rust%20Binary%20%28ar%29%22%20in%3Atitle"><em>discussion on GitHub</em></a>, so you can also comment there if you prefer.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="A Freestanding Rust Binary (ar)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="ar"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22A%20Freestanding%20Rust%20Binary%20%28ar%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Please leave your comments in English if possible.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/freestanding-rust-binary/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/freestanding-rust-binary/">
+                        Chinese (simplified)
+                    </a></li><li data-lang-switch-to="zh-TW" class=""><a href="https://os.phil-opp.com/zh-TW/freestanding-rust-binary/">
+                        Chinese (traditional)
+                    </a></li><li data-lang-switch-to="fr" class=""><a href="https://os.phil-opp.com/fr/freestanding-rust-binary/">
+                        French
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/freestanding-rust-binary/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/freestanding-rust-binary/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ru" class=""><a href="https://os.phil-opp.com/ru/freestanding-rust-binary/">
+                        Russian
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/freestanding-rust-binary/">
+                        Korean
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>
