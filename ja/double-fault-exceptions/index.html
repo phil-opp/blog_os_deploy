@@ -353,7 +353,7 @@
 </span><span>            </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">STACK_SIZE</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">4096 </span><span>* </span><span style="color:#b5cea8;">5</span><span>;
 </span><span>            </span><span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">STACK</span><span>: [</span><span style="color:#569cd6;">u8</span><span>; </span><span style="color:#b4cea8;">STACK_SIZE</span><span>] = [</span><span style="color:#b5cea8;">0</span><span>; </span><span style="color:#b4cea8;">STACK_SIZE</span><span>];
 </span><span>
-</span><span>            </span><span style="color:#569cd6;">let</span><span> stack_start = VirtAddr::from_ptr(</span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span style="color:#b4cea8;">STACK </span><span>});
+</span><span>            </span><span style="color:#569cd6;">let</span><span> stack_start = VirtAddr::from_ptr(</span><span style="color:#569cd6;">&amp;</span><span>raw </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">STACK</span><span>);
 </span><span>            </span><span style="color:#569cd6;">let</span><span> stack_end = stack_start + </span><span style="color:#b4cea8;">STACK_SIZE</span><span>;
 </span><span>            stack_end
 </span><span>        };
@@ -362,7 +362,11 @@
 </span><span>}
 </span></code></pre>
 <p>Rustの定数評価機はこの初期化をコンパイル時に行うことがまだできないので<code>lazy_static</code>を使います。ここでは0番目のISTエントリをダブルフォルト用のスタックとして定義します（他のISTのインデックスでも動くでしょう）。そして、ダブルフォルト用スタックの先頭アドレスを0番目のエントリに書き込みます。先頭アドレスを書き込むのはx86のスタックは下、つまり高いアドレスから低いアドレスに向かって伸びていくからです。</p>
-<p>私達はまだメモリ管理を実装していません。そのため、新しいスタックを確保する適切な方法がありません。その代わり今回は、スタックのストレージとして<code>static mut</code>な配列を使います。コンパイラが変更可能な静的変数がアクセスされるとき競合がないことを保証できないため<code>unsafe</code>が必要となります。これが不変の<code>static</code>ではなく<code>static mut</code>であることは重要です。そうでなければブートローダーはこれをリードオンリーのページにマップしてしまうからです。私達は後の記事でこの部分を適切なスタック確保処理に置き換えます。そうすればこの部分での<code>unsafe</code>は必要なくなります。</p>
+<p>私達はまだメモリ管理を実装していません。そのため、新しいスタックを確保する適切な方法がありません。
+その代わり今回は、スタックのストレージとして<code>static mut</code>な配列を使います。
+これが不変の<code>static</code>ではなく<code>static mut</code>であることは重要です。
+そうでなければブートローダーはこれをリードオンリーのページにマップしてしまうからです。
+私達は後の記事でこの部分を適切なスタック確保処理に置き換えます。</p>
 <p>ちなみに、このダブルフォルトスタックはスタックオーバーフローに対する保護をするガードページを持ちません。つまり、スタックオーバーフローがスタックより下のメモリを破壊するかもしれないので、私達はダブルフォルトハンドラ内でスタックを多用すべきではないということです。</p>
 <h4 id="tsswodu-miip-mu"><a class="zola-anchor" href="#tsswodu-miip-mu" aria-label="Anchor link for: tsswodu-miip-mu">🔗</a>TSSを読み込む</h4>
 <p>新しいTSSをつくったので、CPUにそれを使うように教える方法が必要です。残念ながら、これはちょっと面倒くさいです。なぜならTSSは（歴史的な理由で）セグメンテーションシステムを使うためです。テーブルを直接読み込むのではなく、新しいセグメントディスクリプタを<a href="https://web.archive.org/web/20190217233448/https://www.flingos.co.uk/docs/reference/Global-Descriptor-Table/">グローバルディスクリプタテーブル</a>（GDT: Global Descriptor Table）に追加する必要があります。そうすると各自のGDTインデックスで<a href="https://www.felixcloutier.com/x86/ltr"><code>ltr</code>命令</a>を呼び出すことで私達のTSSを読み込むことができます。</p>

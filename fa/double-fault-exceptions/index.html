@@ -345,7 +345,7 @@
 </span><span>            </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">STACK_SIZE</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">4096 </span><span>* </span><span style="color:#b5cea8;">5</span><span>;
 </span><span>            </span><span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">STACK</span><span>: [</span><span style="color:#569cd6;">u8</span><span>; </span><span style="color:#b4cea8;">STACK_SIZE</span><span>] = [</span><span style="color:#b5cea8;">0</span><span>; </span><span style="color:#b4cea8;">STACK_SIZE</span><span>];
 </span><span>
-</span><span>            </span><span style="color:#569cd6;">let</span><span> stack_start = VirtAddr::from_ptr(</span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span style="color:#b4cea8;">STACK </span><span>});
+</span><span>            </span><span style="color:#569cd6;">let</span><span> stack_start = VirtAddr::from_ptr(</span><span style="color:#569cd6;">&amp;</span><span>raw </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">STACK</span><span>);
 </span><span>            </span><span style="color:#569cd6;">let</span><span> stack_end = stack_start + </span><span style="color:#b4cea8;">STACK_SIZE</span><span>;
 </span><span>            stack_end
 </span><span>        };
@@ -354,7 +354,9 @@
 </span><span>}
 </span></code></pre>
 <p>ما از <code>lazy_static</code> استفاده می‌کنیم زیرا ارزیابی کننده ثابت راست هنوز آن‌قدر توانمند نیست که بتواند این مقداردهی اولیه را در زمان کامپایل انجام دهد. ما تعریف می‌کنیم که ورودی صفرم IST پشته خطای دوگانه است (هر اندیس دیگری از IST نیز قابل استفاده است). سپس آدرس بالای یک پشته خطای دوگانه را در ورودی صفرم می‌نویسیم. ما آدرس بالایی را می‌نویسیم زیرا پشته‌های x86 به سمت پایین رشد می‌کنند، یعنی از آدرس‌های بالا به آدرس‌های پایین می‌آیند.</p>
-<p>ما هنوز مدیریت حافظه را پیاده سازی نکرده‌ایم، بنابراین روش مناسبی برای اختصاص پشته جدید نداریم. در عوض، فعلاً از یک آرایه <code>static mut</code> به عنوان حافظه پشته استفاده میکنیم. <code>unsafe</code> لازم است زیرا هنگام دسترسی به استاتیک‌های تغییرپذیر (ترجمه: mutable)، کامپایلر نمی‌تواند عدم وجود رقابت بین داده ها را تضمین کند. مهم است که یک <code>static mut</code> باشد و نه یک استاتیک‌ تغییرناپذیر (ترجمه: immutable)، زیرا در غیر این صورت bootloader آن را به یک صفحه فقط خواندنی نگاشت می‌کند. ما در پست بعدی این را با یک تخصیص پشته مناسب جایگزین خواهیم کرد، سپس <code>unsafe</code> دیگر در این‌جا مورد نیاز نخواهد بود.</p>
+<p>ما هنوز مدیریت حافظه را پیاده سازی نکرده‌ایم، بنابراین روش مناسبی برای اختصاص پشته جدید نداریم.
+در عوض، فعلاً از یک آرایه <code>static mut</code> به عنوان حافظه پشته استفاده میکنیم.
+مهم است که یک <code>static mut</code> باشد و نه یک استاتیک‌ تغییرناپذیر (ترجمه: immutable)، زیرا در غیر این صورت bootloader آن را به یک صفحه فقط خواندنی نگاشت می‌کند.</p>
 <p>توجه داشته باشید که این پشته خطای دوگانه فاقد صفحه محافظ در برابر سرریز پشته است. یعنی ما نباید هیچ کاری که اضافه شدن ایتمی در پشته شود را انجام دهیم زیرا سرریز پشته ممکن است حافظه زیر پشته را خراب کند.</p>
 <h4 id="brgdhry-tss"><a class="zola-anchor" href="#brgdhry-tss" aria-label="Anchor link for: brgdhry-tss">🔗</a>بارگذاری TSS</h4>
 <p>اکنون که TSS جدیدی ایجاد کردیم، به روشی نیاز داریم که به CPU بگوییم باید از آن استفاده کند. متأسفانه این کمی دشوار است، زیرا TSS به دلایل تاریخی از سیستم سگمنت‌بندی (ترجمه: segmentation) استفاده می‌کند. به جای بارگذاری مستقیم جدول، باید توصیفگر سگمنت جدیدی را به <a href="https://web.archive.org/web/20190217233448/https://www.flingos.co.uk/docs/reference/Global-Descriptor-Table/">جدول توصیف‌گر سراسری</a> (Global Descriptor Table: GDT) اضافه کنیم. سپس می‌توانیم TSS خود را با فراخوانی <a href="https://www.felixcloutier.com/x86/ltr">دستور <code>ltr</code></a> با اندیس GDT مربوطه بارگذاری کنیم. (دلیل این‌که نام ماژول را <code>gdt</code> گذاشتیم نیز همین بود).</p>

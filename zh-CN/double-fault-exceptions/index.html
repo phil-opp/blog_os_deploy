@@ -362,7 +362,7 @@ TSS是用来存储32位任务中的零碎信息，比如处理器寄存器的状
 </span><span>            </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">STACK_SIZE</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">4096 </span><span>* </span><span style="color:#b5cea8;">5</span><span>;
 </span><span>            </span><span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">STACK</span><span>: [</span><span style="color:#569cd6;">u8</span><span>; </span><span style="color:#b4cea8;">STACK_SIZE</span><span>] = [</span><span style="color:#b5cea8;">0</span><span>; </span><span style="color:#b4cea8;">STACK_SIZE</span><span>];
 </span><span>
-</span><span>            </span><span style="color:#569cd6;">let</span><span> stack_start = VirtAddr::from_ptr(</span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span style="color:#b4cea8;">STACK </span><span>});
+</span><span>            </span><span style="color:#569cd6;">let</span><span> stack_start = VirtAddr::from_ptr(</span><span style="color:#569cd6;">&amp;</span><span>raw </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">STACK</span><span>);
 </span><span>            </span><span style="color:#569cd6;">let</span><span> stack_end = stack_start + </span><span style="color:#b4cea8;">STACK_SIZE</span><span>;
 </span><span>            stack_end
 </span><span>        };
@@ -371,7 +371,9 @@ TSS是用来存储32位任务中的零碎信息，比如处理器寄存器的状
 </span><span>}
 </span></code></pre>
 <p>这次依然是使用 <code>lazy_static</code>，Rust的静态变量求值器还没有强大到能够在编译器执行初始化代码。我们将IST的0号位定义为 double fault 的专属栈（其他IST序号也可以如此施为）。然后我们将栈的高地址指针写入0号位，之所以这样做，那是因为 x86 的栈内存分配是从高地址到低地址的。</p>
-<p>由于我们还没有实现内存管理机制，所以目前无法直接申请新栈，但我们可以使用 <code>static mut</code> 形式的数组来在内存中模拟出栈存储区。<code>unsafe</code> 块也是必须的，因为编译器认为这种可以被竞争的变量是不安全的，而且这里必须是 <code>static mut</code> 而不是不可修改的 <code>static</code>，否则 bootloader 会将其分配到只读页中。当然，在后续的文章中，我们会将其修改为真正的栈分配，<code>unsafe</code> 块也一定会去掉的。</p>
+<p>由于我们还没有实现内存管理机制，所以目前无法直接申请新栈，但我们可以使用 <code>static mut</code> 形式的数组来在内存中模拟出栈存储区。
+而且这里必须是 <code>static mut</code> 而不是不可修改的 <code>static</code>，否则 bootloader 会将其分配到只读页中。
+当然，在后续的文章中，我们会将其修改为真正的栈分配。</p>
 <p>但要注意，由于现在 double fault 获取的栈不再具有用于防止栈溢出的 guard page，所以我们不应该做任何栈密集型操作了，否则就有可能会污染到栈下方的内存区域。</p>
 <h4 id="jia-zai-tss"><a class="zola-anchor" href="#jia-zai-tss" aria-label="Anchor link for: jia-zai-tss">🔗</a>加载TSS</h4>
 <p>我们已经创建了一个TSS，现在的问题就是怎么让CPU使用它。不幸的是这事有点繁琐，因为TSS用到了分段系统（历史原因）。但我们可以不直接加载，而是在<a href="https://web.archive.org/web/20190217233448/https://www.flingos.co.uk/docs/reference/Global-Descriptor-Table/">全局描述符表</a>（GDT）中添加一个段描述符，然后我们就可以通过<a href="https://www.felixcloutier.com/x86/ltr"><code>ltr</code> 指令</a>加上GDT序号加载我们的TSS。（这也是为什么我们将模块取名为 <code>gdt</code>。）</p>
