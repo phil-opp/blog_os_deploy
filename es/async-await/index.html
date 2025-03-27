@@ -1,0 +1,829 @@
+<!doctype html>
+
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="En esta publicación, exploramos el multitasking cooperativo y la característica async&#x2F;await de Rust. Observamos en detalle cómo funciona async&#x2F;await e…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/es/async-await/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Async&#x2F;Aait | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/es" title="All Posts">« Todos los Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Tabla de Contenidos</h2>
+    <ol>
+        <li>
+            <a href="#multitasking">Multitasking</a>
+            <ol>
+                <li>
+                    <a href="#multitasking-preemptivo">Multitasking Preemptivo</a>
+                </li><li>
+                    <a href="#multitasking-cooperativo">Multitasking Cooperativo</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#async-await-en-rust">Async/Await en Rust</a>
+            <ol>
+                <li>
+                    <a href="#futuros">Futuros</a>
+                </li><li>
+                    <a href="#trabajando-con-futuros">Trabajando con Futuros</a>
+                </li><li>
+                    <a href="#el-patron-async-await">El Patrón Async/Await</a>
+                </li><li>
+                    <a href="#pinning">Pinning</a>
+                </li><li>
+                    <a href="#ejecutores-y-wakers">Ejecutores y Wakers</a>
+                </li><li>
+                    <a href="#multitasking-cooperativo-1">¿Multitasking Cooperativo?</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#implementacion">Implementación</a>
+            <ol>
+                <li>
+                    <a href="#tarea">Tarea</a>
+                </li><li>
+                    <a href="#ejecutor-simple">Ejecutor simple</a>
+                </li>
+            </ol>
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Async&#x2F;Aait</h1>
+    <time datetime="2020-03-27" class="post-date">
+        Mar 27, 2020
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Contenido Traducido:</b>
+            Esta es una traducción comunitaria del post <strong><a href="https://os.phil-opp.com/async-await/">Async/Await</a></strong>. Puede estar incompleta, desactualizada o contener errores. ¡Por favor reporta cualquier problema!
+            </p>
+            <p>
+                Traducción por <a href="https://github.com/dobleuber">@dobleuber</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>En esta publicación, exploramos el <em>multitasking cooperativo</em> y la característica <em>async/await</em> de Rust. Observamos en detalle cómo funciona async/await en Rust, incluyendo el diseño del trait <code>Future</code>, la transformación de máquina de estado y el <em>pinning</em>. Luego añadimos soporte básico para async/await a nuestro núcleo creando una tarea de teclado asíncrona y un ejecutor básico.</p>
+<span id="continue-reading"></span>
+<p>Este blog se desarrolla abiertamente en <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Si tienes problemas o preguntas, por favor abre un issue allí. También puedes dejar comentarios <a href="https://os.phil-opp.com/es/async-await/#comments">al final</a>. El código fuente completo de esta publicación se puede encontrar en la rama <a href="https://github.com/phil-opp/blog_os/tree/post-12"><code>post-12</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Tabla de Contenidos</b></summary>
+        <ul>
+            <li>
+                <a href="#multitasking">Multitasking</a>
+                <ul>
+                    <li>
+                        <a href="#multitasking-preemptivo">Multitasking Preemptivo</a>
+                    </li><li>
+                        <a href="#multitasking-cooperativo">Multitasking Cooperativo</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#async-await-en-rust">Async/Await en Rust</a>
+                <ul>
+                    <li>
+                        <a href="#futuros">Futuros</a>
+                    </li><li>
+                        <a href="#trabajando-con-futuros">Trabajando con Futuros</a>
+                    </li><li>
+                        <a href="#el-patron-async-await">El Patrón Async/Await</a>
+                    </li><li>
+                        <a href="#pinning">Pinning</a>
+                    </li><li>
+                        <a href="#ejecutores-y-wakers">Ejecutores y Wakers</a>
+                    </li><li>
+                        <a href="#multitasking-cooperativo-1">¿Multitasking Cooperativo?</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#implementacion">Implementación</a>
+                <ul>
+                    <li>
+                        <a href="#tarea">Tarea</a>
+                    </li><li>
+                        <a href="#ejecutor-simple">Ejecutor simple</a>
+                    </li>
+                </ul>
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+        </ul>
+    </details>
+
+<h2 id="multitasking"><a class="zola-anchor" href="#multitasking" aria-label="Anchor link for: multitasking">🔗</a>Multitasking</h2>
+<p>Una de las características fundamentales de la mayoría de los sistemas operativos es el <a href="https://en.wikipedia.org/wiki/Computer_multitasking"><em>multitasking</em></a>, que es la capacidad de ejecutar múltiples tareas de manera concurrente. Por ejemplo, probablemente tienes otros programas abiertos mientras miras esta publicación, como un editor de texto o una ventana de terminal. Incluso si solo tienes una ventana del navegador abierta, probablemente hay diversas tareas en segundo plano para gestionar tus ventanas de escritorio, verificar actualizaciones o indexar archivos.</p>
+<p>Aunque parece que todas las tareas corren en paralelo, solo se puede ejecutar una sola tarea en un núcleo de CPU a la vez. Para crear la ilusión de que las tareas corren en paralelo, el sistema operativo cambia rápidamente entre tareas activas para que cada una pueda avanzar un poco. Dado que las computadoras son rápidas, no notamos estos cambios la mayor parte del tiempo.</p>
+<p>Mientras que las CPU de un solo núcleo solo pueden ejecutar una sola tarea a la vez, las CPU de múltiples núcleos pueden ejecutar múltiples tareas de manera verdaderamente paralela. Por ejemplo, una CPU con 8 núcleos puede ejecutar 8 tareas al mismo tiempo. Explicaremos cómo configurar las CPU de múltiples núcleos en una publicación futura. Para esta publicación, nos enfocaremos en las CPU de un solo núcleo por simplicidad. (Vale la pena mencionar que todas las CPU de múltiples núcleos comienzan con solo un núcleo activo, así que podemos tratarlas como CPU de un solo núcleo por ahora.)</p>
+<p>Hay dos formas de multitasking: el multitasking <em>cooperativo</em> requiere que las tareas cedan regularmente el control de la CPU para que otras tareas puedan avanzar. El multitasking <em>preemptivo</em> usa funcionalidades del sistema operativo para cambiar de hilo en puntos arbitrarios en el tiempo forzosamente. A continuación exploraremos las dos formas de multitasking en más detalle y discutiremos sus respectivas ventajas y desventajas.</p>
+<h3 id="multitasking-preemptivo"><a class="zola-anchor" href="#multitasking-preemptivo" aria-label="Anchor link for: multitasking-preemptivo">🔗</a>Multitasking Preemptivo</h3>
+<p>La idea detrás del multitasking preemptivo es que el sistema operativo controla cuándo cambiar de tareas. Para ello, utiliza el hecho de que recupera el control de la CPU en cada interrupción. Esto hace posible cambiar de tareas cuando hay nueva entrada disponible para el sistema. Por ejemplo, sería posible cambiar de tareas cuando se mueve el mouse o llega un paquete de red. El sistema operativo también puede determinar el momento exacto en que se permite que una tarea se ejecute configurando un temporizador de hardware para enviar una interrupción después de ese tiempo.</p>
+<p>La siguiente gráfica ilustra el proceso de cambio de tareas en una interrupción de hardware:</p>
+<p><img src="https://os.phil-opp.com/es/async-await/regain-control-on-interrupt.svg" alt="" /></p>
+<p>En la primera fila, la CPU está ejecutando la tarea <code>A1</code> del programa <code>A</code>. Todas las demás tareas están en pausa. En la segunda fila, una interrupción de hardware llega a la CPU. Como se describió en la publicación sobre <a href="https://os.phil-opp.com/hardware-interrupts/"><em>Interrupciones de Hardware</em></a>, la CPU detiene inmediatamente la ejecución de la tarea <code>A1</code> y salta al controlador de interrupciones definido en la tabla de descriptores de interrupciones (IDT). A través de este controlador de interrupciones, el sistema operativo vuelve a tener control de la CPU, lo que le permite cambiar a la tarea <code>B1</code> en lugar de continuar con la tarea <code>A1</code>.</p>
+<h4 id="guardando-estado"><a class="zola-anchor" href="#guardando-estado" aria-label="Anchor link for: guardando-estado">🔗</a>Guardando Estado</h4>
+<p>Dado que las tareas se interrumpen en puntos arbitrarios en el tiempo, pueden estar en medio de ciertos cálculos. Para poder reanudarlas más tarde, el sistema operativo debe respaldar todo el estado de la tarea, incluyendo su <a href="https://en.wikipedia.org/wiki/Call_stack">pila de llamadas</a> y los valores de todos los registros de CPU. Este proceso se llama <a href="https://en.wikipedia.org/wiki/Context_switch"><em>cambio de contexto</em></a>.</p>
+<p>Dado que la pila de llamadas puede ser muy grande, el sistema operativo normalmente establece una pila de llamadas separada para cada tarea en lugar de respaldar el contenido de la pila de llamadas en cada cambio de tarea. Tal tarea con su propia pila se llama <a href="https://en.wikipedia.org/wiki/Thread_(computing)"><em>hilo de ejecución</em></a> o <em>hilo</em> a secas. Al usar una pila separada para cada tarea, solo se necesitan guardar los contenidos de registro en un cambio de contexto (incluyendo el contador de programa y el puntero de pila). Este enfoque minimiza la sobrecarga de rendimiento de un cambio de contexto, lo que es muy importante, ya que los cambios de contexto a menudo ocurren hasta 100 veces por segundo.</p>
+<h4 id="discusion"><a class="zola-anchor" href="#discusion" aria-label="Anchor link for: discusion">🔗</a>Discusión</h4>
+<p>La principal ventaja del multitasking preemptivo es que el sistema operativo puede controlar completamente el tiempo de ejecución permitido de una tarea. De esta manera, puede garantizar que cada tarea obtenga una parte justa del tiempo de CPU, sin necesidad de confiar en que las tareas cooperen. Esto es especialmente importante al ejecutar tareas de terceros o cuando varios usuarios comparten un sistema.</p>
+<p>La desventaja de la preempción es que cada tarea requiere su propia pila. En comparación con una pila compartida, esto resulta en un mayor uso de memoria por tarea y a menudo limita la cantidad de tareas en el sistema. Otra desventaja es que el sistema operativo siempre debe guardar el estado completo de los registros de CPU en cada cambio de tarea, incluso si la tarea solo utilizó un pequeño subconjunto de los registros.</p>
+<p>El multitasking preemptivo y los hilos son componentes fundamentales de un sistema operativo porque hacen posible ejecutar programas de espacio de usuario no confiables. Discutiremos estos conceptos en detalle en publicaciones futuras. Sin embargo, para esta publicación, nos enfocaremos en el multitasking cooperativo, que también proporciona capacidades útiles para nuestro núcleo.</p>
+<h3 id="multitasking-cooperativo"><a class="zola-anchor" href="#multitasking-cooperativo" aria-label="Anchor link for: multitasking-cooperativo">🔗</a>Multitasking Cooperativo</h3>
+<p>En lugar de pausar forzosamente las tareas en ejecución en puntos arbitrarios en el tiempo, el multitasking cooperativo permite que cada tarea se ejecute hasta que ceda voluntariamente el control de la CPU. Esto permite a las tareas pausarse a sí mismas en puntos convenientes en el tiempo, por ejemplo, cuando necesitan esperar por una operación de E/S de todos modos.</p>
+<p>El multitasking cooperativo se utiliza a menudo a nivel de lenguaje, como en forma de <a href="https://en.wikipedia.org/wiki/Coroutine">corutinas</a> o <a href="https://rust-lang.github.io/async-book/01_getting_started/04_async_await_primer.html">async/await</a>. La idea es que bien el programador o el compilador inserten operaciones <a href="https://en.wikipedia.org/wiki/Yield_(multithreading)"><em>yield</em></a> en el programa, que ceden el control de la CPU y permiten que otras tareas se ejecuten. Por ejemplo, se podría insertar un yield después de cada iteración de un bucle complejo.</p>
+<p>Es común combinar el multitasking cooperativo con <a href="https://en.wikipedia.org/wiki/Asynchronous_I/O">operaciones asíncronas</a>. En lugar de esperar hasta que una operación se complete y prevenir que otras tareas se ejecuten durante este tiempo, las operaciones asíncronas devuelven un estado “no listo” si la operación aún no ha finalizado. En este caso, la tarea en espera puede ejecutar una operación yield para permitir que otras tareas se ejecuten.</p>
+<h4 id="guardando-estado-1"><a class="zola-anchor" href="#guardando-estado-1" aria-label="Anchor link for: guardando-estado-1">🔗</a>Guardando Estado</h4>
+<p>Debido a que las tareas definen sus propios puntos de pausa, no necesitan que el sistema operativo guarde su estado. En su lugar, pueden guardar exactamente el estado que necesitan para continuar antes de pausarse, lo que a menudo resulta en un mejor rendimiento. Por ejemplo, una tarea que acaba de finalizar un cálculo complejo podría necesitar respaldar solo el resultado final del cálculo ya que no necesita los resultados intermedios.</p>
+<p>Las implementaciones respaldadas por el lenguaje de tareas cooperativas son a menudo capaces de respaldar las partes necesarias de la pila de llamadas antes de pausarse. Como ejemplo, la implementación de async/await de Rust almacena todas las variables locales que aún se necesitan en una estructura generada automáticamente (ver más abajo). Al respaldar las partes relevantes de la pila de llamadas antes de pausarse, todas las tareas pueden compartir una única pila de llamadas, lo que resulta en un consumo de memoria mucho más bajo por tarea. Esto hace posible crear un número casi arbitrario de tareas cooperativas sin quedarse sin memoria.</p>
+<h4 id="discusion-1"><a class="zola-anchor" href="#discusion-1" aria-label="Anchor link for: discusion-1">🔗</a>Discusión</h4>
+<p>La desventaja del multitasking cooperativo es que una tarea no cooperativa puede potencialmente ejecutarse durante un tiempo ilimitado. Por lo tanto, una tarea maliciosa o con errores puede evitar que otras tareas se ejecuten y retardar o incluso bloquear todo el sistema. Por esta razón, el multitasking cooperativo debería usarse solo cuando todas las tareas se sabe que cooperan. Por ejemplo, no es una buena idea hacer que el sistema operativo dependa de la cooperación de programas de nivel de usuario arbitrarios.</p>
+<p>Sin embargo, los fuertes beneficios de rendimiento y memoria del multitasking cooperativo lo convierten en un buen enfoque para uso <em>dentro</em> de un programa, especialmente en combinación con operaciones asíncronas. Dado que un núcleo del sistema operativo es un programa crítico en términos de rendimiento que interactúa con hardware asíncrono, el multitasking cooperativo parece ser un buen enfoque para implementar concurrencia.</p>
+<h2 id="async-await-en-rust"><a class="zola-anchor" href="#async-await-en-rust" aria-label="Anchor link for: async-await-en-rust">🔗</a>Async/Await en Rust</h2>
+<p>El lenguaje Rust proporciona soporte de primera clase para el multitasking cooperativo en forma de async/await. Antes de que podamos explorar qué es async/await y cómo funciona, necesitamos entender cómo funcionan los <em>futuros</em> y la programación asíncrona en Rust.</p>
+<h3 id="futuros"><a class="zola-anchor" href="#futuros" aria-label="Anchor link for: futuros">🔗</a>Futuros</h3>
+<p>Un <em>futuro</em> representa un valor que puede no estar disponible aún. Esto podría ser, por ejemplo, un número entero que es calculado por otra tarea o un archivo que se está descargando de la red. En lugar de esperar hasta que el valor esté disponible, los futuros permiten continuar la ejecución hasta que el valor sea necesario.</p>
+<h4 id="ejemplo"><a class="zola-anchor" href="#ejemplo" aria-label="Anchor link for: ejemplo">🔗</a>Ejemplo</h4>
+<p>El concepto de futuros se ilustra mejor con un pequeño ejemplo:</p>
+<p><img src="https://os.phil-opp.com/es/async-await/async-example.svg" alt="Diagrama de secuencia: main llama a read_file y está bloqueado hasta que regrese; luego llama a foo() y también está bloqueado hasta que regrese. El mismo proceso se repite, pero esta vez se llama a async_read_file, que devuelve directamente un futuro; luego se llama a foo() de nuevo, que ahora se ejecuta concurrentemente con la carga del archivo. El archivo está disponible antes de que foo() regrese." /></p>
+<p>Este diagrama de secuencia muestra una función <code>main</code> que lee un archivo del sistema de archivos y luego llama a una función <code>foo</code>. Este proceso se repite dos veces: una vez con una llamada síncrona <code>read_file</code> y otra vez con una llamada asíncrona <code>async_read_file</code>.</p>
+<p>Con la llamada síncrona, la función <code>main</code> necesita esperar hasta que el archivo se cargue desde el sistema de archivos. Solo entonces puede llamar a la función <code>foo</code>, lo que requiere que espere nuevamente por el resultado.</p>
+<p>Con la llamada asíncrona <code>async_read_file</code>, el sistema de archivos devuelve directamente un futuro y carga el archivo de forma asíncrona en segundo plano. Esto permite que la función <code>main</code> llame a <code>foo</code> mucho antes, que luego se ejecuta en paralelo con la carga del archivo. En este ejemplo, la carga del archivo incluso termina antes de que <code>foo</code> regrese, por lo que <code>main</code> puede trabajar directamente con el archivo sin mayor espera después de que <code>foo</code> regrese.</p>
+<h4 id="futuros-en-rust"><a class="zola-anchor" href="#futuros-en-rust" aria-label="Anchor link for: futuros-en-rust">🔗</a>Futuros en Rust</h4>
+<p>En Rust, los futuros están representados por el trait <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html"><code>Future</code></a>, que se ve de la siguiente manera:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub trait </span><span>Future {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Output</span><span>;
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;</span><span style="color:#569cd6;">Self::</span><span>Output&gt;;
+</span><span>}
+</span></code></pre>
+<p>El tipo <a href="https://doc.rust-lang.org/book/ch19-03-advanced-traits.html#specifying-placeholder-types-in-trait-definitions-with-associated-types">asociado</a> <code>Output</code> especifica el tipo del valor asíncrono. Por ejemplo, la función <code>async_read_file</code> en el diagrama anterior devolvería una instancia de <code>Future</code> con <code>Output</code> configurado a <code>File</code>.</p>
+<p>El método <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>poll</code></a> permite comprobar si el valor ya está disponible. Devuelve un enum <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>Poll</code></a>, que se ve de la siguiente manera:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub enum </span><span>Poll&lt;T&gt; {
+</span><span>    Ready(T),
+</span><span>    Pending,
+</span><span>}
+</span></code></pre>
+<p>Cuando el valor ya está disponible (por ejemplo, el archivo se ha leído completamente desde el disco), se devuelve envuelto en la variante <code>Ready</code>. De lo contrario, se devuelve la variante <code>Pending</code>, que señala al llamador que el valor aún no está disponible.</p>
+<p>El método <code>poll</code> toma dos argumentos: <code>self: Pin&lt;&amp;mut Self&gt;</code> y <code>cx: &amp;mut Context</code>. El primero se comporta de manera similar a una referencia normal <code>&amp;mut self</code>, excepto que el valor <code>Self</code> está <a href="https://doc.rust-lang.org/nightly/core/pin/index.html"><em>pinned</em></a> a su ubicación de memoria. Entender <code>Pin</code> y por qué es necesario es difícil sin entender primero cómo funciona async/await. Por lo tanto, lo explicaremos más adelante en esta publicación.</p>
+<p>El propósito del parámetro <code>cx: &amp;mut Context</code> es pasar una instancia de <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> a la tarea asíncrona, por ejemplo, la carga del sistema de archivos. Este <code>Waker</code> permite que la tarea asíncrona señale que ha terminado (o que una parte de ella ha terminado), por ejemplo, que el archivo se ha cargado desde el disco. Dado que la tarea principal sabe que será notificada cuando el <code>Future</code> esté listo, no necesita llamar a <code>poll</code> una y otra vez. Explicaremos este proceso con más detalle más adelante en esta publicación cuando implementemos nuestro propio tipo de waker.</p>
+<h3 id="trabajando-con-futuros"><a class="zola-anchor" href="#trabajando-con-futuros" aria-label="Anchor link for: trabajando-con-futuros">🔗</a>Trabajando con Futuros</h3>
+<p>Ahora sabemos cómo se definen los futuros y entendemos la idea básica detrás del método <code>poll</code>. Sin embargo, aún no sabemos cómo trabajar de manera efectiva con los futuros. El problema es que los futuros representan los resultados de tareas asíncronas, que pueden no estar disponibles aún. En la práctica, sin embargo, a menudo necesitamos estos valores directamente para cálculos posteriores. Así que la pregunta es: ¿Cómo podemos recuperar eficientemente el valor de un futuro cuando lo necesitamos?</p>
+<h4 id="esperando-en-futuros"><a class="zola-anchor" href="#esperando-en-futuros" aria-label="Anchor link for: esperando-en-futuros">🔗</a>Esperando en Futuros</h4>
+<p>Una posible respuesta es esperar hasta que un futuro esté listo. Esto podría verse algo así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> future = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>);
+</span><span style="color:#569cd6;">let</span><span> file_content = </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>    </span><span style="color:#569cd6;">match</span><span> future.poll(…) {
+</span><span>        Poll::Ready(value) </span><span style="color:#569cd6;">=&gt; break</span><span> value,
+</span><span>        Poll::Pending </span><span style="color:#569cd6;">=&gt; </span><span>{}, </span><span style="color:#608b4e;">// no hacer nada
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Aquí estamos <em>esperando activamente</em> por el futuro al llamar a <code>poll</code> una y otra vez en un bucle. Los argumentos de <code>poll</code> no importan aquí, así que los omitimos. Aunque esta solución funciona, es muy ineficiente porque mantenemos la CPU ocupada hasta que el valor esté disponible.</p>
+<p>Un enfoque más eficiente podría ser <em>bloquear</em> el hilo actual hasta que el futuro esté disponible. Esto es, por supuesto, solo posible si tienes hilos, así que esta solución no funciona para nuestro núcleo, al menos no aún. Incluso en sistemas donde el bloqueo está soportado, a menudo no se desea porque convierte una tarea asíncrona en una tarea síncrona nuevamente, inhibiendo así los potenciales beneficios de rendimiento de las tareas paralelas.</p>
+<h4 id="combinadores-de-futuros"><a class="zola-anchor" href="#combinadores-de-futuros" aria-label="Anchor link for: combinadores-de-futuros">🔗</a>Combinadores de Futuros</h4>
+<p>Una alternativa a esperar es utilizar combinadores de futuros. Los combinadores de futuros son métodos como <code>map</code> que permiten encadenar y combinar futuros, similar a los métodos del trait <a href="https://doc.rust-lang.org/stable/core/iter/trait.Iterator.html"><code>Iterator</code></a>. En lugar de esperar en el futuro, estos combinadores devuelven un futuro por sí mismos, que aplica la operación de mapeo en <code>poll</code>.</p>
+<p>Por ejemplo, un simple combinador <code>string_len</code> para convertir un <code>Future&lt;Output = String&gt;</code> en un <code>Future&lt;Output = usize&gt;</code> podría verse así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">struct </span><span>StringLen&lt;F&gt; {
+</span><span>    inner_future: F,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;F&gt; Future </span><span style="color:#569cd6;">for </span><span>StringLen&lt;F&gt; </span><span style="color:#569cd6;">where</span><span> F: Future&lt;Output = String&gt; {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Output </span><span>= </span><span style="color:#569cd6;">usize</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll(</span><span style="color:#569cd6;">mut </span><span>self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut </span><span>Context&lt;&#39;</span><span style="color:#569cd6;">_</span><span>&gt;) -&gt; Poll&lt;T&gt; {
+</span><span>        </span><span style="color:#569cd6;">match </span><span>self.inner_future.poll(cx) {
+</span><span>            Poll::Ready(s) </span><span style="color:#569cd6;">=&gt; </span><span>Poll::Ready(s.len()),
+</span><span>            Poll::Pending </span><span style="color:#569cd6;">=&gt; </span><span>Poll::Pending,
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>string_len(string: impl Future&lt;Output = String&gt;)
+</span><span>    -&gt; impl Future&lt;Output = </span><span style="color:#569cd6;">usize</span><span>&gt;
+</span><span>{
+</span><span>    StringLen {
+</span><span>        inner_future: string,
+</span><span>    }
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// Uso
+</span><span style="color:#569cd6;">fn </span><span>file_len() -&gt; impl Future&lt;Output = </span><span style="color:#569cd6;">usize</span><span>&gt; {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> file_content_future = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>);
+</span><span>    string_len(file_content_future)
+</span><span>}
+</span></code></pre>
+<p>Este código no funciona del todo porque no maneja el <a href="https://doc.rust-lang.org/stable/core/pin/index.html"><em>pinning</em></a>, pero es suficiente como ejemplo. La idea básica es que la función <code>string_len</code> envuelve una instancia de <code>Future</code> dada en una nueva estructura <code>StringLen</code>, que también implementa <code>Future</code>. Cuando se pollea el futuro envuelto, se pollea el futuro interno. Si el valor no está listo aún, <code>Poll::Pending</code> se devuelve del futuro envuelto también. Si el valor está listo, la cadena se extrae de la variante <code>Poll::Ready</code> y se calcula su longitud. Después, se envuelve nuevamente en <code>Poll::Ready</code> y se devuelve.</p>
+<p>Con esta función <code>string_len</code>, podemos calcular la longitud de una cadena asíncrona sin esperar por ella. Dado que la función devuelve otro <code>Future</code>, el llamador no puede trabajar directamente en el valor devuelto, sino que necesita usar funciones combinadoras nuevamente. De esta manera, todo el gráfico de llamadas se vuelve asíncrono y podemos esperar eficientemente por múltiples futuros a la vez en algún momento, por ejemplo, en la función principal.</p>
+<p>Debido a que escribir manualmente funciones combinadoras es difícil, a menudo son provistas por bibliotecas. Si bien la biblioteca estándar de Rust en sí no ofrece aún métodos de combinadores, el crate semi-oficial (y compatible con <code>no_std</code>) <a href="https://docs.rs/futures/0.3.4/futures/"><code>futures</code></a> lo hace. Su trait <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html"><code>FutureExt</code></a> proporciona métodos combinadores de alto nivel como <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html#method.map"><code>map</code></a> o <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html#method.then"><code>then</code></a>, que se pueden utilizar para manipular el resultado con closures arbitrarias.</p>
+<h5 id="ventajas"><a class="zola-anchor" href="#ventajas" aria-label="Anchor link for: ventajas">🔗</a>Ventajas</h5>
+<p>La gran ventaja de los combinadores de futuros es que mantienen las operaciones asíncronas. En combinación con interfaces de E/S asíncronas, este enfoque puede llevar a un rendimiento muy alto. El hecho de que los combinadores de futuros se implementen como estructuras normales con implementaciones de traits permite que el compilador los optimice excesivamente. Para más detalles, consulta la publicación sobre <a href="https://aturon.github.io/blog/2016/08/11/futures/"><em>Futuros de cero costo en Rust</em></a>, que anunció la adición de futuros al ecosistema de Rust.</p>
+<h5 id="desventajas"><a class="zola-anchor" href="#desventajas" aria-label="Anchor link for: desventajas">🔗</a>Desventajas</h5>
+<p>Si bien los combinadores de futuros hacen posible escribir código muy eficiente, pueden ser difíciles de usar en algunas situaciones debido al sistema de tipos y la interfaz basada en closures. Por ejemplo, considera el siguiente código:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; impl Future&lt;Output = String&gt; {
+</span><span>    async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>).then(</span><span style="color:#569cd6;">move |</span><span>content</span><span style="color:#569cd6;">| </span><span>{
+</span><span>        </span><span style="color:#569cd6;">if</span><span> content.len() &lt; min_len {
+</span><span>            Either::Left(async_read_file(</span><span style="color:#d69d85;">&quot;bar.txt&quot;</span><span>).map(|s| content + </span><span style="color:#569cd6;">&amp;</span><span>s))
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            Either::Right(future::ready(content))
+</span><span>        }
+</span><span>    })
+</span><span>}
+</span></code></pre>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=91fc09024eecb2448a85a7ef6a97b8d8">Pruébalo en el playground</a>)</p>
+<p>Aquí leemos el archivo <code>foo.txt</code> y luego usamos el combinador <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html#method.then"><code>then</code></a> para encadenar un segundo futuro basado en el contenido del archivo. Si la longitud del contenido es menor que lo dado en <code>min_len</code>, leemos un archivo diferente <code>bar.txt</code> y se lo anexamos a <code>content</code> usando el combinador <a href="https://docs.rs/futures/0.3.4/futures/future/trait.FutureExt.html#method.map"><code>map</code></a>. De lo contrario, solo devolvemos el contenido de <code>foo.txt</code>.</p>
+<p>Necesitamos usar el <a href="https://doc.rust-lang.org/std/keyword.move.html"><code>move</code> keyword</a> para la closure pasada a <code>then</code> porque de lo contrario habría un error de tiempo de vida para <code>min_len</code>. La razón por la cual usamos el envoltorio <a href="https://docs.rs/futures/0.3.4/futures/future/enum.Either.html"><code>Either</code></a> es que los bloques <code>if</code> y <code>else</code> deben tener siempre el mismo tipo. Dado que devolvemos diferentes tipos de futuros en los bloques, debemos usar el tipo de envoltura para unificarlos en un solo tipo. La función <a href="https://docs.rs/futures/0.3.4/futures/future/fn.ready.html"><code>ready</code></a> envuelve un valor en un futuro que está inmediatamente listo. La función se requiere aquí porque el envoltorio <code>Either</code> espera que el valor envuelto implemente <code>Future</code>.</p>
+<p>Como puedes imaginar, esto puede llevar rápidamente a código muy complejo para proyectos más grandes. Se invirtió mucho trabajo en agregar soporte para async/await a Rust, con el objetivo de hacer que el código asíncrono sea radicalmente más simple de escribir.</p>
+<h3 id="el-patron-async-await"><a class="zola-anchor" href="#el-patron-async-await" aria-label="Anchor link for: el-patron-async-await">🔗</a>El Patrón Async/Await</h3>
+<p>La idea detrás de async/await es permitir que el programador escriba código que <em>parece</em> código síncrono normal, pero que es transformado en código asíncrono por el compilador. Funciona basado en las dos palabras clave <code>async</code> y <code>await</code>. La palabra clave <code>async</code> se puede usar en la firma de una función para transformar una función síncrona en una función asíncrona que devuelve un futuro:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>foo() -&gt; </span><span style="color:#569cd6;">u32 </span><span>{
+</span><span>    </span><span style="color:#b5cea8;">0
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// lo anterior se traduce aproximadamente por el compilador a:
+</span><span style="color:#569cd6;">fn </span><span>foo() -&gt; impl Future&lt;Output = </span><span style="color:#569cd6;">u32</span><span>&gt; {
+</span><span>    future::ready(</span><span style="color:#b5cea8;">0</span><span>)
+</span><span>}
+</span></code></pre>
+<p>Esta palabra clave por sí sola no sería tan útil. Sin embargo, dentro de las funciones <code>async</code>, se puede utilizar la palabra clave <code>await</code> para recuperar el valor asíncrono de un futuro:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; String {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> content = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>).await;
+</span><span>    </span><span style="color:#569cd6;">if</span><span> content.len() &lt; min_len {
+</span><span>        content + </span><span style="color:#569cd6;">&amp;</span><span>async_read_file(</span><span style="color:#d69d85;">&quot;bar.txt&quot;</span><span>).await
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        content
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=d93c28509a1c67661f31ff820281d434">Pruébalo en el playground</a>)</p>
+<p>Esta función es una traducción directa de la función <code>example</code> de <a href="https://os.phil-opp.com/es/async-await/#desventajas">arriba</a> que usó funciones combinadoras. Usando el operador <code>.await</code>, podemos recuperar el valor de un futuro sin necesitar closures o tipos <code>Either</code>. Como resultado, podemos escribir nuestro código como escribimos código síncrono normal, con la diferencia de que <em>esto sigue siendo código asíncrono</em>.</p>
+<h4 id="transformacion-de-maquina-de-estado"><a class="zola-anchor" href="#transformacion-de-maquina-de-estado" aria-label="Anchor link for: transformacion-de-maquina-de-estado">🔗</a>Transformación de Máquina de Estado</h4>
+<p>Detrás de escena, el compilador convierte el cuerpo de la función <code>async</code> en una <a href="https://en.wikipedia.org/wiki/Finite-state_machine"><em>máquina de estado</em></a>, donde cada llamada <code>.await</code> representa un estado diferente. Para la función <code>example</code> anterior, el compilador crea una máquina de estado con los siguientes cuatro estados:</p>
+<p><img src="https://os.phil-opp.com/es/async-await/async-state-machine-states.svg" alt="Cuatro estados: inicio, esperando a foo.txt, esperando a bar.txt, final" /></p>
+<p>Cada estado representa un diferente punto de pausa en la función. Los estados <em>“Inicio”</em> y <em>“Fin”</em> representan la función al comienzo y al final de su ejecución. El estado <em>“Esperando a foo.txt”</em> representa que la función está actualmente esperando el resultado de <code>async_read_file</code> primero. Similarmente, el estado <em>“Esperando a bar.txt”</em> representa el punto de pausa donde la función está esperando el resultado de <code>async_read_file</code> segundo.</p>
+<p>La máquina de estado implementa el trait <code>Future</code> haciendo que cada llamada a <code>poll</code> sea una posible transición de estado:</p>
+<p><img src="https://os.phil-opp.com/es/async-await/async-state-machine-basic.svg" alt="Cuatro estados y sus transiciones: inicio, esperando a foo.txt, esperando a bar.txt, fin" /></p>
+<p>El diagrama usa flechas para representar cambios de estado y formas de diamante para representar formas alternativas. Por ejemplo, si el archivo <code>foo.txt</code> no está listo, se toma el camino marcado como <em>“no”</em> y se alcanza el estado <em>“Esperando a foo.txt”</em>. De lo contrario, se toma el camino <em>“sí”</em>. El pequeño diamante rojo sin leyenda representa la rama <code>if content.len() &lt; 100</code> de la función <code>example</code>.</p>
+<p>Observamos que la primera llamada <code>poll</code> inicia la función y la deja correr hasta que llega a un futuro que no está listo aún. Si todos los futuros en el camino están listos, la función puede ejecutarse hasta el estado <em>“Fin”</em>, donde devuelve su resultado envuelto en <code>Poll::Ready</code>. De lo contrario, la máquina de estados entra en un estado de espera y devuelve <code>Poll::Pending</code>. En la próxima llamada <code>poll</code>, la máquina de estados comienza de nuevo desde el último estado de espera y vuelve a intentar la última operación.</p>
+<h4 id="guardando-estado-2"><a class="zola-anchor" href="#guardando-estado-2" aria-label="Anchor link for: guardando-estado-2">🔗</a>Guardando Estado</h4>
+<p>Para poder continuar desde el último estado de espera, la máquina de estado debe llevar un seguimiento del estado actual internamente. Además, debe guardar todas las variables que necesita para continuar la ejecución en la siguiente llamada <code>poll</code>. Aquí es donde el compilador realmente puede brillar: dado que sabe qué variables se utilizan cuando, puede generar automáticamente estructuras con exactamente las variables que se necesitan.</p>
+<p>Como ejemplo, el compilador genera estructuras como la siguiente para la función <code>example</code> anterior:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// La función `example` nuevamente para que no necesites desplazarte hacia arriba
+</span><span>async </span><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; String {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> content = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>).await;
+</span><span>    </span><span style="color:#569cd6;">if</span><span> content.len() &lt; min_len {
+</span><span>        content + </span><span style="color:#569cd6;">&amp;</span><span>async_read_file(</span><span style="color:#d69d85;">&quot;bar.txt&quot;</span><span>).await
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        content
+</span><span>    }
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// Las estructuras de estado generadas por el compilador:
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>StartState {
+</span><span>    min_len: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>WaitingOnFooTxtState {
+</span><span>    min_len: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    foo_txt_future: impl Future&lt;Output = String&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>WaitingOnBarTxtState {
+</span><span>    content: String,
+</span><span>    bar_txt_future: impl Future&lt;Output = String&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>EndState {}
+</span></code></pre>
+<p>En los estados <em>“inicio”</em> y <em>“Esperando a foo.txt”</em>, se necesita almacenar el parámetro <code>min_len</code> para la comparación posterior con <code>content.len()</code>. El estado <em>“Esperando a foo.txt”</em> y además almacena un <code>foo_txt_future</code>, que representa el futuro devuelto por la llamada <code>async_read_file</code>. Este futuro necesita ser polled de nuevo cuando la máquina de estado continúa, así que necesita ser almacenado.</p>
+<p>El estado <em>“Esperando a bar.txt”</em> contiene la variable <code>content</code> para la concatenación de cadenas posterior cuando <code>bar.txt</code> esté listo. También almacena un <code>bar_txt_future</code> que representa la carga en progreso de <code>bar.txt</code>. La estructura no contiene la variable <code>min_len</code> porque ya no se necesita después de la comparación <code>content.len()</code>. En el estado <em>“fin”</em>, no se almacenan variables porque la función ya se ha completado.</p>
+<p>Ten en cuenta que este es solo un ejemplo del código que el compilador podría generar. Los nombres de las estructuras y la disposición de los campos son detalles de implementación y pueden ser diferentes.</p>
+<h4 id="el-tipo-completo-de-maquina-de-estado"><a class="zola-anchor" href="#el-tipo-completo-de-maquina-de-estado" aria-label="Anchor link for: el-tipo-completo-de-maquina-de-estado">🔗</a>El Tipo Completo de Máquina de Estado</h4>
+<p>Si bien el código exacto generado por el compilador es un detalle de implementación, ayuda a entender imaginar cómo se vería la máquina de estado generada <em>podría</em> para la función <code>example</code>. Ya definimos las estructuras que representan los diferentes estados y que contienen las variables requeridas. Para crear una máquina de estado sobre ellas, podemos combinarlas en un <a href="https://doc.rust-lang.org/book/ch06-01-defining-an-enum.html"><code>enum</code></a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">enum </span><span>ExampleStateMachine {
+</span><span>    Start(StartState),
+</span><span>    WaitingOnFooTxt(WaitingOnFooTxtState),
+</span><span>    WaitingOnBarTxt(WaitingOnBarTxtState),
+</span><span>    End(EndState),
+</span><span>}
+</span></code></pre>
+<p>Definimos una variante de enum separada para cada estado y añadimos la estructura de estado correspondiente a cada variante como un campo. Para implementar las transiciones de estado, el compilador genera una implementación del trait <code>Future</code> basada en la función <code>example</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>Future </span><span style="color:#569cd6;">for </span><span>ExampleStateMachine {
+</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Output </span><span>= String; </span><span style="color:#608b4e;">// tipo de retorno de `example`
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;</span><span style="color:#569cd6;">Self::</span><span>Output&gt; {
+</span><span>        </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>            </span><span style="color:#569cd6;">match </span><span>self { </span><span style="color:#608b4e;">// TODO: manejar pinning
+</span><span>                ExampleStateMachine::Start(state) </span><span style="color:#569cd6;">=&gt; </span><span>{…}
+</span><span>                ExampleStateMachine::WaitingOnFooTxt(state) </span><span style="color:#569cd6;">=&gt; </span><span>{…}
+</span><span>                ExampleStateMachine::WaitingOnBarTxt(state) </span><span style="color:#569cd6;">=&gt; </span><span>{…}
+</span><span>                ExampleStateMachine::End(state) </span><span style="color:#569cd6;">=&gt; </span><span>{…}
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>El tipo <code>Output</code> del futuro es <code>String</code> porque es el tipo de retorno de la función <code>example</code>. Para implementar la función <code>poll</code>, utilizamos una instrucción <code>match</code> sobre el estado actual dentro de un <code>loop</code>. La idea es que cambiamos al siguiente estado tantas veces como sea posible y usamos un explícito <code>return Poll::Pending</code> cuando no podemos continuar.</p>
+<p>Para simplificar, solo mostramos un código simplificado y no manejamos <a href="https://doc.rust-lang.org/nightly/core/pin/index.html">pinning</a>, propiedad, tiempos de vida, etc. Así que este código y el siguiente deben ser tratados como pseudo-código y no ser usados directamente. Por supuesto, el código generado real por el compilador maneja todo correctamente, aunque de manera posiblemente diferente.</p>
+<p>Para mantener pequeños los fragmentos de código, presentamos el código de cada brazo de <code>match</code> por separado. Empecemos con el estado <code>Start</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>ExampleStateMachine::Start(state) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// del cuerpo de `example`
+</span><span>    </span><span style="color:#569cd6;">let</span><span> foo_txt_future = async_read_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>);
+</span><span>    </span><span style="color:#608b4e;">// operación `.await`
+</span><span>    </span><span style="color:#569cd6;">let</span><span> state = WaitingOnFooTxtState {
+</span><span>        min_len: state.min_len,
+</span><span>        foo_txt_future,
+</span><span>    };
+</span><span>    *self = ExampleStateMachine::WaitingOnFooTxt(state);
+</span><span>}
+</span></code></pre>
+<p>La máquina de estado se encuentra en el estado <code>Start</code> cuando está justo al principio de la función. En este caso, ejecutamos todo el código del cuerpo de la función <code>example</code> hasta la primera <code>.await</code>. Para manejar la operación <code>.await</code>, cambiamos el estado de la máquina de estado <code>self</code> a <code>WaitingOnFooTxt</code>, lo que incluye la construcción de la estructura <code>WaitingOnFooTxtState</code>.</p>
+<p>Dado que la instrucción <code>match self {…}</code> se ejecuta en un bucle, la ejecución salta al brazo <code>WaitingOnFooTxt</code> a continuación:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>ExampleStateMachine::WaitingOnFooTxt(state) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>    </span><span style="color:#569cd6;">match</span><span> state.foo_txt_future.poll(cx) {
+</span><span>        Poll::Pending </span><span style="color:#569cd6;">=&gt; return </span><span>Poll::Pending,
+</span><span>        Poll::Ready(content) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#608b4e;">// del cuerpo de `example`
+</span><span>            </span><span style="color:#569cd6;">if</span><span> content.len() &lt; state.min_len {
+</span><span>                </span><span style="color:#569cd6;">let</span><span> bar_txt_future = async_read_file(</span><span style="color:#d69d85;">&quot;bar.txt&quot;</span><span>);
+</span><span>                </span><span style="color:#608b4e;">// operación `.await`
+</span><span>                </span><span style="color:#569cd6;">let</span><span> state = WaitingOnBarTxtState {
+</span><span>                    content,
+</span><span>                    bar_txt_future,
+</span><span>                };
+</span><span>                *self = ExampleStateMachine::WaitingOnBarTxt(state);
+</span><span>            } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>                *self = ExampleStateMachine::End(EndState);
+</span><span>                </span><span style="color:#569cd6;">return </span><span>Poll::Ready(content);
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>En este brazo de <code>match</code>, primero llamamos a la función <code>poll</code> de <code>foo_txt_future</code>. Si no está lista, salimos del bucle y devolvemos <code>Poll::Pending</code>. Dado que <code>self</code> permanece en el estado <code>WaitingOnFooTxt</code> en este caso, la siguiente llamada <code>poll</code> en la máquina de estado ingresará al mismo brazo de <code>match</code> y volverá a intentar hacer polling en el <code>foo_txt_future</code>.</p>
+<p>Cuando <code>foo_txt_future</code> está listo, asignamos el resultado a la variable <code>content</code> y continuamos ejecutando el código de la función <code>example</code>: Si <code>content.len()</code> es menor que el <code>min_len</code> guardado en la estructura de estado, el archivo <code>bar.txt</code> se carga asíncronamente. Una vez más, traducimos la operación <code>.await</code> en un cambio de estado, esta vez al estado <code>WaitingOnBarTxt</code>. Dado que estamos ejecutando el <code>match</code> dentro de un bucle, la ejecución salta directamente al brazo de <code>match</code> para el nuevo estado después, donde se hace polling en el futuro <code>bar_txt_future</code>.</p>
+<p>En caso de que ingresamos al bloque <code>else</code>, no ocurre ninguna otra operación <code>.await</code>. Alcanzamos el final de la función y devolvemos <code>content</code> envuelto en <code>Poll::Ready</code>. También cambiamos el estado actual a <code>End</code>.</p>
+<p>El código para el estado <code>WaitingOnBarTxt</code> se ve así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>ExampleStateMachine::WaitingOnBarTxt(state) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>    </span><span style="color:#569cd6;">match</span><span> state.bar_txt_future.poll(cx) {
+</span><span>        Poll::Pending </span><span style="color:#569cd6;">=&gt; return </span><span>Poll::Pending,
+</span><span>        Poll::Ready(bar_txt) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            *self = ExampleStateMachine::End(EndState);
+</span><span>            </span><span style="color:#608b4e;">// del cuerpo de `example`
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Poll::Ready(state.content + </span><span style="color:#569cd6;">&amp;</span><span>bar_txt);
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Al igual que en el estado <code>WaitingOnFooTxt</code>, comenzamos haciendo polling en <code>bar_txt_future</code>. Si aún está pendiente, salimos del bucle y devolvemos <code>Poll::Pending</code>. De lo contrario, podemos realizar la última operación de la función <code>example</code>: concatenar la variable <code>content</code> con el resultado del futuro. Actualizamos la máquina de estado al estado <code>End</code> y luego devolvemos el resultado envuelto en <code>Poll::Ready</code>.</p>
+<p>Finalmente, el código para el estado <code>End</code> se ve así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>ExampleStateMachine::End(</span><span style="color:#569cd6;">_</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>    panic!(</span><span style="color:#d69d85;">&quot;poll called after Poll::Ready was returned&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Los futuros no deben ser polled nuevamente después de que devuelven <code>Poll::Ready</code>, así que hacemos panic si se llama a <code>poll</code> mientras estamos en el estado <code>End</code>.</p>
+<p>Ahora sabemos cómo podría verse la máquina de estado generada por el compilador y su implementación del trait <code>Future</code>. En la práctica, el compilador genera el código de diferentes formas. (En caso de que te interese, la implementación actualmente se basa en <a href="https://doc.rust-lang.org/stable/unstable-book/language-features/coroutines.html"><em>corutinas</em></a>, pero esto es solo un detalle de implementación.)</p>
+<p>La última pieza del rompecabezas es el código generado para la propia función <code>example</code>. Recuerda, la cabecera de la función se definió así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; String
+</span></code></pre>
+<p>Dado que el cuerpo completo de la función ahora es implementado por la máquina de estado, lo único que debe hacer la función es inicializar la máquina de estado y devolverla. El código generado para esto podría verse así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>example(min_len: </span><span style="color:#569cd6;">usize</span><span>) -&gt; ExampleStateMachine {
+</span><span>    ExampleStateMachine::Start(StartState {
+</span><span>        min_len,
+</span><span>    })
+</span><span>}
+</span></code></pre>
+<p>La función ya no tiene modificador <code>async</code> ya que ahora devuelve explícitamente un tipo <code>ExampleStateMachine</code>, que implementa el trait <code>Future</code>. Como era de esperar, la máquina de estado se construye en el estado <code>Start</code> y la estructura de estado correspondiente se inicializa con el parámetro <code>min_len</code>.</p>
+<p>Ten en cuenta que esta función no inicia la ejecución de la máquina de estado. Esta es una decisión de diseño fundamental de los futuros en Rust: no hacen nada hasta que se les pollea por primera vez.</p>
+<h3 id="pinning"><a class="zola-anchor" href="#pinning" aria-label="Anchor link for: pinning">🔗</a>Pinning</h3>
+<p>Ya que nos hemos encontrado con el <em>pinning</em> varias veces en esta publicación, es momento de explorar qué es el pinning y por qué es necesario.</p>
+<h4 id="estructuras-autorreferenciales"><a class="zola-anchor" href="#estructuras-autorreferenciales" aria-label="Anchor link for: estructuras-autorreferenciales">🔗</a>Estructuras Autorreferenciales</h4>
+<p>Como se explicó anteriormente, la transformación de máquina de estado almacena las variables locales de cada punto de pausa en una estructura. Para ejemplos pequeños como nuestra función <code>example</code>, esto fue sencillo y no llevó a ningún problema. Sin embargo, las cosas se vuelven más difíciles cuando las variables se referencian entre sí. Por ejemplo, considera esta función:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>pin_example() -&gt; </span><span style="color:#569cd6;">i32 </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> array = [</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">2</span><span>, </span><span style="color:#b5cea8;">3</span><span>];
+</span><span>    </span><span style="color:#569cd6;">let</span><span> element = </span><span style="color:#569cd6;">&amp;</span><span>array[</span><span style="color:#b5cea8;">2</span><span>];
+</span><span>    async_write_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>, element.to_string()).await;
+</span><span>    *element
+</span><span>}
+</span></code></pre>
+<p>Esta función crea un pequeño <code>array</code> con los contenidos <code>1</code>, <code>2</code> y <code>3</code>. Luego crea una referencia al último elemento del array y la almacena en una variable <code>element</code>. A continuación, escribe asincrónicamente el número convertido a una cadena en un archivo <code>foo.txt</code>. Finalmente, devuelve el número referenciado por <code>element</code>.</p>
+<p>Dado que la función utiliza una única operación <code>.await</code>, la máquina de estado resultante tiene tres estados: inicio, fin y “esperando a escribir”. La función no toma argumentos, por lo que la estructura para el estado de inicio está vacía. Al igual que antes, la estructura para el estado final está vacía porque la función ha terminado en este punto. Sin embargo, la estructura para el estado de “esperando a escribir” es más interesante:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">struct </span><span>WaitingOnWriteState {
+</span><span>    array: [1, 2, 3],
+</span><span>    element: 0x1001c, </span><span style="color:#608b4e;">// dirección del último elemento del array
+</span><span>}
+</span></code></pre>
+<p>Necesitamos almacenar tanto <code>array</code> como <code>element</code> porque la variable <code>element</code> es necesaria para el valor de retorno y <code>array</code> es referenciada por <code>element</code>. Usamos <code>0x1001c</code> como un ejemplo de dirección de memoria aquí. En realidad, necesita ser la dirección del último elemento del campo <code>array</code>, por lo que depende de dónde viva la estructura en memoria. Las estructuras con tales punteros internos se llaman <em>estructuras autorefencial</em> porque se refieren a sí mismas desde uno de sus campos.</p>
+<h4 id="el-problema-con-las-estructuras-autorreferenciales"><a class="zola-anchor" href="#el-problema-con-las-estructuras-autorreferenciales" aria-label="Anchor link for: el-problema-con-las-estructuras-autorreferenciales">🔗</a>El Problema con las Estructuras Autorreferenciales</h4>
+<p>El puntero interno de nuestra estructura autorefencial lleva a un problema fundamental, que se hace evidente cuando observamos su disposición en la memoria:</p>
+<p><img src="https://os.phil-opp.com/es/async-await/self-referential-struct.svg" alt="array en 0x10014 con campos 1, 2 y 3; elemento en dirección 0x10020, apuntando al último elemento del array en 0x1001c" /></p>
+<p>El campo <code>array</code> comienza en la dirección 0x10014 y el campo <code>element</code> en la dirección 0x10020. Apunta a la dirección 0x1001c porque el último elemento del array vive en esta dirección. En este punto, todo sigue bien. Sin embargo, un problema ocurre cuando movemos esta estructura a una dirección de memoria diferente:</p>
+<p><img src="https://os.phil-opp.com/es/async-await/self-referential-struct-moved.svg" alt="array en 0x10024 con campos 1, 2 y 3; elemento en dirección 0x10030, aún apuntando a 0x1001c, incluso cuando el último elemento del array ahora vive en 0x1002c" /></p>
+<p>Movimos la estructura un poco de modo que ahora comienza en la dirección <code>0x10024</code>. Esto podría suceder, por ejemplo, cuando pasamos la estructura como un argumento a una función o la asignamos a otra variable de pila diferente. El problema es que el campo <code>element</code> aún apunta a la dirección <code>0x1001c</code> a pesar de que el último elemento del <code>array</code> vive ahora en <code>0x1002c</code>. Así, el puntero está colgando, con el resultado de que se produce un comportamiento indefinido en la próxima llamada a <code>poll</code>.</p>
+<h4 id="posibles-soluciones"><a class="zola-anchor" href="#posibles-soluciones" aria-label="Anchor link for: posibles-soluciones">🔗</a>Posibles Soluciones</h4>
+<p>Hay tres enfoques fundamentales para resolver el problema del puntero colgante:</p>
+<ul>
+<li>
+<p><strong>Actualizar el puntero al moverse</strong>: La idea es actualizar el puntero interno cada vez que la estructura se mueve en memoria para que siga siendo válida después del movimiento. Desafortunadamente, este enfoque requeriría amplios cambios en Rust que resultarían en pérdidas de rendimiento potencialmente enormes. La razón es que necesitaríamos algún tipo de tiempo de ejecución que mantenga un seguimiento del tipo de todos los campos de la estructura y compruebe en cada operación de movimiento si se requiere una actualización de puntero.</p>
+</li>
+<li>
+<p><strong>Almacenar un desplazamiento en lugar de auto-referencias</strong>: Para evitar la necesidad de actualizar punteros, el compilador podría intentar almacenar auto-referencias como desplazamientos desde el principio de la estructura. Por ejemplo, el campo <code>element</code> de la estructura <code>WaitingOnWriteState</code> anterior podría almacenarse en forma de un campo <code>element_offset</code> con un valor de 8 porque el elemento del array al que apunta comienza 8 bytes después de la estructura. Dado que el desplazamiento permanece igual cuando la estructura se mueve, no se requieren actualizaciones de campo.</p>
+<p>El problema con este enfoque es que requiere que el compilador detecte todas las auto-referencias. Esto no es posible en tiempo de compilación porque el valor de una referencia puede depender de la entrada del usuario, por lo que necesitaríamos un sistema en tiempo de ejecución nuevamente para analizar referencias y crear correctamente las estructuras de estado. Esto no solo resultaría en costos de tiempo de ejecución, sino que también impediría ciertas optimizaciones del compilador, lo que provocaría grandes pérdidas de rendimiento nuevamente.</p>
+</li>
+<li>
+<p><strong>Prohibir mover la estructura</strong>: Como vimos anteriormente, el puntero colgante solo ocurre cuando movemos la estructura en memoria. Al prohibir completamente las operaciones de movimiento en estructuras autorefenciales, el problema también se puede evitar. La gran ventaja de este enfoque es que se puede implementar a nivel de sistema de tipos sin costos adicionales de tiempo de ejecución. La desventaja es que recaerá sobre el programador lidiar con las operaciones de movimiento en las estructuras potencialmente autorefenciales.</p>
+</li>
+</ul>
+<p>Rust eligió la tercera solución por su principio de proporcionar <em>abstracciones de costo cero</em>, lo que significa que las abstracciones no deben imponer costos adicionales de tiempo de ejecución. La API de <a href="https://doc.rust-lang.org/stable/core/pin/index.html"><em>pinning</em></a> fue propuesta para este propósito en <a href="https://github.com/rust-lang/rfcs/blob/master/text/2349-pin.md">RFC 2349</a>. A continuación, daremos un breve resumen de esta API y explicaremos cómo funciona con async/await y futuros.</p>
+<h4 id="valores-en-el-heap"><a class="zola-anchor" href="#valores-en-el-heap" aria-label="Anchor link for: valores-en-el-heap">🔗</a>Valores en el Heap</h4>
+<p>La primera observación es que los valores [asignados en el heap] ya tienen una dirección de memoria fija la mayoría de las veces. Se crean usando una llamada a <code>allocate</code> y luego se referencian mediante un tipo de puntero como <code>Box&lt;T&gt;</code>. Si bien es posible mover el tipo de puntero, el valor del heap al que apunta permanece en la misma dirección de memoria hasta que se libera a través de una llamada <code>deallocate</code>.</p>
+<p>Usando la asignación en el heap, podemos intentar crear una estructura autorefencial:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>main() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> heap_value = Box::new(SelfReferential {
+</span><span>        self_ptr: </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">as *const _</span><span>,
+</span><span>    });
+</span><span>    </span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#569cd6;">&amp;</span><span>*heap_value </span><span style="color:#569cd6;">as *const</span><span> SelfReferential;
+</span><span>    heap_value.self_ptr = ptr;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;valor en el heap en: </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, heap_value);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;referencia interna: </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, heap_value.self_ptr);
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>SelfReferential {
+</span><span>    self_ptr: </span><span style="color:#569cd6;">*const Self</span><span>,
+</span><span>}
+</span></code></pre>
+<p>([Pruébalo en el playground][playground-self-ref])</p>
+<p>Creamos una estructura simple llamada <code>SelfReferential</code> que contiene un solo campo de puntero. Primero inicializamos esta estructura con un puntero nulo y luego la asignamos en el heap usando <code>Box::new</code>. Luego determinamos la dirección de la estructura asignada en el heap y la almacenamos en una variable <code>ptr</code>. Finalmente, hacemos que la estructura sea autorefencial al asignar la variable <code>ptr</code> al campo <code>self_ptr</code>.</p>
+<p>Cuando ejecutamos este código [en el playground][playground-self-ref], vemos que la dirección del valor del heap y su puntero interno son iguales, lo que significa que el campo <code>self_ptr</code> es una referencia válida a sí misma. Dado que la variable <code>heap_value</code> es solo un puntero, moverla (por ejemplo, pasándola a una función) no cambia la dirección de la estructura en sí, por lo que el <code>self_ptr</code> sigue siendo válido incluso si se mueve el puntero.</p>
+<p>Sin embargo, todavía hay una forma de romper este ejemplo: podemos salir de un <code>Box&lt;T&gt;</code> o reemplazar su contenido:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> stack_value = mem::replace(</span><span style="color:#569cd6;">&amp;mut </span><span>*heap_value, SelfReferential {
+</span><span>    self_ptr: </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">as *const _</span><span>,
+</span><span>});
+</span><span>println!(</span><span style="color:#d69d85;">&quot;valor en: </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#569cd6;">&amp;</span><span>stack_value);
+</span><span>println!(</span><span style="color:#d69d85;">&quot;referencia interna: </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, stack_value.self_ptr);
+</span></code></pre>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=e160ee8a64cba4cebc1c0473dcecb7c8">Pruébalo en el playground</a>)</p>
+<p>Aquí usamos la función <a href="https://doc.rust-lang.org/nightly/core/mem/fn.replace.html"><code>mem::replace</code></a> para reemplazar el valor asignado en el heap con una nueva instancia de estructura. Esto nos permite mover el valor original <code>heap_value</code> a la pila, mientras que el campo <code>self_ptr</code> de la estructura es ahora un puntero colgante que aún apunta a la antigua dirección del heap. Cuando intentas ejecutar el ejemplo en el playground, verás que las líneas impresas <em>“valor en:”</em> y <em>“referencia interna:”</em> muestran punteros diferentes. Por lo tanto, la asignación de un valor en el heap no es suficiente para hacer que las auto-referencias sean seguras.</p>
+<p>El problema fundamental que permitió que se produjera la ruptura anterior es que <code>Box&lt;T&gt;</code> permite obtener una referencia <code>&amp;mut T</code> al valor asignado en el heap. Esta referencia <code>&amp;mut</code> hace posible usar métodos como <a href="https://doc.rust-lang.org/nightly/core/mem/fn.replace.html"><code>mem::replace</code></a> o <a href="https://doc.rust-lang.org/nightly/core/mem/fn.swap.html"><code>mem::swap</code></a> para invalidar el valor asignado en el heap. Para resolver este problema, debemos prevenir que se creen referencias <code>&amp;mut</code> en estructuras autorefenciales.</p>
+<h4 id="pin-box-t-y-unpin"><a class="zola-anchor" href="#pin-box-t-y-unpin" aria-label="Anchor link for: pin-box-t-y-unpin">🔗</a><code>Pin&lt;Box&lt;T&gt;&gt;</code> y <code>Unpin</code></h4>
+<p>La API de pinning proporciona una solución al problema de <code>&amp;mut T</code> en forma de los tipos envolventes <a href="https://doc.rust-lang.org/stable/core/pin/struct.Pin.html"><code>Pin</code></a> y el trait marcador <a href="https://doc.rust-lang.org/nightly/std/marker/trait.Unpin.html"><code>Unpin</code></a>. La idea detrás de estos tipos es limitar todos los métodos de <code>Pin</code> que se pueden usar para obtener referencias <code>&amp;mut</code> al valor envuelto (por ejemplo, <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.get_mut"><code>get_mut</code></a> o <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.deref_mut"><code>deref_mut</code></a>) en el trait <code>Unpin</code>. El trait <code>Unpin</code> es un <a href="https://doc.rust-lang.org/reference/special-types-and-traits.html#auto-traits"><em>auto trait</em></a>, que se implementa automáticamente para todos los tipos excepto para aquellos que optan explícitamente por no hacerlo. Al hacer que las estructuras autorefenciales opten por no implementar <code>Unpin</code>, no hay forma (segura) de obtener un <code>&amp;mut T</code> del tipo <code>Pin&lt;Box&lt;T&gt;&gt;</code> para ellas. Como resultado, se garantiza que todas las auto-referencias internas se mantendrán válidas.</p>
+<p>Como ejemplo, actualicemos el tipo <code>SelfReferential</code> de arriba para que no implemente <code>Unpin</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>core::marker::PhantomPinned;
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>SelfReferential {
+</span><span>    self_ptr: </span><span style="color:#569cd6;">*const Self</span><span>,
+</span><span>    _pin: PhantomPinned,
+</span><span>}
+</span></code></pre>
+<p>Optamos por no implementar <code>Unpin</code> al añadir un segundo campo <code>_pin</code> de tipo <a href="https://doc.rust-lang.org/nightly/core/marker/struct.PhantomPinned.html"><code>PhantomPinned</code></a>. Este tipo es un tipo de tamaño cero cuyo único propósito es <em>no</em> implementar el trait <code>Unpin</code>. Debido a la forma en que funcionan los <a href="https://doc.rust-lang.org/reference/special-types-and-traits.html#auto-traits">auto traits</a>, un solo campo que no sea <code>Unpin</code> es suficiente para hacer que toda la estructura opta por no ser <code>Unpin</code>.</p>
+<p>El segundo paso es cambiar el tipo de <code>Box&lt;SelfReferential&gt;</code> en el ejemplo a un tipo <code>Pin&lt;Box&lt;SelfReferential&gt;&gt;</code>. La forma más fácil de hacer esto es usar la función <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.pin"><code>Box::pin</code></a> en lugar de <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a> para crear el valor asignado en el heap:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let mut</span><span> heap_value = Box::pin(SelfReferential {
+</span><span>    self_ptr: </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">as *const _</span><span>,
+</span><span>    _pin: PhantomPinned,
+</span><span>});
+</span></code></pre>
+<p>Además de cambiar <code>Box::new</code> a <code>Box::pin</code>, también necesitamos añadir el nuevo campo <code>_pin</code> en el inicializador de la estructura. Dado que <code>PhantomPinned</code> es un tipo de tamaño cero, solo necesitamos su nombre de tipo para inicializarlo.</p>
+<p>Cuando <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=961b0db194bbe851ff4d0ed08d3bd98a">intentamos ejecutar nuestro ejemplo ajustado</a> ahora, vemos que ya no funciona:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0594]: cannot assign to data in a dereference of `std::pin::Pin&lt;std::boxed::Box&lt;SelfReferential&gt;&gt;`
+</span><span>  --&gt; src/main.rs:10:5
+</span><span>   |
+</span><span>10 |     heap_value.self_ptr = ptr;
+</span><span>   |     ^^^^^^^^^^^^^^^^^^^^^^^^^ cannot assign
+</span><span>   |
+</span><span>   = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `std::pin::Pin&lt;std::boxed::Box&lt;SelfReferential&gt;&gt;`
+</span><span>
+</span><span>error[E0596]: cannot borrow data in a dereference of `std::pin::Pin&lt;std::boxed::Box&lt;SelfReferential&gt;&gt;` as mutable
+</span><span>  --&gt; src/main.rs:16:36
+</span><span>   |
+</span><span>16 |     let stack_value = mem::replace(&amp;mut *heap_value, SelfReferential {
+</span><span>   |                                    ^^^^^^^^^^^^^^^^ cannot borrow as mutable
+</span><span>   |
+</span><span>   = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `std::pin::Pin&lt;std::boxed::Box&lt;SelfReferential&gt;&gt;`
+</span></code></pre>
+<p>Ambos errores ocurren porque el tipo <code>Pin&lt;Box&lt;SelfReferential&gt;&gt;</code> ya no implementa el trait <code>DerefMut</code>. Esto es exactamente lo que queremos porque el trait <code>DerefMut</code> devolvería una referencia <code>&amp;mut</code>, que queremos prevenir. Esto solo ocurre porque ambos optamos por no implementar <code>Unpin</code> y cambiamos <code>Box::new</code> a <code>Box::pin</code>.</p>
+<p>El problema que queda es que el compilador no solo previene mover el tipo en la línea 16, sino que también prohíbe inicializar el campo <code>self_ptr</code> en la línea 10. Esto ocurre porque el compilador no puede diferenciar entre los usos válidos e inválidos de <code>&amp;mut</code> referencias. Para que la inicialización funcione nuevamente, debemos usar el método inseguro <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.get_unchecked_mut"><code>get_unchecked_mut</code></a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// seguro porque modificar un campo no mueve toda la estructura
+</span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> mut_ref = Pin::as_mut(</span><span style="color:#569cd6;">&amp;mut</span><span> heap_value);
+</span><span>    Pin::get_unchecked_mut(mut_ref).self_ptr = ptr;
+</span><span>}
+</span></code></pre>
+<p>La función <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.get_unchecked_mut"><code>get_unchecked_mut</code></a> funciona en un <code>Pin&lt;&amp;mut T&gt;</code> en lugar de un <code>Pin&lt;Box&lt;T&gt;&gt;</code>, así que debemos usar <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.as_mut"><code>Pin::as_mut</code></a> para convertir el valor. Luego podemos establecer el campo <code>self_ptr</code> utilizando la referencia <code>&amp;mut</code> devuelta por <code>get_unchecked_mut</code>.</p>
+<p>Ahora el único error que queda es el error deseado en <code>mem::replace</code>. Recuerda, esta operación intenta mover el valor asignado en el heap a la pila, lo cual invalidaría la auto-referencia almacenada en el campo <code>self_ptr</code>. Al optar por no implementar <code>Unpin</code> y usar <code>Pin&lt;Box&lt;T&gt;&gt;</code>, podemos prevenir esta operación en tiempo de compilación y así trabajar de manera segura con estructuras auto-referenciales. Como vimos, el compilador no puede probar que la creación de la auto-referencia es segura (aún), así que necesitamos usar un bloque inseguro y verificar la corrección nosotros mismos.</p>
+<h4 id="pinning-en-la-pila-y-pin-mut-t"><a class="zola-anchor" href="#pinning-en-la-pila-y-pin-mut-t" aria-label="Anchor link for: pinning-en-la-pila-y-pin-mut-t">🔗</a>Pinning en la Pila y <code>Pin&lt;&amp;mut T&gt;</code></h4>
+<p>En la sección anterior, aprendimos cómo usar <code>Pin&lt;Box&lt;T&gt;&gt;</code> para crear de manera segura un valor auto-referencial asignado en el heap. Si bien este enfoque funciona bien y es relativamente seguro (aparte de la construcción insegura), la asignación requerida en el heap conlleva un costo de rendimiento. Dado que Rust se esfuerza por proporcionar <em>abstracciones de costo cero</em> siempre que sea posible, la API de pinning también permite crear instancias de <code>Pin&lt;&amp;mut T&gt;</code> que apuntan a valores asignados en la pila.</p>
+<p>A diferencia de las instancias de <code>Pin&lt;Box&lt;T&gt;&gt;</code>, que tienen <em>propiedad</em> del valor envuelto, las instancias de <code>Pin&lt;&amp;mut T&gt;</code> solo toman prestado temporalmente el valor envuelto. Esto complica un poco las cosas, ya que requiere que el programador garantice condiciones adicionales por sí mismo. Lo más importante es que un <code>Pin&lt;&amp;mut T&gt;</code> debe permanecer pinado durante toda la vida útil de <code>T</code> referenciado, lo que puede ser difícil de verificar para variables basadas en la pila. Para ayudar con esto, existen crates como <a href="https://docs.rs/pin-utils/0.1.0-alpha.4/pin_utils/"><code>pin-utils</code></a>, pero aún así no recomendaría pinning en la pila a menos que sepas exactamente lo que estás haciendo.</p>
+<p>Para una lectura más profunda, consulta la documentación del <a href="https://doc.rust-lang.org/nightly/core/pin/index.html"><code>módulo pin</code></a> y el método <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.new_unchecked"><code>Pin::new_unchecked</code></a>.</p>
+<h4 id="pinning-y-futuros"><a class="zola-anchor" href="#pinning-y-futuros" aria-label="Anchor link for: pinning-y-futuros">🔗</a>Pinning y Futuros</h4>
+<p>Como ya vimos en esta publicación, el método <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>Future::poll</code></a> utiliza el pinning en forma de un parámetro <code>Pin&lt;&amp;mut Self&gt;</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>poll(self: Pin&lt;</span><span style="color:#569cd6;">&amp;mut Self</span><span>&gt;, cx: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;</span><span style="color:#569cd6;">Self::</span><span>Output&gt;
+</span></code></pre>
+<p>La razón por la que este método toma <code>self: Pin&lt;&amp;mut Self&gt;</code> en lugar del normal <code>&amp;mut self</code> es que las instancias de futuros creadas a partir de async/await son a menudo auto-referenciales, como vimos <a href="https://os.phil-opp.com/async-await/#self-referential-structs">arriba</a>. Al envolver <code>Self</code> en <code>Pin</code> y dejar que el compilador opte por no ser <code>Unpin</code> para futuros auto-referenciales generados a partir de async/await, se garantiza que los futuros no se muevan en memoria entre las llamadas a <code>poll</code>. Esto asegura que todas las referencias internas sigan siendo válidas.</p>
+<p>Vale la pena mencionar que mover futuros antes de la primera llamada a <code>poll</code> está bien. Esto es resultado del hecho de que los futuros son perezosos y no hacen nada hasta que se les realiza polling por primera vez. El estado inicial de las máquinas de estado generadas, por lo tanto, solo contiene los argumentos de función pero no referencias internas. Para poder llamar a <code>poll</code>, el llamador debe envolver el futuro en <code>Pin</code> primero, lo que asegura que el futuro no se pueda mover en memoria. Dado que el pinning en la pila es más difícil de hacer correctamente, recomiendo utilizar siempre <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.pin"><code>Box::pin</code></a> combinado con <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.as_mut"><code>Pin::as_mut</code></a> para esto.</p>
+<p>En caso de que estés interesado en entender cómo implementar de manera segura una función combinadora de futuros utilizando pinning en la pila tú mismo, echa un vistazo al <a href="https://docs.rs/futures-util/0.3.4/src/futures_util/future/future/map.rs.html">código relativamente corto del método combinador <code>map</code></a> del crate <code>futures</code> y la sección sobre <a href="https://doc.rust-lang.org/stable/std/pin/index.html#projections-and-structural-pinning">proyecciones y pinning estructural</a> de la documentación de pin.</p>
+<h3 id="ejecutores-y-wakers"><a class="zola-anchor" href="#ejecutores-y-wakers" aria-label="Anchor link for: ejecutores-y-wakers">🔗</a>Ejecutores y Wakers</h3>
+<p>Usando async/await, es posible trabajar con futuros de manera ergonómica y completamente asíncrona. Sin embargo, como aprendimos anteriormente, los futuros no hacen nada hasta que se les hace polling. Esto significa que tenemos que llamar a <code>poll</code> en ellos en algún momento, de lo contrario, el código asíncrono nunca se ejecuta.</p>
+<p>Con un solo futuro, siempre podemos esperar cada futuro manualmente usando un bucle <a href="https://os.phil-opp.com/es/async-await/#esperando-en-futuros">como se describe arriba</a>. Sin embargo, este enfoque es muy ineficiente y no práctico para programas que crean un gran número de futuros. La solución más común a este problema es definir un <em>ejecutor</em> global que sea responsable de hacer polling en todos los futuros en el sistema hasta que se completen.</p>
+<h4 id="ejecutores"><a class="zola-anchor" href="#ejecutores" aria-label="Anchor link for: ejecutores">🔗</a>Ejecutores</h4>
+<p>El propósito de un ejecutor es permitir ejecutar futuros como tareas independientes, típicamente a través de algún tipo de método <code>spawn</code>. Luego, el ejecutor es responsable de hacer polling en todos los futuros hasta que se completen. La gran ventaja de gestionar todos los futuros en un lugar central es que el ejecutor puede cambiar a un futuro diferente siempre que un futuro devuelva <code>Poll::Pending</code>. Así, las operaciones asíncronas se ejecutan en paralelo y la CPU se mantiene ocupada.</p>
+<p>Muchas implementaciones de ejecutores también pueden aprovechar sistemas con múltiples núcleos de CPU. Crean un <a href="https://en.wikipedia.org/wiki/Thread_pool">pool de hilos</a> que es capaz de utilizar todos los núcleos si hay suficiente trabajo disponible y utilizan técnicas como <a href="https://en.wikipedia.org/wiki/Work_stealing">robo de trabajo</a> para equilibrar la carga entre núcleos. También hay implementaciones de ejecutor especiales para sistemas embebidos que optimizan para baja latencia y sobredimensionamiento de memoria.</p>
+<p>Para evitar la sobrecarga de hacer polling en futuros repetidamente, los ejecutores suelen aprovechar la API de <em>waker</em> soportada por los futuros de Rust.</p>
+<h4 id="wakers"><a class="zola-anchor" href="#wakers" aria-label="Anchor link for: wakers">🔗</a>Wakers</h4>
+<p>La idea detrás de la API de waker es que un tipo especial <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a> se pasa a cada invocación de <code>poll</code>, envuelto en el tipo <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a>. Este tipo <code>Waker</code> es creado por el ejecutor y puede ser utilizado por la tarea asíncrona para señalan su (o una parte de su) finalización. Como resultado, el ejecutor no necesita llamar a <code>poll</code> en un futuro que anteriormente devolvió <code>Poll::Pending</code> hasta que recibe la notificación de waker correspondiente.</p>
+<p>Esto se ilustra mejor con un pequeño ejemplo:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>async </span><span style="color:#569cd6;">fn </span><span>write_file() {
+</span><span>    async_write_file(</span><span style="color:#d69d85;">&quot;foo.txt&quot;</span><span>, </span><span style="color:#d69d85;">&quot;Hello&quot;</span><span>).await;
+</span><span>}
+</span></code></pre>
+<p>Esta función escribe asíncronamente la cadena “Hello” en un archivo <code>foo.txt</code>. Dado que las escrituras en el disco duro toman algo de tiempo, la primera llamada a <code>poll</code> en este futuro probablemente devolverá <code>Poll::Pending</code>. Sin embargo, el controlador del disco duro almacenará internamente el <code>Waker</code> pasado a la llamada <code>poll</code> y lo utilizará para notificar al ejecutor cuando el archivo se haya escrito en el disco. De esta manera, el ejecutor no necesita perder tiempo tratando de <code>poll</code> el futuro nuevamente antes de recibir la notificación del waker.</p>
+<p>Veremos cómo funciona el tipo <code>Waker</code> en detalle cuando creemos nuestro propio ejecutor con soporte de waker en la sección de implementación de esta publicación.</p>
+<h3 id="multitasking-cooperativo-1"><a class="zola-anchor" href="#multitasking-cooperativo-1" aria-label="Anchor link for: multitasking-cooperativo-1">🔗</a>¿Multitasking Cooperativo?</h3>
+<p>Al principio de esta publicación, hablamos sobre el multitasking preemptivo y cooperativo. Mientras que el multitasking preemptivo depende del sistema operativo para cambiar forzosamente entre tareas en ejecución, el multitasking cooperativo requiere que las tareas cedan voluntariamente el control de la CPU a través de una operación <em>yield</em> regularmente. La gran ventaja del enfoque cooperativo es que las tareas pueden guardar su estado ellas mismas, lo que resulta en cambios de contexto más eficientes y hace posible compartir la misma pila de llamadas entre las tareas.</p>
+<p>Puede que no sea evidente de inmediato, pero los futuros y async/await son una implementación del patrón de multitasking cooperativo:</p>
+<ul>
+<li>Cada futuro que se añade al ejecutor es básicamente una tarea cooperativa.</li>
+<li>En lugar de usar una operación yield explícita, los futuros ceden el control del núcleo de CPU al devolver <code>Poll::Pending</code> (o <code>Poll::Ready</code> al final).
+<ul>
+<li>No hay nada que fuerce a los futuros a ceder la CPU. Si quieren, pueden nunca regresar de <code>poll</code>, por ejemplo, girando eternamente en un bucle.</li>
+<li>Dado que cada futuro puede bloquear la ejecución de otros futuros en el ejecutor, necesitamos confiar en que no sean maliciosos.</li>
+</ul>
+</li>
+<li>Internamente, los futuros almacenan todo el estado que necesitan para continuar la ejecución en la siguiente llamada <code>poll</code>. Con async/await, el compilador detecta automáticamente todas las variables que se necesitan y las almacena dentro de la máquina de estado generada.
+<ul>
+<li>Solo se guarda el estado mínimo requerido para la continuación.</li>
+<li>Dado que el método <code>poll</code> cede la pila de llamadas cuando retorna, se puede usar la misma pila para pollear otros futuros.</li>
+</ul>
+</li>
+</ul>
+<p>Vemos que los futuros y async/await encajan perfectamente en el patrón de multitasking cooperativo; solo utilizan algunos términos diferentes. En lo sucesivo, por lo tanto, utilizaremos los términos “tarea” y “futuro” indistintamente.</p>
+<h2 id="implementacion"><a class="zola-anchor" href="#implementacion" aria-label="Anchor link for: implementacion">🔗</a>Implementación</h2>
+<p>Ahora que entendemos cómo funciona el multitasking cooperativo basado en futuros y async/await en Rust, es hora de agregar soporte para ello a nuestro núcleo. Dado que el trait <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html"><code>Future</code></a> es parte de la biblioteca <code>core</code> y async/await es una característica del propio lenguaje, no hay nada especial que debamos hacer para usarlo en nuestro núcleo <code>#![no_std]</code>. El único requisito es que usemos como mínimo nightly <code>2020-03-25</code> de Rust porque async/await no era compatible con <code>no_std</code> antes.</p>
+<p>Con una versión nightly suficientemente reciente, podemos comenzar a usar async/await en nuestro <code>main.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span>async </span><span style="color:#569cd6;">fn </span><span>async_number() -&gt; </span><span style="color:#569cd6;">u32 </span><span>{
+</span><span>    </span><span style="color:#b5cea8;">42
+</span><span>}
+</span><span>
+</span><span>async </span><span style="color:#569cd6;">fn </span><span>example_task() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> number = async_number().await;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;número asíncrono: </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, number);
+</span><span>}
+</span></code></pre>
+<p>La función <code>async_number</code> es una <code>async fn</code>, así que el compilador la transforma en una máquina de estado que implementa <code>Future</code>. Dado que la función solo devuelve <code>42</code>, el futuro resultante devolverá directamente <code>Poll::Ready(42)</code> en la primera llamada <code>poll</code>. Al igual que <code>async_number</code>, la función <code>example_task</code> también es una <code>async fn</code>. Espera el número devuelto por <code>async_number</code> y luego lo imprime usando el macro <code>println</code>.</p>
+<p>Para ejecutar el futuro devuelto por <code>example_task</code>, necesitamos llamar a <code>poll</code> en él hasta que señale su finalización devolviendo <code>Poll::Ready</code>. Para hacer esto, necesitamos crear un tipo de ejecutor simple.</p>
+<h3 id="tarea"><a class="zola-anchor" href="#tarea" aria-label="Anchor link for: tarea">🔗</a>Tarea</h3>
+<p>Antes de comenzar la implementación del ejecutor, creamos un nuevo módulo <code>task</code> con un tipo <code>Task</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>task;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::{future::Future, pin::Pin};
+</span><span style="color:#569cd6;">use </span><span>alloc::boxed::Box;
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>Task {
+</span><span>    future: Pin&lt;Box&lt;dyn Future&lt;Output = ()&gt;&gt;&gt;,
+</span><span>}
+</span></code></pre>
+<p>La estructura <code>Task</code> es un envoltorio nuevo alrededor de un futuro pinzado, asignado en el heap y de despacho dinámico con el tipo vacío <code>()</code> como salida. Revisemos esto en detalle:</p>
+<ul>
+<li>Requerimos que el futuro asociado con una tarea devuelva <code>()</code>. Esto significa que las tareas no devuelven ningún resultado, simplemente se ejecutan por sus efectos secundarios. Por ejemplo, la función <code>example_task</code> que definimos arriba no tiene valor de retorno, pero imprime algo en pantalla como efecto secundario.</li>
+<li>La palabra clave <code>dyn</code> indica que almacenamos un <a href="https://doc.rust-lang.org/book/ch17-02-trait-objects.html"><em>trait object</em></a> en el <code>Box</code>. Esto significa que los métodos en el futuro son <a href="https://doc.rust-lang.org/book/ch17-02-trait-objects.html#trait-objects-perform-dynamic-dispatch"><em>despachados dinámicamente</em></a>, permitiendo que diferentes tipos de futuros se almacenen en el tipo <code>Task</code>. Esto es importante porque cada <code>async fn</code> tiene su propio tipo y queremos ser capaces de crear múltiples tareas diferentes.</li>
+<li>Como aprendimos en la <a href="https://os.phil-opp.com/es/async-await/#pinning">sección sobre pinning</a>, el tipo <code>Pin&lt;Box&gt;</code> asegura que un valor no puede moverse en memoria al colocarlo en el heap y prevenir la creación de referencias <code>&amp;mut</code> a él. Esto es importante porque los futuros generados por async/await podrían ser auto-referenciales, es decir, contener punteros a sí mismos que se invalidarían cuando el futuro se moviera.</li>
+</ul>
+<p>Para permitir la creación de nuevas estructuras <code>Task</code> a partir de futuros, creamos una función <code>new</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Task {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new(future: impl Future&lt;Output = ()&gt; + </span><span style="color:#569cd6;">&#39;static</span><span>) -&gt; Task {
+</span><span>        Task {
+</span><span>            future: Box::pin(future),
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>La función toma un futuro arbitrario con un tipo de salida de <code>()</code> y lo pinza en memoria a través de la función <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.pin"><code>Box::pin</code></a>. Luego envuelve el futuro en la estructura <code>Task</code> y la devuelve. Se requiere el tiempo de vida <code>'static</code> aquí porque el <code>Task</code> devuelto puede vivir por un tiempo arbitrario, por lo que el futuro también debe ser válido durante ese tiempo.</p>
+<h4 id="poll"><a class="zola-anchor" href="#poll" aria-label="Anchor link for: poll">🔗</a>Poll</h4>
+<p>También añadimos un método <code>poll</code> para permitir al ejecutor hacer polling en el futuro almacenado:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::task::{Context, Poll};
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Task {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>poll(</span><span style="color:#569cd6;">&amp;mut </span><span>self, context: </span><span style="color:#569cd6;">&amp;mut</span><span> Context) -&gt; Poll&lt;()&gt; {
+</span><span>        self.future.as_mut().poll(context)
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Dado que el método <a href="https://doc.rust-lang.org/nightly/core/future/trait.Future.html#tymethod.poll"><code>poll</code></a> del trait <code>Future</code> espera ser llamado sobre un tipo <code>Pin&lt;&amp;mut T&gt;</code>, usamos el método <a href="https://doc.rust-lang.org/nightly/core/pin/struct.Pin.html#method.as_mut"><code>Pin::as_mut</code></a> para convertir el campo <code>self.future</code> del tipo <code>Pin&lt;Box&lt;T&gt;&gt;</code> primero. Luego llamamos a <code>poll</code> en el campo <code>self.future</code> convertido y devolvemos el resultado. Como el método <code>Task::poll</code> debería ser llamado solo por el ejecutor que crearemos en un momento, mantenemos la función privada.</p>
+<h3 id="ejecutor-simple"><a class="zola-anchor" href="#ejecutor-simple" aria-label="Anchor link for: ejecutor-simple">🔗</a>Ejecutor simple</h3>
+<p>Dado que los ejecutores pueden ser bastante complejos, comenzamos deliberadamente creando un ejecutor muy básico antes de implementar un ejecutor más completo más adelante. Para ello, primero creamos un nuevo submódulo <code>task::simple_executor</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/task/mod.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>simple_executor;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/task/simple_executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::Task;
+</span><span style="color:#569cd6;">use </span><span>alloc::collections::VecDeque;
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>SimpleExecutor {
+</span><span>    task_queue: VecDeque&lt;Task&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>SimpleExecutor {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new() -&gt; SimpleExecutor {
+</span><span>        SimpleExecutor {
+</span><span>            task_queue: VecDeque::new(),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>spawn(</span><span style="color:#569cd6;">&amp;mut </span><span>self, task: Task) {
+</span><span>        self.task_queue.push_back(task)
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>La estructura contiene un solo campo <code>task_queue</code> de tipo <a href="https://doc.rust-lang.org/stable/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a>, que es básicamente un vector que permite operaciones de push y pop en ambos extremos. La idea detrás de usar este tipo es que insertamos nuevas tareas a través del método <code>spawn</code> al final y extraemos la siguiente tarea para ejecutar desde el frente. De esta manera, obtenemos una simple <a href="https://en.wikipedia.org/wiki/FIFO_(computing_and_electronics)">cola FIFO</a> (<em>“primero en entrar, primero en salir”</em>).</p>
+<h4 id="waker-inutil"><a class="zola-anchor" href="#waker-inutil" aria-label="Anchor link for: waker-inutil">🔗</a>Waker Inútil</h4>
+<p>Para llamar al método <code>poll</code>, necesitamos crear un tipo <a href="https://doc.rust-lang.org/nightly/core/task/struct.Context.html"><code>Context</code></a>, que envuelve un tipo <a href="https://doc.rust-lang.org/nightly/core/task/struct.Waker.html"><code>Waker</code></a>. Para comenzar de manera simple, primero crearemos un waker inútil que no hace nada. Para ello, creamos una instancia de <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a>, la cual define la implementación de los diferentes métodos <code>Waker</code>, y luego usamos la función <a href="https://doc.rust-lang.org/stable/core/task/struct.Waker.html#method.from_raw"><code>Waker::from_raw</code></a> para convertirlo en un <code>Waker</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/task/simple_executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::task::{Waker, RawWaker};
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>dummy_raw_waker() -&gt; RawWaker {
+</span><span>    todo!();
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>dummy_waker() -&gt; Waker {
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ Waker::from_raw(dummy_raw_waker()) }
+</span><span>}
+</span></code></pre>
+<p>La función <code>from_raw</code> es insegura porque se puede producir un comportamiento indefinido si el programador no cumple con los requisitos documentados de <code>RawWaker</code>. Antes de que veamos la implementación de la función <code>dummy_raw_waker</code>, primero intentemos entender cómo funciona el tipo <code>RawWaker</code>.</p>
+<h5 id="rawwaker"><a class="zola-anchor" href="#rawwaker" aria-label="Anchor link for: rawwaker">🔗</a><code>RawWaker</code></h5>
+<p>El tipo <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html"><code>RawWaker</code></a> requiere que el programador defina explícitamente un <a href="https://en.wikipedia.org/wiki/Virtual_method_table"><em>tabla de métodos virtuales</em></a> (<em>vtable</em>) que especifica las funciones que deben ser llamadas cuando <code>RawWaker</code> se clona, se despierta o se elimina. La disposición de esta vtable es definida por el tipo <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWakerVTable.html"><code>RawWakerVTable</code></a>. Cada función recibe un argumento <code>*const ()</code>, que es un puntero <em>sin tipo</em> a algún valor. La razón por la que se utiliza un puntero <code>*const ()</code> en lugar de una referencia apropiada es que el tipo <code>RawWaker</code> debería ser no genérico pero aún así soportar tipos arbitrarios. El puntero se proporciona colocando <code>data</code> en la llamada a <a href="https://doc.rust-lang.org/stable/core/task/struct.RawWaker.html#method.new"><code>RawWaker::new</code></a>, que simplemente inicializa un <code>RawWaker</code>. Luego, el <code>Waker</code> utiliza este <code>RawWaker</code> para llamar a las funciones de la vtable con <code>data</code>.</p>
+<p>Típicamente, el <code>RawWaker</code> se crea para alguna estructura asignada en el heap que está envuelta en el tipo <a href="https://doc.rust-lang.org/stable/alloc/boxed/struct.Box.html"><code>Box</code></a> o <a href="https://doc.rust-lang.org/stable/alloc/sync/struct.Arc.html"><code>Arc</code></a>. Para tales tipos, pueden usarse métodos como <a href="https://doc.rust-lang.org/stable/alloc/boxed/struct.Box.html#method.into_raw"><code>Box::into_raw</code></a> para convertir el <code>Box&lt;T&gt;</code> en un puntero <code>*const T</code>. Este puntero puede luego ser convertido a un puntero anónimo <code>*const ()</code> y pasado a <code>RawWaker::new</code>. Dado que cada función de vtable recibe el mismo <code>*const ()</code> como argumento, las funciones pueden convertir de forma segura el puntero de regreso a un <code>Box&lt;T&gt;</code> o un <code>&amp;T</code> para operar en él. Como puedes imaginar, este proceso es extremadamente peligroso y puede llevar fácilmente a un comportamiento indefinido en caso de errores. Por esta razón, no se recomienda crear manualmente un <code>RawWaker</code> a menos que sea absolutamente necesario.</p>
+<h5 id="un-rawwaker-inutil"><a class="zola-anchor" href="#un-rawwaker-inutil" aria-label="Anchor link for: un-rawwaker-inutil">🔗</a>Un <code>RawWaker</code> Inútil</h5>
+<p>Como crear manualmente un <code>RawWaker</code> no es recomendable, hay un camino seguro para crear un <code>Waker</code> inútil que no haga nada. Afortunadamente, el hecho de que queramos no hacer nada hace que sea relativamente seguro implementar la función <code>dummy_raw_waker</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/task/simple_executor.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::task::RawWakerVTable;
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>dummy_raw_waker() -&gt;
+</span></code></pre>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Apóyame</h2>
+<p>Crear y mantener este blog y las bibliotecas asociadas es mucho trabajo, pero realmente disfruto haciéndolo. Al apoyarme, me permites invertir más tiempo en nuevo contenido, nuevas características y mantenimiento continuo. La mejor manera de apoyarme es <a href="https://github.com/sponsors/phil-opp"><em>patrocinarme en GitHub</em></a>. ¡Gracias!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/es/allocator-designs/">&laquo; Diseños de Allocadores</a>
+        
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comentarios</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        ¿Tienes algún problema, quieres compartir comentarios o discutir más ideas? ¡No dudes en dejar un comentario aquí! Por favor, utiliza inglés y sigue el <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conducta</a> de Rust. Este hilo de comentarios se vincula directamente con una <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Async/Await%20%28es%29%22%20in%3Atitle"><em>discusión en GitHub</em></a>, así que también puedes comentar allí si lo prefieres.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Async&#x2F;Await (es)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="es"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Async/Await%20%28es%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Por favor deja tus comentarios en inglés si es posible.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/async-await/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="zh-TW" class=""><a href="https://os.phil-opp.com/zh-TW/async-await/">
+                        Chinese (traditional)
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/async-await/">
+                        Japanese
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

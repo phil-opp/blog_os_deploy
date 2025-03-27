@@ -1,0 +1,679 @@
+<!doctype html>
+
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Esta publicación explora en detalle la excepción de doble fallo, que ocurre cuando la CPU no logra invocar un controlador de excepciones. Al manejar e…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/es/double-fault-exceptions/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Excepciones de Doble Fallo | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/es" title="All Posts">« Todos los Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Tabla de Contenidos</h2>
+    <ol>
+        <li>
+            <a href="#que-es-un-doble-fallo">¿Qué es un Doble Fallo?</a>
+            <ol>
+                <li>
+                    <a href="#provocando-un-doble-fallo">Provocando un Doble Fallo</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#un-controlador-de-doble-fallo">Un Controlador de Doble Fallo</a>
+            
+        </li><li>
+            <a href="#causas-de-doble-fallos">Causas de Doble Fallos</a>
+            <ol>
+                <li>
+                    <a href="#desbordamiento-de-pila-del-nucleo">Desbordamiento de Pila del Núcleo</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#cambio-de-pilas">Cambio de Pilas</a>
+            <ol>
+                <li>
+                    <a href="#la-ist-y-tss">La IST y TSS</a>
+                </li><li>
+                    <a href="#creando-una-tss">Creando una TSS</a>
+                </li><li>
+                    <a href="#la-tabla-global-de-descriptores">La Tabla Global de Descriptores</a>
+                </li><li>
+                    <a href="#los-pasos-finales">Los Pasos Finales</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#una-prueba-de-desbordamiento-de-pila">Una Prueba de Desbordamiento de Pila</a>
+            <ol>
+                <li>
+                    <a href="#implementando-start">Implementando _start</a>
+                </li><li>
+                    <a href="#la-idt-de-prueba">La IDT de Prueba</a>
+                </li><li>
+                    <a href="#el-controlador-de-doble-fallo">El Controlador de Doble Fallo</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#resumen">Resumen</a>
+            
+        </li><li>
+            <a href="#que-sigue">¿Qué sigue?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Excepciones de Doble Fallo</h1>
+    <time datetime="2018-06-18" class="post-date">
+        Jun 18, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Contenido Traducido:</b>
+            Esta es una traducción comunitaria del post <strong><a href="https://os.phil-opp.com/double-fault-exceptions/">Double Faults</a></strong>. Puede estar incompleta, desactualizada o contener errores. ¡Por favor reporta cualquier problema!
+            </p>
+            <p>
+                Traducción por <a href="https://github.com/dobleuber">@dobleuber</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Esta publicación explora en detalle la excepción de doble fallo, que ocurre cuando la CPU no logra invocar un controlador de excepciones. Al manejar esta excepción, evitamos fallos <em>triples</em> fatales que causan un reinicio del sistema. Para prevenir fallos triples en todos los casos, también configuramos una <em>Tabla de Pila de Interrupciones</em> (IST) para capturar dobles fallos en una pila de núcleo separada.</p>
+<span id="continue-reading"></span>
+<p>Este blog se desarrolla abiertamente en <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Si tienes problemas o preguntas, abre un issue allí. También puedes dejar comentarios <a href="https://os.phil-opp.com/es/double-fault-exceptions/#comments">al final</a>. El código fuente completo de esta publicación se puede encontrar en la rama <a href="https://github.com/phil-opp/blog_os/tree/post-06"><code>post-06</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Tabla de Contenidos</b></summary>
+        <ul>
+            <li>
+                <a href="#que-es-un-doble-fallo">¿Qué es un Doble Fallo?</a>
+                <ul>
+                    <li>
+                        <a href="#provocando-un-doble-fallo">Provocando un Doble Fallo</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#un-controlador-de-doble-fallo">Un Controlador de Doble Fallo</a>
+                
+            </li><li>
+                <a href="#causas-de-doble-fallos">Causas de Doble Fallos</a>
+                <ul>
+                    <li>
+                        <a href="#desbordamiento-de-pila-del-nucleo">Desbordamiento de Pila del Núcleo</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#cambio-de-pilas">Cambio de Pilas</a>
+                <ul>
+                    <li>
+                        <a href="#la-ist-y-tss">La IST y TSS</a>
+                    </li><li>
+                        <a href="#creando-una-tss">Creando una TSS</a>
+                    </li><li>
+                        <a href="#la-tabla-global-de-descriptores">La Tabla Global de Descriptores</a>
+                    </li><li>
+                        <a href="#los-pasos-finales">Los Pasos Finales</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#una-prueba-de-desbordamiento-de-pila">Una Prueba de Desbordamiento de Pila</a>
+                <ul>
+                    <li>
+                        <a href="#implementando-start">Implementando _start</a>
+                    </li><li>
+                        <a href="#la-idt-de-prueba">La IDT de Prueba</a>
+                    </li><li>
+                        <a href="#el-controlador-de-doble-fallo">El Controlador de Doble Fallo</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#resumen">Resumen</a>
+                
+            </li><li>
+                <a href="#que-sigue">¿Qué sigue?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+        </ul>
+    </details>
+
+<h2 id="que-es-un-doble-fallo"><a class="zola-anchor" href="#que-es-un-doble-fallo" aria-label="Anchor link for: que-es-un-doble-fallo">🔗</a>¿Qué es un Doble Fallo?</h2>
+<p>En términos simplificados, un doble fallo es una excepción especial que ocurre cuando la CPU no logra invocar un controlador de excepciones. Por ejemplo, ocurre cuando se activa un fallo de página pero no hay un controlador de fallo de página registrado en la <a href="https://os.phil-opp.com/cpu-exceptions/#the-interrupt-descriptor-table">Tabla de Descriptores de Interrupciones</a> (IDT). Así que es un poco similar a los bloques de captura de “cosecha todo” en lenguajes de programación con excepciones, por ejemplo, <code>catch(...)</code> en C++ o <code>catch(Exception e)</code> en Java o C#.</p>
+<p>Un doble fallo se comporta como una excepción normal. Tiene el número de vector <code>8</code> y podemos definir una función controladora normal para él en la IDT. Es realmente importante proporcionar un controlador de doble fallo, porque si un doble fallo no se maneja, ocurre un fallo <em>triple</em> fatal. Los fallos triples no se pueden capturar, y la mayoría del hardware reacciona con un reinicio del sistema.</p>
+<h3 id="provocando-un-doble-fallo"><a class="zola-anchor" href="#provocando-un-doble-fallo" aria-label="Anchor link for: provocando-un-doble-fallo">🔗</a>Provocando un Doble Fallo</h3>
+<p>Provocamos un doble fallo al activar una excepción para la cual no hemos definido una función controladora:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span>#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// provocar un fallo de página
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        *(</span><span style="color:#b5cea8;">0xdeadbeef </span><span style="color:#569cd6;">as *mut u8</span><span>) = </span><span style="color:#b5cea8;">42</span><span>;
+</span><span>    };
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// como antes
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;¡No se colapsó!&quot;</span><span>);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Usamos <code>unsafe</code> para escribir en la dirección inválida <code>0xdeadbeef</code>. La dirección virtual no está mapeada a una dirección física en las tablas de páginas, por lo que ocurre un fallo de página. No hemos registrado un controlador de fallo de página en nuestra <a href="https://os.phil-opp.com/cpu-exceptions/#the-interrupt-descriptor-table">IDT</a>, así que ocurre un doble fallo.</p>
+<p>Cuando iniciamos nuestro núcleo ahora, vemos que entra en un bucle de arranque interminable. La razón del bucle de arranque es la siguiente:</p>
+<ol>
+<li>La CPU intenta escribir en <code>0xdeadbeef</code>, lo que causa un fallo de página.</li>
+<li>La CPU consulta la entrada correspondiente en la IDT y ve que no se especifica ninguna función controladora. Por lo tanto, no puede llamar al controlador de fallo de página y ocurre un doble fallo.</li>
+<li>La CPU consulta la entrada de la IDT del controlador de doble fallo, pero esta entrada tampoco especifica una función controladora. Por lo tanto, ocurre un fallo <em>triple</em>.</li>
+<li>Un fallo triple es fatal. QEMU reacciona a esto como la mayoría del hardware real y emite un reinicio del sistema.</li>
+</ol>
+<p>Por lo tanto, para prevenir este fallo triple, necesitamos proporcionar una función controladora para los fallos de página o un controlador de doble fallo. Queremos evitar los fallos triples en todos los casos, así que empecemos con un controlador de doble fallo que se invoca para todos los tipos de excepciones no manejadas.</p>
+<h2 id="un-controlador-de-doble-fallo"><a class="zola-anchor" href="#un-controlador-de-doble-fallo" aria-label="Anchor link for: un-controlador-de-doble-fallo">🔗</a>Un Controlador de Doble Fallo</h2>
+<p>Un doble fallo es una excepción normal con un código de error, por lo que podemos especificar una función controladora similar a nuestra función controladora de punto de interrupción:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/interrupts.rs
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        idt.double_fault.set_handler_fn(double_fault_handler); </span><span style="color:#608b4e;">// nuevo
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// nuevo
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>double_fault_handler(
+</span><span>    stack_frame: InterruptStackFrame, _error_code: </span><span style="color:#569cd6;">u64</span><span>) -&gt; </span><span style="color:#569cd6;">!
+</span><span>{
+</span><span>    panic!(</span><span style="color:#d69d85;">&quot;EXCEPCIÓN: DOBLE FALLO</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">{:#?}&quot;</span><span>, stack_frame);
+</span><span>}
+</span></code></pre>
+<p>Nuestro controlador imprime un corto mensaje de error y volcado del marco de pila de excepciones. El código de error del controlador de doble fallo siempre es cero, así que no hay razón para imprimirlo. Una diferencia con el controlador de punto de interrupción es que el controlador de doble fallo es <a href="https://doc.rust-lang.org/stable/rust-by-example/fn/diverging.html"><em>divergente</em></a>. La razón es que la arquitectura <code>x86_64</code> no permite devolver de una excepción de doble fallo.</p>
+<p>Cuando iniciamos nuestro núcleo ahora, deberíamos ver que se invoca el controlador de doble fallo:</p>
+<p><img src="https://os.phil-opp.com/es/double-fault-exceptions/qemu-catch-double-fault.png" alt="QEMU imprimiendo EXCEPCIÓN: DOBLE FALLO y el marco de pila de excepciones" /></p>
+<p>¡Funcionó! Aquí está lo que sucedió esta vez:</p>
+<ol>
+<li>La CPU intenta escribir en <code>0xdeadbeef</code>, lo que causa un fallo de página.</li>
+<li>Como antes, la CPU consulta la entrada correspondiente en la IDT y ve que no se define ninguna función controladora. Así que ocurre un doble fallo.</li>
+<li>La CPU salta al – ahora presente – controlador de doble fallo.</li>
+</ol>
+<p>El fallo triple (y el bucle de arranque) ya no ocurre, ya que la CPU ahora puede llamar al controlador de doble fallo.</p>
+<p>¡Eso fue bastante directo! Entonces, ¿por qué necesitamos una publicación completa sobre este tema? Bueno, ahora podemos capturar la mayoría de los dobles fallos, pero hay algunos casos en los que nuestro enfoque actual no es suficiente.</p>
+<h2 id="causas-de-doble-fallos"><a class="zola-anchor" href="#causas-de-doble-fallos" aria-label="Anchor link for: causas-de-doble-fallos">🔗</a>Causas de Doble Fallos</h2>
+<p>Antes de mirar los casos especiales, necesitamos conocer las causas exactas de los dobles fallos. Arriba, usamos una definición bastante vaga:</p>
+<blockquote>
+<p>Un doble fallo es una excepción especial que ocurre cuando la CPU no logra invocar un controlador de excepciones.</p>
+</blockquote>
+<p>¿Qué significa exactamente <em>“no logra invocar”</em>? ¿No está presente el controlador? ¿El controlador está <a href="http://pages.cs.wisc.edu/~remzi/OSTEP/vm-beyondphys.pdf">intercambiado</a>? ¿Y qué sucede si un controlador causa excepciones a su vez?</p>
+<p>Por ejemplo, ¿qué ocurre si:</p>
+<ol>
+<li>ocurre una excepción de punto de interrupción, pero la función controladora correspondiente está intercambiada?</li>
+<li>ocurre un fallo de página, pero el controlador de fallo de página está intercambiado?</li>
+<li>un controlador de división por cero causa una excepción de punto de interrupción, pero el controlador de punto de interrupción está intercambiado?</li>
+<li>nuestro núcleo desborda su pila y se activa la <em>página de guardia</em>?</li>
+</ol>
+<p>Afortunadamente, el manual de AMD64 (<a href="https://www.amd.com/system/files/TechDocs/24593.pdf">PDF</a>) tiene una definición exacta (en la Sección 8.2.9). Según él, una “excepción de doble fallo <em>puede</em> ocurrir cuando una segunda excepción ocurre durante el manejo de un controlador de excepción previo (primera)”. El <em>“puede”</em> es importante: Solo combinaciones muy específicas de excepciones conducen a un doble fallo. Estas combinaciones son:</p>
+<table><thead><tr><th>Primera Excepción</th><th>Segunda Excepción</th></tr></thead><tbody>
+<tr><td><a href="https://wiki.osdev.org/Exceptions#Division_Error">División por cero</a>,<br><a href="https://wiki.osdev.org/Exceptions#Invalid_TSS">TSS No Válido</a>,<br><a href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segmento No Presente</a>,<br><a href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Fallo de Segmento de Pila</a>,<br><a href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">Fallo de Protección General</a></td><td><a href="https://wiki.osdev.org/Exceptions#Invalid_TSS">TSS No Válido</a>,<br><a href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segmento No Presente</a>,<br><a href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Fallo de Segmento de Pila</a>,<br><a href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">Fallo de Protección General</a></td></tr>
+<tr><td><a href="https://wiki.osdev.org/Exceptions#Page_Fault">Fallo de Página</a></td><td><a href="https://wiki.osdev.org/Exceptions#Page_Fault">Fallo de Página</a>,<br><a href="https://wiki.osdev.org/Exceptions#Invalid_TSS">TSS No Válido</a>,<br><a href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segmento No Presente</a>,<br><a href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Fallo de Segmento de Pila</a>,<br><a href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">Fallo de Protección General</a></td></tr>
+</tbody></table>
+<p>Así que, por ejemplo, un fallo de división por cero seguido de un fallo de página está bien (se invoca el controlador de fallo de página), pero un fallo de división por cero seguido de un fallo de protección general conduce a un doble fallo.</p>
+<p>Con la ayuda de esta tabla, podemos responder las tres primeras preguntas anteriores:</p>
+<ol>
+<li>Si ocurre una excepción de punto de interrupción y la función controladora correspondiente está intercambiada, ocurre un <em>fallo de página</em> y se invoca el <em>controlador de fallo de página</em>.</li>
+<li>Si ocurre un fallo de página y el controlador de fallo de página está intercambiado, ocurre un <em>doble fallo</em> y se invoca el <em>controlador de doble fallo</em>.</li>
+<li>Si un controlador de división por cero causa una excepción de punto de interrupción, la CPU intenta invocar el controlador de punto de interrupción. Si el controlador de punto de interrupción está intercambiado, ocurre un <em>fallo de página</em> y se invoca el <em>controlador de fallo de página</em>.</li>
+</ol>
+<p>De hecho, incluso el caso de una excepción sin una función controladora en la IDT sigue este esquema: Cuando ocurre la excepción, la CPU intenta leer la entrada correspondiente de la IDT. Dado que la entrada es 0, que no es una entrada válida de la IDT, ocurre un <em>fallo de protección general</em>. No definimos una función controladora para el fallo de protección general tampoco, así que ocurre otro fallo de protección general. Según la tabla, esto conduce a un doble fallo.</p>
+<h3 id="desbordamiento-de-pila-del-nucleo"><a class="zola-anchor" href="#desbordamiento-de-pila-del-nucleo" aria-label="Anchor link for: desbordamiento-de-pila-del-nucleo">🔗</a>Desbordamiento de Pila del Núcleo</h3>
+<p>Veamos la cuarta pregunta:</p>
+<blockquote>
+<p>¿Qué ocurre si nuestro núcleo desborda su pila y se activa la página de guardia?</p>
+</blockquote>
+<p>Una página de guardia es una página de memoria especial en la parte inferior de una pila que permite detectar desbordamientos de pila. La página no está mapeada a ningún marco físico, por lo que acceder a ella provoca un fallo de página en lugar de corromper silenciosamente otra memoria. El cargador de arranque establece una página de guardia para nuestra pila de núcleo, así que un desbordamiento de pila provoca un <em>fallo de página</em>.</p>
+<p>Cuando ocurre un fallo de página, la CPU busca el controlador de fallo de página en la IDT e intenta empujar el <a href="https://os.phil-opp.com/cpu-exceptions/#the-interrupt-stack-frame">marco de pila de interrupción</a> en la pila. Sin embargo, el puntero de pila actual aún apunta a la página de guardia no presente. Por lo tanto, ocurre un segundo fallo de página, que causa un doble fallo (según la tabla anterior).</p>
+<p>Así que la CPU intenta llamar al <em>controlador de doble fallo</em> ahora. Sin embargo, en un doble fallo, la CPU también intenta empujar el marco de pila de excepción. El puntero de pila aún apunta a la página de guardia, por lo que ocurre un <em>tercer</em> fallo de página, que causa un <em>fallo triple</em> y un reinicio del sistema. Así que nuestro actual controlador de doble fallo no puede evitar un fallo triple en este caso.</p>
+<p>¡Probémoslo nosotros mismos! Podemos provocar fácilmente un desbordamiento de pila del núcleo llamando a una función que recursivamente se llame a sí misma sin fin:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span>#[no_mangle] </span><span style="color:#608b4e;">// no mangles el nombre de esta función
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>stack_overflow() {
+</span><span>        stack_overflow(); </span><span style="color:#608b4e;">// por cada recursión, se empuja la dirección de retorno
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// provocar un desbordamiento de pila
+</span><span>    stack_overflow();
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// test_main(), println(…), y loop {}
+</span><span>}
+</span></code></pre>
+<p>Cuando intentamos este código en QEMU, vemos que el sistema entra en un bucle de arranque nuevamente.</p>
+<p>Entonces, ¿cómo podemos evitar este problema? No podemos omitir el empuje del marco de pila de excepción, ya que la CPU lo hace ella misma. Así que necesitamos asegurarnos de alguna manera de que la pila sea siempre válida cuando ocurra una excepción de doble fallo. Afortunadamente, la arquitectura <code>x86_64</code> tiene una solución a este problema.</p>
+<h2 id="cambio-de-pilas"><a class="zola-anchor" href="#cambio-de-pilas" aria-label="Anchor link for: cambio-de-pilas">🔗</a>Cambio de Pilas</h2>
+<p>La arquitectura <code>x86_64</code> es capaz de cambiar a una pila conocida y predefinida cuando ocurre una excepción. Este cambio se realiza a nivel de hardware, así que se puede hacer antes de que la CPU empuje el marco de pila de excepción.</p>
+<p>El mecanismo de cambio se implementa como una <em>Tabla de Pila de Interrupciones</em> (IST). La IST es una tabla de 7 punteros a pilas conocidas y válidas. En pseudocódigo estilo Rust:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">struct </span><span>InterruptStackTable {
+</span><span>    stack_pointers: [Option&lt;StackPointer&gt;; 7],
+</span><span>}
+</span></code></pre>
+<p>Para cada controlador de excepciones, podemos elegir una pila de la IST a través del campo <code>stack_pointers</code> en la entrada correspondiente de la <a href="https://os.phil-opp.com/cpu-exceptions/#the-interrupt-descriptor-table">IDT</a>. Por ejemplo, nuestro controlador de doble fallo podría usar la primera pila en la IST. Entonces, la CPU cambia automáticamente a esta pila cada vez que ocurre un doble fallo. Este cambio ocurriría antes de que se empuje cualquier cosa, previniendo el fallo triple.</p>
+<h3 id="la-ist-y-tss"><a class="zola-anchor" href="#la-ist-y-tss" aria-label="Anchor link for: la-ist-y-tss">🔗</a>La IST y TSS</h3>
+<p>La Tabla de Pila de Interrupciones (IST) es parte de una estructura antigua llamada <em><a href="https://en.wikipedia.org/wiki/Task_state_segment">Segmento de Estado de Tarea</a></em> (TSS). La TSS solía contener varias piezas de información (por ejemplo, el estado de registro del procesador) sobre una tarea en modo de 32 bits y se usaba, por ejemplo, para <a href="https://wiki.osdev.org/Context_Switching#Hardware_Context_Switching">cambio de contexto de hardware</a>. Sin embargo, el cambio de contexto de hardware ya no se admite en modo de 64 bits y el formato de la TSS ha cambiado completamente.</p>
+<p>En <code>x86_64</code>, la TSS ya no contiene ninguna información específica de tarea. En su lugar, contiene dos tablas de pilas (la IST es una de ellas). El único campo común entre la TSS de 32 bits y 64 bits es el puntero al <a href="https://en.wikipedia.org/wiki/Task_state_segment#I.2FO_port_permissions">bitmap de permisos de puertos de E/S</a>.</p>
+<p>La TSS de 64 bits tiene el siguiente formato:</p>
+<table><thead><tr><th>Campo</th><th>Tipo</th></tr></thead><tbody>
+<tr><td><span style="opacity: 0.5">(reservado)</span></td><td><code>u32</code></td></tr>
+<tr><td>Tabla de Pilas de Privilegio</td><td><code>[u64; 3]</code></td></tr>
+<tr><td><span style="opacity: 0.5">(reservado)</span></td><td><code>u64</code></td></tr>
+<tr><td>Tabla de Pila de Interrupciones</td><td><code>[u64; 7]</code></td></tr>
+<tr><td><span style="opacity: 0.5">(reservado)</span></td><td><code>u64</code></td></tr>
+<tr><td><span style="opacity: 0.5">(reservado)</span></td><td><code>u16</code></td></tr>
+<tr><td>Dirección Base del Mapa de E/S</td><td><code>u16</code></td></tr>
+</tbody></table>
+<p>La <em>Tabla de Pilas de Privilegio</em> es usada por la CPU cuando cambia el nivel de privilegio. Por ejemplo, si ocurre una excepción mientras la CPU está en modo usuario (nivel de privilegio 3), la CPU normalmente cambia a modo núcleo (nivel de privilegio 0) antes de invocar el controlador de excepciones. En ese caso, la CPU cambiaría a la 0ª pila en la Tabla de Pilas de Privilegio (ya que 0 es el nivel de privilegio de destino). Aún no tenemos programas en modo usuario, así que ignoraremos esta tabla por ahora.</p>
+<h3 id="creando-una-tss"><a class="zola-anchor" href="#creando-una-tss" aria-label="Anchor link for: creando-una-tss">🔗</a>Creando una TSS</h3>
+<p>Creemos una nueva TSS que contenga una pila de doble fallo separada en su tabla de pila de interrupciones. Para ello, necesitamos una estructura TSS. Afortunadamente, la crate <code>x86_64</code> ya contiene una <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/tss/struct.TaskStateSegment.html"><code>struct TaskStateSegment</code></a> que podemos usar.</p>
+<p>Creamos la TSS en un nuevo módulo <code>gdt</code> (el nombre tendrá sentido más adelante):</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>gdt;
+</span><span>
+</span><span style="color:#608b4e;">// en src/gdt.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::VirtAddr;
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::tss::TaskStateSegment;
+</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
+</span><span>
+</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX</span><span>: </span><span style="color:#569cd6;">u16 </span><span>= </span><span style="color:#b5cea8;">0</span><span>;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">TSS</span><span>: TaskStateSegment = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> tss = TaskStateSegment::new();
+</span><span>        tss.interrupt_stack_table[</span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX </span><span style="color:#569cd6;">as usize</span><span>] = {
+</span><span>            </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">STACK_SIZE</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">4096 </span><span>* </span><span style="color:#b5cea8;">5</span><span>;
+</span><span>            </span><span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">STACK</span><span>: [</span><span style="color:#569cd6;">u8</span><span>; </span><span style="color:#b4cea8;">STACK_SIZE</span><span>] = [</span><span style="color:#b5cea8;">0</span><span>; </span><span style="color:#b4cea8;">STACK_SIZE</span><span>];
+</span><span>
+</span><span>            </span><span style="color:#569cd6;">let</span><span> stack_start = VirtAddr::from_ptr(</span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span style="color:#b4cea8;">STACK </span><span>});
+</span><span>            </span><span style="color:#569cd6;">let</span><span> stack_end = stack_start + </span><span style="color:#b4cea8;">STACK_SIZE</span><span>;
+</span><span>            stack_end
+</span><span>        };
+</span><span>        tss
+</span><span>    };
+</span><span>}
+</span></code></pre>
+<p>Usamos <code>lazy_static</code> porque el evaluador de const de Rust aún no es lo suficientemente potente como para hacer esta inicialización en tiempo de compilación. Definimos que la entrada 0 de la IST es la pila de doble fallo (cualquier otro índice de IST también funcionaría). Luego, escribimos la dirección superior de una pila de doble fallo en la entrada 0. Escribimos la dirección superior porque las pilas en <code>x86</code> crecen hacia abajo, es decir, de direcciones altas a bajas.</p>
+<p>No hemos implementado la gestión de memoria aún, así que no tenemos una forma adecuada de asignar una nueva pila. En su lugar, usamos un array <code>static mut</code> como almacenamiento de pila por ahora. El <code>unsafe</code> es requerido porque el compilador no puede garantizar la ausencia de condiciones de carrera cuando se accede a estáticos mutables. Es importante que sea un <code>static mut</code> y no un <code>static</code> inmutable, porque de lo contrario el cargador de arranque lo mapeará a una página de solo lectura. Reemplazaremos esto con una asignación de pila adecuada en una publicación posterior, entonces el <code>unsafe</code> ya no será necesario en este lugar.</p>
+<p>Ten en cuenta que esta pila de doble fallo no tiene página de guardia que proteja contra el desbordamiento de pila. Esto significa que no deberíamos hacer nada intensivo en pila en nuestro controlador de doble fallo porque un desbordamiento de pila podría corromper la memoria debajo de la pila.</p>
+<h4 id="cargando-la-tss"><a class="zola-anchor" href="#cargando-la-tss" aria-label="Anchor link for: cargando-la-tss">🔗</a>Cargando la TSS</h4>
+<p>Ahora que hemos creado una nueva TSS, necesitamos una forma de decirle a la CPU que debe usarla. Desafortunadamente, esto es un poco engorroso ya que la TSS utiliza el sistema de segmentación (por razones históricas). En lugar de cargar la tabla directamente, necesitamos agregar un nuevo descriptor de segmento a la <a href="https://web.archive.org/web/20190217233448/https://www.flingos.co.uk/docs/reference/Global-Descriptor-Table/">Tabla Global de Descriptores</a> (GDT). Luego podemos cargar nuestra TSS invocando la instrucción <a href="https://www.felixcloutier.com/x86/ltr"><code>ltr</code></a> con el índice correspondiente de la GDT. (Esta es la razón por la que llamamos a nuestro módulo <code>gdt</code>).</p>
+<h3 id="la-tabla-global-de-descriptores"><a class="zola-anchor" href="#la-tabla-global-de-descriptores" aria-label="Anchor link for: la-tabla-global-de-descriptores">🔗</a>La Tabla Global de Descriptores</h3>
+<p>La Tabla Global de Descriptores (GDT) es un reliquia que se usaba para <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation">segmentación de memoria</a> antes de que la paginación se convirtiera en el estándar de facto. Sin embargo, todavía se necesita en modo de 64 bits para varias cosas, como la configuración del modo núcleo/usuario o la carga de la TSS.</p>
+<p>La GDT es una estructura que contiene los <em>segmentos</em> del programa. Se usaba en arquitecturas más antiguas para aislar programas unos de otros antes de que la paginación se convirtiera en el estándar. Para más información sobre segmentación, consulta el capítulo del mismo nombre en el libro gratuito <a href="http://pages.cs.wisc.edu/~remzi/OSTEP/">“Three Easy Pieces”</a>. Mientras que la segmentación ya no se admite en modo de 64 bits, la GDT sigue existiendo. Se utiliza principalmente para dos cosas: cambiar entre espacio de núcleo y espacio de usuario, y cargar una estructura TSS.</p>
+<h4 id="creando-una-gdt"><a class="zola-anchor" href="#creando-una-gdt" aria-label="Anchor link for: creando-una-gdt">🔗</a>Creando una GDT</h4>
+<p>Creemos una GDT estática que incluya un segmento para nuestra TSS estática:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/gdt.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::gdt::{GlobalDescriptorTable, Descriptor};
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">GDT</span><span>: GlobalDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> gdt = GlobalDescriptorTable::new();
+</span><span>        gdt.add_entry(Descriptor::kernel_code_segment());
+</span><span>        gdt.add_entry(Descriptor::tss_segment(</span><span style="color:#569cd6;">&amp;</span><span style="color:#b4cea8;">TSS</span><span>));
+</span><span>        gdt
+</span><span>    };
+</span><span>}
+</span></code></pre>
+<p>Como antes, usamos <code>lazy_static</code> de nuevo. Creamos una nueva GDT con un segmento de código y un segmento de TSS.</p>
+<h4 id="cargando-la-gdt"><a class="zola-anchor" href="#cargando-la-gdt" aria-label="Anchor link for: cargando-la-gdt">🔗</a>Cargando la GDT</h4>
+<p>Para cargar nuestra GDT, creamos una nueva función <code>gdt::init</code> que llamamos desde nuestra función <code>init</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/gdt.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    </span><span style="color:#b4cea8;">GDT</span><span>.load();
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// en src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    gdt::init();
+</span><span>    interrupts::init_idt();
+</span><span>}
+</span></code></pre>
+<p>Ahora nuestra GDT está cargada (ya que la función <code>_start</code> llama a <code>init</code>), pero aún vemos el bucle de arranque en el desbordamiento de pila.</p>
+<h3 id="los-pasos-finales"><a class="zola-anchor" href="#los-pasos-finales" aria-label="Anchor link for: los-pasos-finales">🔗</a>Los Pasos Finales</h3>
+<p>El problema es que los segmentos de la GDT aún no están activos porque los registros de segmento y TSS aún contienen los valores de la antigua GDT. También necesitamos modificar la entrada de IDT de doble fallo para que use la nueva pila.</p>
+<p>En resumen, necesitamos hacer lo siguiente:</p>
+<ol>
+<li><strong>Recargar el registro de segmento de código</strong>: Hemos cambiado nuestra GDT, así que deberíamos recargar <code>cs</code>, el registro del segmento de código. Esto es necesario porque el antiguo selector de segmento podría ahora apuntar a un descriptor de GDT diferente (por ejemplo, un descriptor de TSS).</li>
+<li><strong>Cargar la TSS</strong>: Cargamos una GDT que contiene un selector de TSS, pero aún necesitamos decirle a la CPU que debe usar esa TSS.</li>
+<li><strong>Actualizar la entrada de IDT</strong>: Tan pronto como nuestra TSS esté cargada, la CPU tendrá acceso a una tabla de pila de interrupciones (IST) válida. Luego podemos decirle a la CPU que debe usar nuestra nueva pila de doble fallo modificando nuestra entrada de IDT de doble fallo.</li>
+</ol>
+<p>Para los dos primeros pasos, necesitamos acceso a las variables <code>code_selector</code> y <code>tss_selector</code> en nuestra función <code>gdt::init</code>. Podemos lograr esto haciéndolas parte de la estática a través de una nueva estructura <code>Selectors</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/gdt.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::gdt::SegmentSelector;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">GDT</span><span>: (GlobalDescriptorTable, Selectors) = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> gdt = GlobalDescriptorTable::new();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
+</span><span>        </span><span style="color:#569cd6;">let</span><span> tss_selector = gdt.add_entry(Descriptor::tss_segment(</span><span style="color:#569cd6;">&amp;</span><span style="color:#b4cea8;">TSS</span><span>));
+</span><span>        (gdt, Selectors { code_selector, tss_selector })
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>Selectors {
+</span><span>    code_selector: SegmentSelector,
+</span><span>    tss_selector: SegmentSelector,
+</span><span>}
+</span></code></pre>
+<p>Ahora podemos usar los selectores para recargar el registro <code>cs</code> y cargar nuestra <code>TSS</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/gdt.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::tables::load_tss;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::segmentation::{</span><span style="color:#b4cea8;">CS</span><span>, Segment};
+</span><span>    
+</span><span>    </span><span style="color:#b4cea8;">GDT</span><span>.</span><span style="color:#b5cea8;">0.</span><span>load();
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">CS</span><span>::set_reg(</span><span style="color:#b4cea8;">GDT</span><span>.</span><span style="color:#b5cea8;">1.</span><span>code_selector);
+</span><span>        load_tss(</span><span style="color:#b4cea8;">GDT</span><span>.</span><span style="color:#b5cea8;">1.</span><span>tss_selector);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Recargamos el registro de segmento de código usando <a href="https://docs.rs/x86_64/0.14.5/x86_64/instructions/segmentation/struct.CS.html#method.set_reg"><code>CS::set_reg</code></a> y cargamos la TSS usando <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>. Las funciones están marcadas como <code>unsafe</code>, así que necesitamos un bloque <code>unsafe</code> para invocarlas. La razón es que podría ser posible romper la seguridad de la memoria al cargar selectores inválidos.</p>
+<p>Ahora que hemos cargado una TSS válida y una tabla de pila de interrupciones, podemos establecer el índice de pila para nuestro controlador de doble fallo en la IDT:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use crate</span><span>::gdt;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            idt.double_fault.set_handler_fn(double_fault_handler)
+</span><span>                .set_stack_index(gdt::</span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX</span><span>); </span><span style="color:#608b4e;">// nuevo
+</span><span>        }
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span></code></pre>
+<p>El método <code>set_stack_index</code> es inseguro porque el llamador debe asegurarse de que el índice utilizado es válido y no ya está usado para otra excepción.</p>
+<p>¡Eso es todo! Ahora la CPU debería cambiar a la pila de doble fallo cada vez que ocurra un doble fallo. Así que podemos capturar <em>todos</em> los dobles fallos, incluidos los desbordamientos de pila del núcleo:</p>
+<p><img src="https://os.phil-opp.com/es/double-fault-exceptions/qemu-double-fault-on-stack-overflow.png" alt="QEMU imprimiendo EXCEPCIÓN: DOBLE FALLO y un volcado del marco de pila de excepciones" /></p>
+<p>A partir de ahora, ¡no deberíamos ver un fallo triple nuevamente! Para asegurar que no rompamos accidentalmente lo anterior, deberíamos agregar una prueba para esto.</p>
+<h2 id="una-prueba-de-desbordamiento-de-pila"><a class="zola-anchor" href="#una-prueba-de-desbordamiento-de-pila" aria-label="Anchor link for: una-prueba-de-desbordamiento-de-pila">🔗</a>Una Prueba de Desbordamiento de Pila</h2>
+<p>Para probar nuestro nuevo módulo <code>gdt</code> y asegurarnos de que el controlador de doble fallo se llama correctamente en un desbordamiento de pila, podemos agregar una prueba de integración. La idea es provocar un doble fallo en la función de prueba y verificar que se llama al controlador de doble fallo.</p>
+<p>Comencemos con un esqueleto mínimo:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/stack_overflow.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span>#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    unimplemented!();
+</span><span>}
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    blog_os::test_panic_handler(info)
+</span><span>}
+</span></code></pre>
+<p>Al igual que nuestra prueba de <code>panic_handler</code>, la prueba se ejecutará <a href="https://os.phil-opp.com/testing/#no-harness-tests">sin un arnés de prueba</a>. La razón es que no podemos continuar la ejecución después de un doble fallo, así que más de una prueba no tiene sentido. Para desactivar el arnés de prueba para la prueba, agregamos lo siguiente a nuestro <code>Cargo.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
+</span><span>
+</span><span>[[</span><span style="color:#808080;">test</span><span>]]
+</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;stack_overflow&quot;
+</span><span style="color:#569cd6;">harness </span><span>= </span><span style="color:#569cd6;">false
+</span></code></pre>
+<p>Ahora <code>cargo test --test stack_overflow</code> debería compilar con éxito. La prueba falla, por supuesto, ya que el macro <code>unimplemented</code> provoca un pánico.</p>
+<h3 id="implementando-start"><a class="zola-anchor" href="#implementando-start" aria-label="Anchor link for: implementando-start">🔗</a>Implementando <code>_start</code></h3>
+<p>La implementación de la función <code>_start</code> se ve así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/stack_overflow.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::serial_print;
+</span><span>
+</span><span>#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;stack_overflow::stack_overflow...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::gdt::init();
+</span><span>    init_test_idt();
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// provocar un desbordamiento de pila
+</span><span>    stack_overflow();
+</span><span>
+</span><span>    panic!(</span><span style="color:#d69d85;">&quot;La ejecución continuó después del desbordamiento de pila&quot;</span><span>);
+</span><span>}
+</span><span>
+</span><span>#[allow(unconditional_recursion)]
+</span><span style="color:#569cd6;">fn </span><span>stack_overflow() {
+</span><span>    stack_overflow(); </span><span style="color:#608b4e;">// por cada recursión, la dirección de retorno es empujada
+</span><span>    volatile::Volatile::new(</span><span style="color:#b5cea8;">0</span><span>).read(); </span><span style="color:#608b4e;">// prevenir optimizaciones de recursión de cola
+</span><span>}
+</span></code></pre>
+<p>Llamamos a nuestra función <code>gdt::init</code> para inicializar una nueva GDT. En lugar de llamar a nuestra función <code>interrupts::init_idt</code>, llamamos a una función <code>init_test_idt</code> que se explicará en un momento. La función <code>stack_overflow</code> es casi idéntica a la función en nuestro <code>main.rs</code>. La única diferencia es que al final de la función, realizamos una lectura <a href="https://en.wikipedia.org/wiki/Volatile_(computer_programming)">volátil</a> adicional usando el tipo <a href="https://docs.rs/volatile/0.2.6/volatile/struct.Volatile.html"><code>Volatile</code></a> para prevenir una optimización del compilador llamada <a href="https://en.wikipedia.org/wiki/Tail_call"><em>eliminación de llamadas de cola</em></a>. Entre otras cosas, esta optimización permite al compilador transformar una función cuya última declaración es una llamada recursiva a una normal. Por lo tanto, no se crea un marco de pila adicional para la llamada a la función, así que el uso de la pila permanece constante.</p>
+<p>En nuestro caso, sin embargo, queremos que el desbordamiento de pila ocurra, así que agregamos una declaración de lectura volátil ficticia al final de la función, que el compilador no puede eliminar. Por lo tanto, la función ya no es <em>tail recursive</em>, y se previene la transformación en un bucle. También agregamos el atributo <code>allow(unconditional_recursion)</code> para silenciar la advertencia del compilador de que la función recurre sin fin.</p>
+<h3 id="la-idt-de-prueba"><a class="zola-anchor" href="#la-idt-de-prueba" aria-label="Anchor link for: la-idt-de-prueba">🔗</a>La IDT de Prueba</h3>
+<p>Como se mencionó anteriormente, la prueba necesita su propia IDT con un controlador de doble fallo personalizado. La implementación se ve así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/stack_overflow.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::InterruptDescriptorTable;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">TEST_IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            idt.double_fault
+</span><span>                .set_handler_fn(test_double_fault_handler)
+</span><span>                .set_stack_index(blog_os::gdt::</span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX</span><span>);
+</span><span>        }
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_test_idt() {
+</span><span>    </span><span style="color:#b4cea8;">TEST_IDT</span><span>.load();
+</span><span>}
+</span></code></pre>
+<p>La implementación es muy similar a nuestra IDT normal en <code>interrupts.rs</code>. Al igual que en la IDT normal, establecemos un índice de pila en la IST para el controlador de doble fallo con el fin de cambiar a una pila separada. La función <code>init_test_idt</code> carga la IDT en la CPU a través del método <code>load</code>.</p>
+<h3 id="el-controlador-de-doble-fallo"><a class="zola-anchor" href="#el-controlador-de-doble-fallo" aria-label="Anchor link for: el-controlador-de-doble-fallo">🔗</a>El Controlador de Doble Fallo</h3>
+<p>La única pieza que falta es nuestro controlador de doble fallo. Se ve así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/stack_overflow.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::{exit_qemu, QemuExitCode, serial_println};
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::InterruptStackFrame;
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>test_double_fault_handler(
+</span><span>    _stack_frame: InterruptStackFrame,
+</span><span>    _error_code: </span><span style="color:#569cd6;">u64</span><span>,
+</span><span>) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Cuando se llama al controlador de doble fallo, salimos de QEMU con un código de salida de éxito, lo que marca la prueba como pasada. Dado que las pruebas de integración son ejecutables completamente separadas, necesitamos establecer el atributo <code>#![feature(abi_x86_interrupt)]</code> nuevamente en la parte superior de nuestro archivo de prueba.</p>
+<p>Ahora podemos ejecutar nuestra prueba a través de <code>cargo test --test stack_overflow</code> (o <code>cargo test</code> para ejecutar todas las pruebas). Como era de esperar, vemos la salida de <code>stack_overflow... [ok]</code> en la consola. Intenta comentar la línea <code>set_stack_index</code>; debería hacer que la prueba falle.</p>
+<h2 id="resumen"><a class="zola-anchor" href="#resumen" aria-label="Anchor link for: resumen">🔗</a>Resumen</h2>
+<p>En esta publicación, aprendimos qué es un doble fallo y bajo qué condiciones ocurre. Agregamos un controlador básico de doble fallo que imprime un mensaje de error y añadimos una prueba de integración para ello.</p>
+<p>También habilitamos el cambio de pila soportado por hardware en excepciones de doble fallo para que también funcione en desbordamientos de pila. Mientras lo implementábamos, aprendimos sobre el segmento de estado de tarea (TSS), la tabla de pila de interrupciones (IST) que contiene, y la tabla global de descriptores (GDT), que se usaba para segmentación en arquitecturas anteriores.</p>
+<h2 id="que-sigue"><a class="zola-anchor" href="#que-sigue" aria-label="Anchor link for: que-sigue">🔗</a>¿Qué sigue?</h2>
+<p>La próxima publicación explica cómo manejar interrupciones de dispositivos externos como temporizadores, teclados o controladores de red. Estas interrupciones de hardware son muy similares a las excepciones, por ejemplo, también se despachan a través de la IDT. Sin embargo, a diferencia de las excepciones, no surgen directamente en la CPU. En su lugar, un <em>controlador de interrupciones</em> agrega estas interrupciones y las reenvía a la CPU según su prioridad. En la próxima publicación, exploraremos el <a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> (“PIC”) controlador de interrupciones y aprenderemos cómo implementar soporte para teclado.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Apóyame</h2>
+<p>Crear y mantener este blog y las bibliotecas asociadas es mucho trabajo, pero realmente disfruto haciéndolo. Al apoyarme, me permites invertir más tiempo en nuevo contenido, nuevas características y mantenimiento continuo. La mejor manera de apoyarme es <a href="https://github.com/sponsors/phil-opp"><em>patrocinarme en GitHub</em></a>. ¡Gracias!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/es/cpu-exceptions/">&laquo; Excepciones de CPU</a>
+        
+        
+            <a class="next" href="/es/hardware-interrupts/">Interrupciones de Hardware &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comentarios</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        ¿Tienes algún problema, quieres compartir comentarios o discutir más ideas? ¡No dudes en dejar un comentario aquí! Por favor, utiliza inglés y sigue el <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conducta</a> de Rust. Este hilo de comentarios se vincula directamente con una <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Double%20Faults%20%28es%29%22%20in%3Atitle"><em>discusión en GitHub</em></a>, así que también puedes comentar allí si lo prefieres.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Double Faults (es)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="es"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Double%20Faults%20%28es%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Por favor deja tus comentarios en inglés si es posible.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/double-fault-exceptions/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/double-fault-exceptions/">
+                        Chinese (simplified)
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/double-fault-exceptions/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/double-fault-exceptions/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/double-fault-exceptions/">
+                        Korean
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

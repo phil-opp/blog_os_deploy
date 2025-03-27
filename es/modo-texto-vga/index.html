@@ -1,0 +1,453 @@
+<!doctype html>
+
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="El modo de texto VGA es una forma sencilla de imprimir texto en la pantalla. En esta publicación, creamos una interfaz que hace que su uso sea seguro …">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/es/modo-texto-vga/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Modo de Texto VGA | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/es" title="All Posts">« Todos los Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Tabla de Contenidos</h2>
+    <ol>
+        <li>
+            <a href="#el-buffer-de-texto-vga">El Buffer de Texto VGA</a>
+            
+        </li><li>
+            <a href="#un-modulo-de-rust">Un Módulo de Rust</a>
+            <ol>
+                <li>
+                    <a href="#colores">Colores</a>
+                </li><li>
+                    <a href="#buffer-de-texto">Buffer de Texto</a>
+                </li><li>
+                    <a href="#impresion">Impresión</a>
+                </li><li>
+                    <a href="#volatil">Volátil</a>
+                </li>
+            </ol>
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Modo de Texto VGA</h1>
+    <time datetime="2018-02-26" class="post-date">
+        Feb 26, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Contenido Traducido:</b>
+            Esta es una traducción comunitaria del post <strong><a href="https://os.phil-opp.com/vga-text-mode/">VGA Text Mode</a></strong>. Puede estar incompleta, desactualizada o contener errores. ¡Por favor reporta cualquier problema!
+            </p>
+            <p>
+                Traducción por <a href="https://github.com/dobleuber">@dobleuber</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>El <a href="https://en.wikipedia.org/wiki/VGA-compatible_text_mode">modo de texto VGA</a> es una forma sencilla de imprimir texto en la pantalla. En esta publicación, creamos una interfaz que hace que su uso sea seguro y simple al encapsular toda la inseguridad en un módulo separado. También implementamos soporte para los <a href="https://doc.rust-lang.org/std/fmt/#related-macros">macros de formato</a> de Rust.</p>
+<span id="continue-reading"></span>
+<p>Este blog se desarrolla abiertamente en <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Si tienes algún problema o pregunta, por favor abre un issue allí. También puedes dejar comentarios <a href="https://os.phil-opp.com/es/modo-texto-vga/#comments">al final</a>. El código fuente completo para esta publicación se puede encontrar en la rama <a href="https://github.com/phil-opp/blog_os/tree/post-03"><code>post-03</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Tabla de Contenidos</b></summary>
+        <ul>
+            <li>
+                <a href="#el-buffer-de-texto-vga">El Buffer de Texto VGA</a>
+                
+            </li><li>
+                <a href="#un-modulo-de-rust">Un Módulo de Rust</a>
+                <ul>
+                    <li>
+                        <a href="#colores">Colores</a>
+                    </li><li>
+                        <a href="#buffer-de-texto">Buffer de Texto</a>
+                    </li><li>
+                        <a href="#impresion">Impresión</a>
+                    </li><li>
+                        <a href="#volatil">Volátil</a>
+                    </li>
+                </ul>
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+        </ul>
+    </details>
+
+<h2 id="el-buffer-de-texto-vga"><a class="zola-anchor" href="#el-buffer-de-texto-vga" aria-label="Anchor link for: el-buffer-de-texto-vga">🔗</a>El Buffer de Texto VGA</h2>
+<p>Para imprimir un carácter en la pantalla en modo de texto VGA, uno tiene que escribirlo en el buffer de texto del hardware VGA. El buffer de texto VGA es un arreglo bidimensional con típicamente 25 filas y 80 columnas, que se renderiza directamente en la pantalla. Cada entrada del arreglo describe un solo carácter de pantalla a través del siguiente formato:</p>
+<table><thead><tr><th>Bit(s)</th><th>Valor</th></tr></thead><tbody>
+<tr><td>0-7</td><td>Código de punto ASCII</td></tr>
+<tr><td>8-11</td><td>Color de primer plano</td></tr>
+<tr><td>12-14</td><td>Color de fondo</td></tr>
+<tr><td>15</td><td>Parpadeo</td></tr>
+</tbody></table>
+<p>El primer byte representa el carácter que debe imprimirse en la <a href="https://en.wikipedia.org/wiki/ASCII">codificación ASCII</a>. Para ser más específicos, no es exactamente ASCII, sino un conjunto de caracteres llamado <a href="https://en.wikipedia.org/wiki/Code_page_437"><em>página de códigos 437</em></a> con algunos caracteres adicionales y ligeras modificaciones. Para simplificar, procederemos a llamarlo un carácter ASCII en esta publicación.</p>
+<p>El segundo byte define cómo se muestra el carácter. Los primeros cuatro bits definen el color de primer plano, los siguientes tres bits el color de fondo, y el último bit si el carácter debe parpadear. Los siguientes colores están disponibles:</p>
+<table><thead><tr><th>Número</th><th>Color</th><th>Número + Bit de Brillo</th><th>Color Brillante</th></tr></thead><tbody>
+<tr><td>0x0</td><td>Negro</td><td>0x8</td><td>Gris Oscuro</td></tr>
+<tr><td>0x1</td><td>Azul</td><td>0x9</td><td>Azul Claro</td></tr>
+<tr><td>0x2</td><td>Verde</td><td>0xa</td><td>Verde Claro</td></tr>
+<tr><td>0x3</td><td>Cian</td><td>0xb</td><td>Cian Claro</td></tr>
+<tr><td>0x4</td><td>Rojo</td><td>0xc</td><td>Rojo Claro</td></tr>
+<tr><td>0x5</td><td>Magenta</td><td>0xd</td><td>Magenta Claro</td></tr>
+<tr><td>0x6</td><td>Marrón</td><td>0xe</td><td>Amarillo</td></tr>
+<tr><td>0x7</td><td>Gris Claro</td><td>0xf</td><td>Blanco</td></tr>
+</tbody></table>
+<p>Bit 4 es el <em>bit de brillo</em>, que convierte, por ejemplo, azul en azul claro. Para el color de fondo, este bit se reutiliza como el bit de parpadeo.</p>
+<p>El buffer de texto VGA es accesible a través de <a href="https://en.wikipedia.org/wiki/Memory-mapped_I/O">E/S mapeada en memoria</a> a la dirección <code>0xb8000</code>. Esto significa que las lecturas y escrituras a esa dirección no acceden a la RAM, sino que acceden directamente al buffer de texto en el hardware VGA. Esto significa que podemos leer y escribir a través de operaciones de memoria normales a esa dirección.</p>
+<p>Ten en cuenta que el hardware mapeado en memoria podría no soportar todas las operaciones normales de RAM. Por ejemplo, un dispositivo podría soportar solo lecturas por byte y devolver basura cuando se lee un <code>u64</code>. Afortunadamente, el buffer de texto <a href="https://web.stanford.edu/class/cs140/projects/pintos/specs/freevga/vga/vgamem.htm#manip">soporta lecturas y escrituras normales</a>, por lo que no tenemos que tratarlo de una manera especial.</p>
+<h2 id="un-modulo-de-rust"><a class="zola-anchor" href="#un-modulo-de-rust" aria-label="Anchor link for: un-modulo-de-rust">🔗</a>Un Módulo de Rust</h2>
+<p>Ahora que sabemos cómo funciona el buffer VGA, podemos crear un módulo de Rust para manejar la impresión:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span style="color:#569cd6;">mod </span><span>vga_buffer;
+</span></code></pre>
+<p>Para el contenido de este módulo, creamos un nuevo archivo <code>src/vga_buffer.rs</code>. Todo el código a continuación va en nuestro nuevo módulo (a menos que se especifique lo contrario).</p>
+<h3 id="colores"><a class="zola-anchor" href="#colores" aria-label="Anchor link for: colores">🔗</a>Colores</h3>
+<p>Primero, representamos los diferentes colores usando un enum:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span>#[allow(dead_code)]
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(u8)]
+</span><span style="color:#569cd6;">pub enum </span><span>Color {
+</span><span>    Black = </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>    Blue = </span><span style="color:#b5cea8;">1</span><span>,
+</span><span>    Green = </span><span style="color:#b5cea8;">2</span><span>,
+</span><span>    Cyan = </span><span style="color:#b5cea8;">3</span><span>,
+</span><span>    Red = </span><span style="color:#b5cea8;">4</span><span>,
+</span><span>    Magenta = </span><span style="color:#b5cea8;">5</span><span>,
+</span><span>    Brown = </span><span style="color:#b5cea8;">6</span><span>,
+</span><span>    LightGray = </span><span style="color:#b5cea8;">7</span><span>,
+</span><span>    DarkGray = </span><span style="color:#b5cea8;">8</span><span>,
+</span><span>    LightBlue = </span><span style="color:#b5cea8;">9</span><span>,
+</span><span>    LightGreen = </span><span style="color:#b5cea8;">10</span><span>,
+</span><span>    LightCyan = </span><span style="color:#b5cea8;">11</span><span>,
+</span><span>    LightRed = </span><span style="color:#b5cea8;">12</span><span>,
+</span><span>    Pink = </span><span style="color:#b5cea8;">13</span><span>,
+</span><span>    Yellow = </span><span style="color:#b5cea8;">14</span><span>,
+</span><span>    White = </span><span style="color:#b5cea8;">15</span><span>,
+</span><span>}
+</span></code></pre>
+<p>Usamos un <a href="https://doc.rust-lang.org/rust-by-example/custom_types/enum/c_like.html">enum similar a C</a> aquí para especificar explícitamente el número para cada color. Debido al atributo <code>repr(u8)</code>, cada variante del enum se almacena como un <code>u8</code>. En realidad, 4 bits serían suficientes, pero Rust no tiene un tipo <code>u4</code>.</p>
+<p>Normalmente, el compilador emitiría una advertencia por cada variante no utilizada. Al usar el atributo <code>#[allow(dead_code)]</code>, deshabilitamos estas advertencias para el enum <code>Color</code>.</p>
+<p>Al <a href="https://doc.rust-lang.org/rust-by-example/trait/derive.html">derivar</a> los rasgos <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><code>Copy</code></a>, <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html"><code>Clone</code></a>, [<code>Debug</code>], [<code>PartialEq</code>], y [<code>Eq</code>], habilitamos la [semántica de copia] para el tipo y lo hacemos imprimible y comparable.</p>
+<p>Para representar un código de color completo que especifique el color de primer plano y de fondo, creamos un <a href="https://doc.rust-lang.org/rust-by-example/generics/new_types.html">nuevo tipo</a> sobre <code>u8</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(transparent)]
+</span><span style="color:#569cd6;">struct </span><span>ColorCode(</span><span style="color:#569cd6;">u8</span><span>);
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>ColorCode {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>new(foreground: Color, background: Color) -&gt; ColorCode {
+</span><span>        ColorCode((background </span><span style="color:#569cd6;">as u8</span><span>) &lt;&lt; </span><span style="color:#b5cea8;">4 </span><span style="color:#569cd6;">| </span><span>(foreground </span><span style="color:#569cd6;">as u8</span><span>))
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>La estructura <code>ColorCode</code> contiene el byte de color completo, que incluye el color de primer plano y de fondo. Como antes, derivamos los rasgos <code>Copy</code> y <code>Debug</code> para él. Para asegurar que <code>ColorCode</code> tenga el mismo diseño de datos exacto que un <code>u8</code>, usamos el atributo <a href="https://doc.rust-lang.org/nomicon/other-reprs.html#reprtransparent"><code>repr(transparent)</code></a>.</p>
+<h3 id="buffer-de-texto"><a class="zola-anchor" href="#buffer-de-texto" aria-label="Anchor link for: buffer-de-texto">🔗</a>Buffer de Texto</h3>
+<p>Ahora podemos agregar estructuras para representar un carácter de pantalla y el buffer de texto:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(C)]
+</span><span style="color:#569cd6;">struct </span><span>ScreenChar {
+</span><span>    ascii_character: </span><span style="color:#569cd6;">u8</span><span>,
+</span><span>    color_code: ColorCode,
+</span><span>}
+</span></code></pre>
+<p>Dado que el orden de los campos en las estructuras predeterminadas no está definido en Rust, necesitamos el atributo <a href="https://doc.rust-lang.org/nightly/nomicon/other-reprs.html#reprc"><code>repr(C)</code></a>. Garantiza que los campos de la estructura se dispongan exactamente como en una estructura C y, por lo tanto, garantiza el orden correcto de los campos. Para la estructura <code>Buffer</code>, usamos <a href="https://doc.rust-lang.org/nomicon/other-reprs.html#reprtransparent"><code>repr(transparent)</code></a> nuevamente para asegurar que tenga el mismo diseño de memoria que su único campo.</p>
+<p>Para escribir en pantalla, ahora creamos un tipo de escritor:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>Writer {
+</span><span>    column_position: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    color_code: ColorCode,
+</span><span>    buffer: </span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> Buffer,
+</span><span>}
+</span></code></pre>
+<p>El escritor siempre escribirá en la última línea y desplazará las líneas hacia arriba cuando una línea esté llena (o en <code>\n</code>). El campo <code>column_position</code> lleva un seguimiento de la posición actual en la última fila. Los colores de primer plano y de fondo actuales están especificados por <code>color_code</code> y una referencia al buffer VGA está almacenada en <code>buffer</code>. Ten en cuenta que necesitamos una <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html#lifetime-annotation-syntax">vida útil explícita</a> aquí para decirle al compilador cuánto tiempo es válida la referencia. La vida útil <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html#the-static-lifetime"><code>'static</code></a> especifica que la referencia es válida durante todo el tiempo de ejecución del programa (lo cual es cierto para el buffer de texto VGA).</p>
+<h3 id="impresion"><a class="zola-anchor" href="#impresion" aria-label="Anchor link for: impresion">🔗</a>Impresión</h3>
+<p>Ahora podemos usar el <code>Writer</code> para modificar los caracteres del buffer. Primero creamos un método para escribir un solo byte ASCII:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>write_byte(</span><span style="color:#569cd6;">&amp;mut </span><span>self, byte: </span><span style="color:#569cd6;">u8</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">match</span><span> byte {
+</span><span>            </span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&#39;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&#39; </span><span style="color:#569cd6;">=&gt; </span><span>self.new_line(),
+</span><span>            byte </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                </span><span style="color:#569cd6;">if </span><span>self.column_position &gt;= </span><span style="color:#b4cea8;">BUFFER_WIDTH </span><span>{
+</span><span>                    self.new_line();
+</span><span>                }
+</span><span>
+</span><span>                </span><span style="color:#569cd6;">let</span><span> row = </span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>                </span><span style="color:#569cd6;">let</span><span> col = self.column_position;
+</span><span>
+</span><span>                </span><span style="color:#569cd6;">let</span><span> color_code = self.color_code;
+</span><span>                self.buffer.chars[row][col].write(ScreenChar {
+</span><span>                    ascii_character: byte,
+</span><span>                    color_code,
+</span><span>                });
+</span><span>                self.column_position += </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>new_line(</span><span style="color:#569cd6;">&amp;mut </span><span>self) {</span><span style="color:#608b4e;">/* TODO */</span><span>}
+</span><span>}
+</span></code></pre>
+<p>Si el byte es el byte de <a href="https://en.wikipedia.org/wiki/Newline">nueva línea</a> <code>\n</code>, el escritor no imprime nada. En su lugar, llama a un método <code>new_line</code>, que implementaremos más tarde. Otros bytes se imprimen en la pantalla en el segundo caso de <code>match</code>.</p>
+<p>Al imprimir un byte, el escritor verifica si la línea actual está llena. En ese caso, se usa una llamada a <code>new_line</code> para envolver la línea. Luego escribe un nuevo <code>ScreenChar</code> en el buffer en la posición actual. Finalmente, se avanza la posición de la columna actual.</p>
+<p>Para imprimir cadenas completas, podemos convertirlas en bytes e imprimirlas una por una:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>write_string(</span><span style="color:#569cd6;">&amp;mut </span><span>self, s: </span><span style="color:#569cd6;">&amp;str</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">for</span><span> byte </span><span style="color:#569cd6;">in</span><span> s.bytes() {
+</span><span>            </span><span style="color:#569cd6;">match</span><span> byte {
+</span><span>                </span><span style="color:#608b4e;">// byte ASCII imprimible o nueva línea
+</span><span>                </span><span style="color:#b5cea8;">0x20</span><span style="color:#569cd6;">..</span><span>=</span><span style="color:#b5cea8;">0x7e </span><span style="color:#569cd6;">| b</span><span style="color:#d69d85;">&#39;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&#39; </span><span style="color:#569cd6;">=&gt; </span><span>self.write_byte(byte),
+</span><span>                </span><span style="color:#608b4e;">// no es parte del rango ASCII imprimible
+</span><span>                </span><span style="color:#569cd6;">_ =&gt; </span><span>self.write_byte(</span><span style="color:#b5cea8;">0xfe</span><span>),
+</span><span>            }
+</span><span>
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>El buffer de texto VGA solo soporta ASCII y los bytes adicionales de <a href="https://en.wikipedia.org/wiki/Code_page_437">página de códigos 437</a>. Las cadenas de Rust son <a href="https://www.fileformat.info/info/unicode/utf8.htm">UTF-8</a> por defecto, por lo que podrían contener bytes que no son soportados por el buffer de texto VGA. Usamos un <code>match</code> para diferenciar los bytes ASCII imprimibles (una nueva línea o cualquier cosa entre un carácter de espacio y un carácter <code>~</code>) y los bytes no imprimibles. Para los bytes no imprimibles, imprimimos un carácter <code>■</code>, que tiene el código hexadecimal <code>0xfe</code> en el hardware VGA.</p>
+<h4 id="pruebalo"><a class="zola-anchor" href="#pruebalo" aria-label="Anchor link for: pruebalo">🔗</a>¡Pruébalo!</h4>
+<p>Para escribir algunos caracteres en la pantalla, puedes crear una función temporal:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>print_something() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> writer = Writer {
+</span><span>        column_position: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        color_code: ColorCode::new(Color::Yellow, Color::Black),
+</span><span>        buffer: </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*(</span><span style="color:#b5cea8;">0xb8000 </span><span style="color:#569cd6;">as *mut</span><span> Buffer) },
+</span><span>    };
+</span><span>
+</span><span>    writer.write_byte(</span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&#39;H&#39;</span><span>);
+</span><span>    writer.write_string(</span><span style="color:#d69d85;">&quot;ello &quot;</span><span>);
+</span><span>    writer.write_string(</span><span style="color:#d69d85;">&quot;Wörld!&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Primero crea un nuevo Writer que apunta al buffer VGA en <code>0xb8000</code>. La sintaxis para esto podría parecer un poco extraña: Primero, convertimos el entero <code>0xb8000</code> como un <a href="https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html#dereferencing-a-raw-pointer">puntero sin procesar</a> mutable. Luego lo convertimos en una referencia mutable al desreferenciarlo (a través de <code>*</code>) y tomarlo prestado inmediatamente (a través de <code>&amp;mut</code>). Esta conversión requiere un <a href="https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html">bloque <code>unsafe</code></a>, ya que el compilador no puede garantizar que el puntero sin procesar sea válido.</p>
+<p>Luego escribe el byte <code>b'H'</code> en él. El prefijo <code>b</code> crea un <a href="https://doc.rust-lang.org/reference/tokens.html#byte-literals">literal de byte</a>, que representa un carácter ASCII. Al escribir las cadenas <code>"ello "</code> y <code>"Wörld!"</code>, probamos nuestro método <code>write_string</code> y el manejo de caracteres no imprimibles. Para ver la salida, necesitamos llamar a la función <code>print_something</code> desde nuestra función <code>_start</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span>#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    vga_buffer::print_something();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Cuando ejecutamos nuestro proyecto ahora, se debería imprimir un <code>Hello W■■rld!</code> en la esquina inferior izquierda de la pantalla en amarillo:</p>
+<p><img src="https://os.phil-opp.com/es/modo-texto-vga/vga-hello.png" alt="Salida de QEMU con un Hello W■■rld! en amarillo en la esquina inferior izquierda" /></p>
+<p>Observa que la <code>ö</code> se imprime como dos caracteres <code>■</code>. Eso es porque <code>ö</code> está representado por dos bytes en <a href="https://www.fileformat.info/info/unicode/utf8.htm">UTF-8</a>, los cuales no caen en el rango ASCII imprimible. De hecho, esta es una propiedad fundamental de UTF-8: los bytes individuales de valores multibyte nunca son ASCII válidos.</p>
+<h3 id="volatil"><a class="zola-anchor" href="#volatil" aria-label="Anchor link for: volatil">🔗</a>Volátil</h3>
+<p>Acabamos de ver que nuestro mensaje se imprimió correctamente. Sin embargo, podría no funcionar con futuros compiladores de Rust que optimicen más agresivamente.</p>
+<p>El problema es que solo escribimos en el <code>Buffer</code> y nunca leemos de él nuevamente. El compilador no sabe que realmente accedemos a la memoria del buffer VGA (en lugar de la RAM normal) y no sabe nada sobre el efecto secundario de que algunos caracteres aparezcan en la pantalla. Por lo tanto, podría decidir que estas escrituras son innecesarias y pueden omitirse. Para evitar esta optimización errónea, necesitamos especificar estas escrituras como <em><a href="https://en.wikipedia.org/wiki/Volatile_(computer_programming)">volátiles</a></em>. Esto le dice al compilador que la escritura tiene efectos secundarios y no debe ser optimizada.</p>
+<p>Para usar escrituras volátiles para el buffer VGA, usamos la biblioteca <a href="https://docs.rs/volatile">volatile</a>. Este <em>crate</em> (así es como se llaman los paquetes en el mundo de Rust) proporciona un tipo de envoltura <code>Volatile</code> con métodos <code>read</code> y <code>write</code>. Estos métodos usan internamente las funciones <a href="https://doc.rust-lang.org/nightly/core/ptr/fn.read_volatile.html">read_volatile</a> y <a href="https://doc.rust-lang.org/nightly/core/ptr/fn.write_volatile.html">write_volatile</a> de la biblioteca principal y, por lo tanto, garantizan que las lecturas/escrituras no sean optimizadas.</p>
+<p>Podemos agregar una dependencia en el crate <code>volatile</code> agregándolo a la sección <code>dependencies</code> de nuestro <code>Cargo.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">volatile </span><span>= </span><span style="color:#d69d85;">&quot;0.2.6&quot;
+</span></code></pre>
+<p>Asegúrate de especificar la versión <code>0.2.6</code> de <code>volatile</code>. Las versiones más nuevas del crate no son compatibles con esta publicación.
+<code>0.2.6</code> es el número de versión <a href="https://semver.org/">semántica</a>. Para más información, consulta la guía <a href="https://doc.crates.io/specifying-dependencies.html">Especificar Dependencias</a> de la documentación de cargo.</p>
+<p>Vamos a usarlo para hacer que las escrituras al buffer VGA sean volátiles. Actualizamos nuestro tipo <code>Buffer</code> de la siguiente manera:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>volatile::Volatile;
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>Buffer {
+</span><span>    chars: [[Volatile&lt;ScreenChar&gt;; BUFFER_WIDTH]; BUFFER_HEIGHT],
+</span><span>}
+</span></code></pre>
+<p>En lugar de un <code>ScreenChar</code>, ahora estamos usando un <code>Volatile&lt;ScreenChar&gt;</code>. (El tipo <code>Volatile</code> es <a href="https://doc.rust-lang.org/book/ch10-01-syntax.html">genérico</a> y puede envolver (casi) cualquier tipo). Esto asegura que no podamos escribir accidentalmente en él “normalmente”. En su lugar, ahora tenemos que usar el método <code>write</code>.</p>
+<p>Esto significa que tenemos que actualizar nuestro método <code>Writer::write_byte</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>write_byte(</span><span style="color:#569cd6;">&amp;mut </span><span>self, byte: </span><span style="color:#569cd6;">u8</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">match</span><span> byte {
+</span><span>            </span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&#39;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&#39; </span><span style="color:#569cd6;">=&gt; </span><span>self.new_line(),
+</span><span>            byte </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                </span><span style="color:#569cd6;">...
+</span><span>
+</span><span>                self.buffer.chars[row][col].write(ScreenChar {
+</span><span>                    ascii_character: byte,
+</span><span>                    color_code,
+</span><span>                });
+</span><span>                </span><span style="color:#569cd6;">...
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>    </span><span style="color:#569cd6;">...
+</span><span>}
+</span></code></pre>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Apóyame</h2>
+<p>Crear y mantener este blog y las bibliotecas asociadas es mucho trabajo, pero realmente disfruto haciéndolo. Al apoyarme, me permites invertir más tiempo en nuevo contenido, nuevas características y mantenimiento continuo. La mejor manera de apoyarme es <a href="https://github.com/sponsors/phil-opp"><em>patrocinarme en GitHub</em></a>. ¡Gracias!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/es/minimal-rust-kernel/">&laquo; Un Kernel Mínimo en Rust</a>
+        
+        
+            <a class="next" href="/es/testing/">Pruebas &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comentarios</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        ¿Tienes algún problema, quieres compartir comentarios o discutir más ideas? ¡No dudes en dejar un comentario aquí! Por favor, utiliza inglés y sigue el <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conducta</a> de Rust. Este hilo de comentarios se vincula directamente con una <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22VGA%20Text%20Mode%20%28es%29%22%20in%3Atitle"><em>discusión en GitHub</em></a>, así que también puedes comentar allí si lo prefieres.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="VGA Text Mode (es)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="es"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22VGA%20Text%20Mode%20%28es%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Por favor deja tus comentarios en inglés si es posible.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/vga-text-mode/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/vga-text-mode/">
+                        Chinese (simplified)
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/vga-text-mode/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/vga-text-mode/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/vga-text-mode/">
+                        Korean
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

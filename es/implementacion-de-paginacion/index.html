@@ -1,0 +1,920 @@
+<!doctype html>
+
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Esta publicación muestra cómo implementar soporte para paginación en nuestro núcleo. Primero explora diferentes técnicas para hacer accesibles los mar…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/es/implementacion-de-paginacion/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Implementación de Paginación | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/es" title="All Posts">« Todos los Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Tabla de Contenidos</h2>
+    <ol>
+        <li>
+            <a href="#introduccion">Introducción</a>
+            
+        </li><li>
+            <a href="#accediendo-a-las-tablas-de-paginas">Accediendo a las Tablas de Páginas</a>
+            <ol>
+                <li>
+                    <a href="#mapeo-de-identidad">Mapeo de Identidad</a>
+                </li><li>
+                    <a href="#mapear-en-un-desplazamiento-fijo">Mapear en un Desplazamiento Fijo</a>
+                </li><li>
+                    <a href="#mapear-la-memoria-fisica-completa">Mapear la Memoria Física Completa</a>
+                </li><li>
+                    <a href="#mapeo-temporal">Mapeo Temporal</a>
+                </li><li>
+                    <a href="#tablas-de-paginas-recursivas">Tablas de Páginas Recursivas</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#soporte-del-bootloader">Soporte del Bootloader</a>
+            <ol>
+                <li>
+                    <a href="#informacion-de-boot">Información de Boot</a>
+                </li><li>
+                    <a href="#el-macro-entry-point">El Macro entry_point</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#implementacion">Implementación</a>
+            <ol>
+                <li>
+                    <a href="#accediendo-a-las-tablas-de-paginas-1">Accediendo a las Tablas de Páginas</a>
+                </li><li>
+                    <a href="#traduciendo-direcciones">Traduciendo Direcciones</a>
+                </li><li>
+                    <a href="#usando-offsetpagetable">Usando OffsetPageTable</a>
+                </li><li>
+                    <a href="#creando-un-nuevo-mapeo">Creando un Nuevo Mapeo</a>
+                </li><li>
+                    <a href="#asignacion-de-marcos">Asignación de Marcos</a>
+                </li>
+            </ol>
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Implementación de Paginación</h1>
+    <time datetime="2019-03-14" class="post-date">
+        Mar 14, 2019
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Contenido Traducido:</b>
+            Esta es una traducción comunitaria del post <strong><a href="https://os.phil-opp.com/paging-implementation/">Paging Implementation</a></strong>. Puede estar incompleta, desactualizada o contener errores. ¡Por favor reporta cualquier problema!
+            </p>
+            <p>
+                Traducción por <a href="https://github.com/dobleuber">@dobleuber</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Esta publicación muestra cómo implementar soporte para paginación en nuestro núcleo. Primero explora diferentes técnicas para hacer accesibles los marcos de la tabla de páginas físicas al núcleo y discute sus respectivas ventajas y desventajas. Luego implementa una función de traducción de direcciones y una función para crear un nuevo mapeo.</p>
+<span id="continue-reading"></span>
+<p>Este blog se desarrolla abiertamente en <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Si tienes algún problema o pregunta, abre un problema allí. También puedes dejar comentarios <a href="https://os.phil-opp.com/es/implementacion-de-paginacion/#comments">al final</a>. El código fuente completo de esta publicación se puede encontrar en la rama <a href="https://github.com/phil-opp/blog_os/tree/post-09"><code>post-09</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Tabla de Contenidos</b></summary>
+        <ul>
+            <li>
+                <a href="#introduccion">Introducción</a>
+                
+            </li><li>
+                <a href="#accediendo-a-las-tablas-de-paginas">Accediendo a las Tablas de Páginas</a>
+                <ul>
+                    <li>
+                        <a href="#mapeo-de-identidad">Mapeo de Identidad</a>
+                    </li><li>
+                        <a href="#mapear-en-un-desplazamiento-fijo">Mapear en un Desplazamiento Fijo</a>
+                    </li><li>
+                        <a href="#mapear-la-memoria-fisica-completa">Mapear la Memoria Física Completa</a>
+                    </li><li>
+                        <a href="#mapeo-temporal">Mapeo Temporal</a>
+                    </li><li>
+                        <a href="#tablas-de-paginas-recursivas">Tablas de Páginas Recursivas</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#soporte-del-bootloader">Soporte del Bootloader</a>
+                <ul>
+                    <li>
+                        <a href="#informacion-de-boot">Información de Boot</a>
+                    </li><li>
+                        <a href="#el-macro-entry-point">El Macro entry_point</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#implementacion">Implementación</a>
+                <ul>
+                    <li>
+                        <a href="#accediendo-a-las-tablas-de-paginas-1">Accediendo a las Tablas de Páginas</a>
+                    </li><li>
+                        <a href="#traduciendo-direcciones">Traduciendo Direcciones</a>
+                    </li><li>
+                        <a href="#usando-offsetpagetable">Usando OffsetPageTable</a>
+                    </li><li>
+                        <a href="#creando-un-nuevo-mapeo">Creando un Nuevo Mapeo</a>
+                    </li><li>
+                        <a href="#asignacion-de-marcos">Asignación de Marcos</a>
+                    </li>
+                </ul>
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+        </ul>
+    </details>
+
+<h2 id="introduccion"><a class="zola-anchor" href="#introduccion" aria-label="Anchor link for: introduccion">🔗</a>Introducción</h2>
+<p>La <a href="https://os.phil-opp.com/paging-introduction/">publicación anterior</a> dio una introducción al concepto de paginación. Motivó la paginación comparándola con la segmentación, explicó cómo funcionan la paginación y las tablas de páginas, y luego introdujo el diseño de tabla de páginas de 4 niveles de <code>x86_64</code>. Descubrimos que el bootloader (cargador de arranque) ya configuró una jerarquía de tablas de páginas para nuestro núcleo, lo que significa que nuestro núcleo ya se ejecuta en direcciones virtuales. Esto mejora la seguridad, ya que los accesos ilegales a la memoria causan excepciones de falta de página en lugar de modificar la memoria física arbitraria.</p>
+<p>La publicación terminó con el problema de que <a href="https://os.phil-opp.com/paging-introduction/#accessing-the-page-tables">no podemos acceder a las tablas de páginas desde nuestro núcleo</a> porque se almacenan en la memoria física y nuestro núcleo ya se ejecuta en direcciones virtuales. Esta publicación explora diferentes enfoques para hacer los marcos de la tabla de páginas accesibles a nuestro núcleo. Discutiremos las ventajas y desventajas de cada enfoque y luego decidiremos un enfoque para nuestro núcleo.</p>
+<p>Para implementar el enfoque, necesitaremos el soporte del bootloader, así que lo configuraremos primero. Después, implementaremos una función que recorra la jerarquía de tablas de páginas para traducir direcciones virtuales a físicas. Finalmente, aprenderemos a crear nuevos mapeos en las tablas de páginas y a encontrar marcos de memoria no utilizados para crear nuevas tablas de páginas.</p>
+<h2 id="accediendo-a-las-tablas-de-paginas"><a class="zola-anchor" href="#accediendo-a-las-tablas-de-paginas" aria-label="Anchor link for: accediendo-a-las-tablas-de-paginas">🔗</a>Accediendo a las Tablas de Páginas</h2>
+<p>Acceder a las tablas de páginas desde nuestro núcleo no es tan fácil como podría parecer. Para entender el problema, echemos un vistazo a la jerarquía de tablas de páginas de 4 niveles del artículo anterior nuevamente:</p>
+<p><img src="../paging-introduction/x86_64-page-table-translation.svg" alt="Un ejemplo de una jerarquía de página de 4 niveles con cada tabla de páginas mostrada en memoria física" /></p>
+<p>Lo importante aquí es que cada entrada de página almacena la dirección <em>física</em> de la siguiente tabla. Esto evita la necesidad de hacer una traducción para estas direcciones también, lo cual sería malo para el rendimiento y podría fácilmente causar bucles de traducción infinitos.</p>
+<p>El problema para nosotros es que no podemos acceder directamente a las direcciones físicas desde nuestro núcleo, ya que nuestro núcleo también se ejecuta sobre direcciones virtuales. Por ejemplo, cuando accedemos a la dirección <code>4 KiB</code>, accedemos a la dirección <em>virtual</em> <code>4 KiB</code>, no a la dirección <em>física</em> <code>4 KiB</code> donde se almacena la tabla de páginas de nivel 4. Cuando queremos acceder a la dirección física <code>4 KiB</code>, solo podemos hacerlo a través de alguna dirección virtual que mapea a ella.</p>
+<p>Así que, para acceder a los marcos de la tabla de páginas, necesitamos mapear algunas páginas virtuales a ellos. Hay diferentes formas de crear estos mapeos que nos permiten acceder a marcos arbitrarios de la tabla de páginas.</p>
+<h3 id="mapeo-de-identidad"><a class="zola-anchor" href="#mapeo-de-identidad" aria-label="Anchor link for: mapeo-de-identidad">🔗</a>Mapeo de Identidad</h3>
+<p>Una solución simple es <strong>mapear de identidad todas las tablas de páginas</strong>:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/identity-mapped-page-tables.svg" alt="Un espacio de direcciones virtual y física con varias páginas virtuales mapeadas al marco físico con la misma dirección" /></p>
+<p>En este ejemplo, vemos varios marcos de tablas de páginas mapeados de identidad. De esta manera, las direcciones físicas de las tablas de páginas también son direcciones virtuales válidas, por lo que podemos acceder fácilmente a las tablas de páginas de todos los niveles comenzando desde el registro CR3.</p>
+<p>Sin embargo, esto desordena el espacio de direcciones virtuales y dificulta encontrar regiones de memoria continuas de tamaños más grandes. Por ejemplo, imagina que queremos crear una región de memoria virtual de tamaño 1000 KiB en el gráfico anterior, por ejemplo, para <a href="https://en.wikipedia.org/wiki/Memory-mapped_file">mapeo de una memoria de archivo</a>. No podemos comenzar la región en <code>28 KiB</code> porque colisionaría con la página ya mapeada en <code>1004 KiB</code>. Así que tenemos que buscar más hasta que encontremos un área suficientemente grande sin mapear, por ejemplo, en <code>1008 KiB</code>. Este es un problema de fragmentación similar al de la <a href="https://os.phil-opp.com/paging-introduction/#fragmentation">segmentación</a>.</p>
+<p>Igualmente, hace que sea mucho más difícil crear nuevas tablas de páginas porque necesitamos encontrar marcos físicos cuyos correspondientes páginas no estén ya en uso. Por ejemplo, asumamos que reservamos la región de memoria <em>virtual</em> de 1000 KiB comenzando en <code>1008 KiB</code> para nuestro archivo mapeado en memoria. Ahora no podemos usar ningún marco con una dirección <em>física</em> entre <code>1000 KiB</code> y <code>2008 KiB</code>, porque no podemos mapear de identidad.</p>
+<h3 id="mapear-en-un-desplazamiento-fijo"><a class="zola-anchor" href="#mapear-en-un-desplazamiento-fijo" aria-label="Anchor link for: mapear-en-un-desplazamiento-fijo">🔗</a>Mapear en un Desplazamiento Fijo</h3>
+<p>Para evitar el problema de desordenar el espacio de direcciones virtuales, podemos <strong>usar una región de memoria separada para los mapeos de la tabla de páginas</strong>. Así que en lugar de mapear de identidad los marcos de las tablas de páginas, los mapeamos en un desplazamiento fijo en el espacio de direcciones virtuales. Por ejemplo, el desplazamiento podría ser de 10 TiB:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/page-tables-mapped-at-offset.svg" alt="La misma figura que para el mapeo de identidad, pero cada página virtual mapeada está desplazada por 10 TiB." /></p>
+<p>Al usar la memoria virtual en el rango <code>10 TiB..(10 TiB + tamaño de la memoria física)</code> exclusivamente para mapeos de tablas de páginas, evitamos los problemas de colisión del mapeo de identidad. Reservar una región tan grande del espacio de direcciones virtuales solo es posible si el espacio de direcciones virtuales es mucho más grande que el tamaño de la memoria física. Esto no es un problema en <code>x86_64</code> ya que el espacio de direcciones de 48 bits es de 256 TiB.</p>
+<p>Este enfoque aún tiene la desventaja de que necesitamos crear un nuevo mapeo cada vez que creamos una nueva tabla de páginas. Además, no permite acceder a las tablas de páginas de otros espacios de direcciones, lo que sería útil al crear un nuevo proceso.</p>
+<h3 id="mapear-la-memoria-fisica-completa"><a class="zola-anchor" href="#mapear-la-memoria-fisica-completa" aria-label="Anchor link for: mapear-la-memoria-fisica-completa">🔗</a>Mapear la Memoria Física Completa</h3>
+<p>Podemos resolver estos problemas <strong>mapeando la memoria física completa</strong> en lugar de solo los marcos de la tabla de páginas:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/map-complete-physical-memory.svg" alt="La misma figura que para el mapeo con desplazamiento, pero cada marco físico tiene un mapeo (en 10 TiB + X) en lugar de solo los marcos de la tabla de páginas." /></p>
+<p>Este enfoque permite a nuestro núcleo acceder a memoria física arbitraria, incluyendo marcos de la tabla de páginas de otros espacios de direcciones. La región de memoria virtual reservada tiene el mismo tamaño que antes, con la diferencia de que ya no contiene páginas sin mapear.</p>
+<p>La desventaja de este enfoque es que se necesitan tablas de páginas adicionales para almacenar el mapeo de la memoria física. Estas tablas de páginas deben almacenarse en alguna parte, por lo que ocupan parte de la memoria física, lo que puede ser un problema en dispositivos con poca memoria.</p>
+<p>En <code>x86_64</code>, sin embargo, podemos utilizar <a href="https://en.wikipedia.org/wiki/Page_%28computer_memory%29#Multiple_page_sizes">páginas grandes</a> con un tamaño de 2 MiB para el mapeo, en lugar de las páginas de 4 KiB por defecto. De esta manera, mapear 32 GiB de memoria física solo requiere 132 KiB para las tablas de páginas, ya que solo se necesita una tabla de nivel 3 y 32 tablas de nivel 2. Las páginas grandes también son más eficientes en caché, ya que utilizan menos entradas en el buffer de traducción (TLB).</p>
+<h3 id="mapeo-temporal"><a class="zola-anchor" href="#mapeo-temporal" aria-label="Anchor link for: mapeo-temporal">🔗</a>Mapeo Temporal</h3>
+<p>Para dispositivos con cantidades muy pequeñas de memoria física, podríamos <strong>mapear los marcos de la tabla de páginas solo temporalmente</strong> cuando necesitemos acceder a ellos. Para poder crear los mapeos temporales, solo necesitamos una única tabla de nivel 1 mapeada de identidad:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/temporarily-mapped-page-tables.svg" alt="Un espacio de direcciones virtual y física con una tabla de nivel 1 mapeada de identidad, que mapea su 0ª entrada al marco de la tabla de nivel 2, mapeando así ese marco a la página con dirección 0" /></p>
+<p>La tabla de nivel 1 en este gráfico controla los primeros 2 MiB del espacio de direcciones virtuales. Esto se debe a que es accesible comenzando en el registro CR3 y siguiendo la entrada 0 en las tablas de páginas de niveles 4, 3 y 2. La entrada con índice <code>8</code> mapea la página virtual en la dirección <code>32 KiB</code> al marco físico en la dirección <code>32 KiB</code>, mapeando de identidad la tabla de nivel 1 misma. El gráfico muestra este mapeo de identidad mediante la flecha horizontal en <code>32 KiB</code>.</p>
+<p>Al escribir en la tabla de nivel 1 mapeada de identidad, nuestro núcleo puede crear hasta 511 mapeos temporales (512 menos la entrada requerida para el mapeo de identidad). En el ejemplo anterior, el núcleo creó dos mapeos temporales:</p>
+<ul>
+<li>Al mapear la 0ª entrada de la tabla de nivel 1 al marco con dirección <code>24 KiB</code>, creó un mapeo temporal de la página virtual en <code>0 KiB</code> al marco físico de la tabla de nivel 2, indicado por la línea de puntos.</li>
+<li>Al mapear la 9ª entrada de la tabla de nivel 1 al marco con dirección <code>4 KiB</code>, creó un mapeo temporal de la página virtual en <code>36 KiB</code> al marco físico de la tabla de nivel 4, indicado por la línea de puntos.</li>
+</ul>
+<p>Ahora el núcleo puede acceder a la tabla de nivel 2 escribiendo en la página <code>0 KiB</code> y a la tabla de nivel 4 escribiendo en la página <code>36 KiB</code>.</p>
+<p>El proceso para acceder a un marco de tabla de páginas arbitrario con mapeos temporales sería:</p>
+<ul>
+<li>Buscar una entrada libre en la tabla de nivel 1 mapeada de identidad.</li>
+<li>Mapear esa entrada al marco físico de la tabla de páginas que queremos acceder.</li>
+<li>Acceder al marco objetivo a través de la página virtual que se mapea a la entrada.</li>
+<li>Reestablecer la entrada como no utilizada, eliminando así el mapeo temporal nuevamente.</li>
+</ul>
+<p>Este enfoque reutiliza las mismas 512 páginas virtuales para crear los mapeos y, por lo tanto, requiere solo 4 KiB de memoria física. La desventaja es que es un poco engorroso, especialmente porque un nuevo mapeo podría requerir modificaciones en múltiples niveles de la tabla, lo que significa que tendríamos que repetir el proceso anterior múltiples veces.</p>
+<h3 id="tablas-de-paginas-recursivas"><a class="zola-anchor" href="#tablas-de-paginas-recursivas" aria-label="Anchor link for: tablas-de-paginas-recursivas">🔗</a>Tablas de Páginas Recursivas</h3>
+<p>Otro enfoque interesante, que no requiere tablas de páginas adicionales, es <strong>mapear la tabla de páginas de manera recursiva</strong>. La idea detrás de este enfoque es mapear una entrada de la tabla de nivel 4 a la misma tabla de nivel 4. Al hacer esto, reservamos efectivamente una parte del espacio de direcciones virtuales y mapeamos todos los marcos de tablas de páginas actuales y futuros a ese espacio.</p>
+<p>Veamos un ejemplo para entender cómo funciona todo esto:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/recursive-page-table.png" alt="Un ejemplo de una jerarquía de página de 4 niveles con cada tabla de páginas mostrada en memoria física. La entrada 511 de la tabla de nivel 4 está mapeada al marco de 4KiB, el marco de la tabla de nivel 4 misma." /></p>
+<p>La única diferencia con el <a href="https://os.phil-opp.com/es/implementacion-de-paginacion/#accediendo-a-las-tablas-de-paginas">ejemplo al principio de este artículo</a> es la entrada adicional en el índice <code>511</code> en la tabla de nivel 4, que está mapeada al marco físico <code>4 KiB</code>, el marco de la tabla de nivel 4 misma.</p>
+<p>Al permitir que la CPU siga esta entrada en una traducción, no llega a una tabla de nivel 3, sino a la misma tabla de nivel 4 nuevamente. Esto es similar a una función recursiva que se llama a sí misma; por lo tanto, esta tabla se llama <em>tabla de páginas recursiva</em>. Lo importante es que la CPU asume que cada entrada en la tabla de nivel 4 apunta a una tabla de nivel 3, por lo que ahora trata la tabla de nivel 4 como una tabla de nivel 3. Esto funciona porque las tablas de todos los niveles tienen la misma estructura exacta en <code>x86_64</code>.</p>
+<p>Al seguir la entrada recursiva una o múltiples veces antes de comenzar la traducción real, podemos efectivamente acortar el número de niveles que la CPU recorre. Por ejemplo, si seguimos la entrada recursiva una vez y luego procedemos a la tabla de nivel 3, la CPU piensa que la tabla de nivel 3 es una tabla de nivel 2. Siguiendo, trata la tabla de nivel 2 como una tabla de nivel 1 y la tabla de nivel 1 como el marco mapeado. Esto significa que ahora podemos leer y escribir la tabla de nivel 1 porque la CPU piensa que es el marco mapeado. El gráfico a continuación ilustra los cinco pasos de traducción:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/recursive-page-table-access-level-1.png" alt="El ejemplo anterior de jerarquía de páginas de 4 niveles con 5 flechas: “Paso 0” de CR4 a la tabla de nivel 4, “Paso 1” de la tabla de nivel 4 a la tabla de nivel 4, “Paso 2” de la tabla de nivel 4 a la tabla de nivel 3, “Paso 3” de la tabla de nivel 3 a la tabla de nivel 2, y “Paso 4” de la tabla de nivel 2 a la tabla de nivel 1." /></p>
+<p>De manera similar, podemos seguir la entrada recursiva dos veces antes de comenzar la traducción para reducir el número de niveles recorridos a dos:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/recursive-page-table-access-level-2.png" alt="La misma jerarquía de páginas de 4 niveles con las siguientes 4 flechas: “Paso 0” de CR4 a la tabla de nivel 4, “Pasos 1&amp;2” de la tabla de nivel 4 a la tabla de nivel 4, “Paso 3” de la tabla de nivel 4 a la tabla de nivel 3, y “Paso 4” de la tabla de nivel 3 a la tabla de nivel 2." /></p>
+<p>Sigamos paso a paso: Primero, la CPU sigue la entrada recursiva en la tabla de nivel 4 y piensa que llega a una tabla de nivel 3. Luego sigue la entrada recursiva nuevamente y piensa que llega a una tabla de nivel 2. Pero en realidad, todavía está en la tabla de nivel 4. Cuando la CPU ahora sigue una entrada diferente, aterriza en una tabla de nivel 3, pero piensa que ya está en una tabla de nivel 1. Así que mientras la siguiente entrada apunta a una tabla de nivel 2, la CPU piensa que apunta al marco mapeado, lo que nos permite leer y escribir la tabla de nivel 2.</p>
+<p>Acceder a las tablas de niveles 3 y 4 funciona de la misma manera. Para acceder a la tabla de nivel 3, seguimos la entrada recursiva tres veces, engañando a la CPU para que piense que ya está en una tabla de nivel 1. Luego seguimos otra entrada y llegamos a una tabla de nivel 3, que la CPU trata como un marco mapeado. Para acceder a la tabla de nivel 4 misma, simplemente seguimos la entrada recursiva cuatro veces hasta que la CPU trate la tabla de nivel 4 como el marco mapeado (en azul en el gráfico a continuación).</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/recursive-page-table-access-level-3.png" alt="La misma jerarquía de páginas de 4 niveles con las siguientes 3 flechas: “Paso 0” de CR4 a la tabla de nivel 4, “Pasos 1,2,3” de la tabla de nivel 4 a la tabla de nivel 4, y “Paso 4” de la tabla de nivel 4 a la tabla de nivel 3. En azul, la alternativa “Pasos 1,2,3,4” flecha de la tabla de nivel 4 a la tabla de nivel 4." /></p>
+<p>Puede llevar un tiempo asimilar el concepto, pero funciona bastante bien en la práctica.</p>
+<p>En la siguiente sección, explicamos cómo construir direcciones virtuales para seguir la entrada recursiva una o múltiples veces. No utilizaremos la paginación recursiva para nuestra implementación, así que no necesitas leerlo para continuar con la publicación. Si te interesa, simplemente haz clic en <em>“Cálculo de Direcciones”</em> para expandirlo.</p>
+<hr />
+<details>
+<summary><h4>Cálculo de Direcciones</h4></summary>
+<p>Vimos que podemos acceder a tablas de todos los niveles siguiendo la entrada recursiva una o múltiples veces antes de la traducción real. Dado que los índices en las tablas de los cuatro niveles se derivan directamente de la dirección virtual, necesitamos construir direcciones virtuales especiales para esta técnica. Recuerda, los índices de la tabla de páginas se derivan de la dirección de la siguiente manera:</p>
+<p><img src="../paging-introduction/x86_64-table-indices-from-address.svg" alt="Bits 0–12 son el desplazamiento de página, bits 12–21 el índice de nivel 1, bits 21–30 el índice de nivel 2, bits 30–39 el índice de nivel 3, y bits 39–48 el índice de nivel 4" /></p>
+<p>Supongamos que queremos acceder a la tabla de nivel 1 que mapea una página específica. Como aprendimos anteriormente, esto significa que debemos seguir la entrada recursiva una vez antes de continuar con los índices de niveles 4, 3 y 2. Para hacer eso, movemos cada bloque de la dirección un bloque a la derecha y establecemos el índice original de nivel 4 en el índice de la entrada recursiva:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/table-indices-from-address-recursive-level-1.svg" alt="Bits 0–12 son el desplazamiento en el marco de la tabla de nivel 1, bits 12–21 el índice de nivel 2, bits 21–30 el índice de nivel 3, bits 30–39 el índice de nivel 4, y bits 39–48 el índice de la entrada recursiva" /></p>
+<p>Para acceder a la tabla de nivel 2 de esa página, movemos cada índice dos bloques a la derecha y configuramos ambos bloques del índice original de nivel 4 y el índice original de nivel 3 al índice de la entrada recursiva:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/table-indices-from-address-recursive-level-2.svg" alt="Bits 0–12 son el desplazamiento en el marco de la tabla de nivel 2, bits 12–21 el índice de nivel 3, bits 21–30 el índice de nivel 4, y bits 30–39 y bits 39–48 son el índice de la entrada recursiva" /></p>
+<p>Acceder a la tabla de nivel 3 funciona moviendo cada bloque tres bloques a la derecha y usando el índice recursivo para el índice original de niveles 4, 3 y 2:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/table-indices-from-address-recursive-level-3.svg" alt="Bits 0–12 son el desplazamiento en el marco de la tabla de nivel 3, bits 12–21 el índice de nivel 4, y bits 21–30, bits 30–39 y bits 39–48 son el índice de la entrada recursiva" /></p>
+<p>Finalmente, podemos acceder a la tabla de nivel 4 moviendo cada bloque cuatro bloques a la derecha y usando el índice recursivo para todos los bloques de dirección excepto para el desplazamiento:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/table-indices-from-address-recursive-level-4.svg" alt="Bits 0–12 son el desplazamiento en el marco de la tabla l y bits 12–21, bits 21–30, bits 30–39 y bits 39–48 son el índice de la entrada recursiva" /></p>
+<p>Ahora podemos calcular direcciones virtuales para las tablas de los cuatro niveles. Incluso podemos calcular una dirección que apunte exactamente a una entrada específica de la tabla de páginas multiplicando su índice por 8, el tamaño de una entrada de tabla de páginas.</p>
+<p>La tabla a continuación resume la estructura de la dirección para acceder a los diferentes tipos de marcos:</p>
+<table><thead><tr><th>Dirección Virtual para</th><th>Estructura de Dirección (<a href="https://en.wikipedia.org/wiki/Octal">octal</a>)</th></tr></thead><tbody>
+<tr><td>Página</td><td><code>0o_SSSSSS_AAA_BBB_CCC_DDD_EEEE</code></td></tr>
+<tr><td>Entrada de Tabla de Nivel 1</td><td><code>0o_SSSSSS_RRR_AAA_BBB_CCC_DDDD</code></td></tr>
+<tr><td>Entrada de Tabla de Nivel 2</td><td><code>0o_SSSSSS_RRR_RRR_AAA_BBB_CCCC</code></td></tr>
+<tr><td>Entrada de Tabla de Nivel 3</td><td><code>0o_SSSSSS_RRR_RRR_RRR_AAA_BBBB</code></td></tr>
+<tr><td>Entrada de Tabla de Nivel 4</td><td><code>0o_SSSSSS_RRR_RRR_RRR_RRR_AAAA</code></td></tr>
+</tbody></table>
+<p>Donde <code>AAA</code> es el índice de nivel 4, <code>BBB</code> el índice de nivel 3, <code>CCC</code> el índice de nivel 2, y <code>DDD</code> el índice de nivel 1 del marco mapeado, y <code>EEEE</code> el desplazamiento dentro de él. <code>RRR</code> es el índice de la entrada recursiva. Cuando un índice (tres dígitos) se transforma en un desplazamiento (cuatro dígitos), se hace multiplicándolo por 8 (el tamaño de una entrada de tabla de páginas). Con este desplazamiento, la dirección resultante apunta directamente a la respectiva entrada de la tabla de páginas.</p>
+<p><code>SSSSSS</code> son bits de extensión de signo, lo que significa que son todos copias del bit 47. Este es un requisito especial para direcciones válidas en la arquitectura <code>x86_64</code>. Lo explicamos en el <a href="https://os.phil-opp.com/paging-introduction/#paging-on-x86-64">artículo anterior</a>.</p>
+<p>Usamos números [octales] para representar las direcciones ya que cada carácter octal representa tres bits, lo que nos permite separar claramente los índices de 9 bits de los diferentes niveles de la tabla de páginas. Esto no es posible con el sistema hexadecimal, donde cada carácter representa cuatro bits.</p>
+<h5 id="en-codigo-rust"><a class="zola-anchor" href="#en-codigo-rust" aria-label="Anchor link for: en-codigo-rust">🔗</a>En Código Rust</h5>
+<p>Para construir tales direcciones en código Rust, puedes usar operaciones bit a bit:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// la dirección virtual cuya correspondiente tablas de páginas quieres acceder
+</span><span style="color:#569cd6;">let</span><span> addr: </span><span style="color:#569cd6;">usize </span><span>= […];
+</span><span>
+</span><span style="color:#569cd6;">let</span><span> r = </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// índice recursivo
+</span><span style="color:#569cd6;">let</span><span> sign = </span><span style="color:#b5cea8;">0o177777 </span><span>&lt;&lt; </span><span style="color:#b5cea8;">48</span><span>; </span><span style="color:#608b4e;">// extensión de signo
+</span><span>
+</span><span style="color:#608b4e;">// recuperar los índices de la tabla de páginas de la dirección que queremos traducir
+</span><span style="color:#569cd6;">let</span><span> l4_idx = (addr &gt;&gt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// índice de nivel 4
+</span><span style="color:#569cd6;">let</span><span> l3_idx = (addr &gt;&gt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// índice de nivel 3
+</span><span style="color:#569cd6;">let</span><span> l2_idx = (addr &gt;&gt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// índice de nivel 2
+</span><span style="color:#569cd6;">let</span><span> l1_idx = (addr &gt;&gt; </span><span style="color:#b5cea8;">12</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// índice de nivel 1
+</span><span style="color:#569cd6;">let</span><span> page_offset = addr </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o7777</span><span>;
+</span><span>
+</span><span style="color:#608b4e;">// calcular las direcciones de las tablas
+</span><span style="color:#569cd6;">let</span><span> level_4_table_addr =
+</span><span>    sign </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>);
+</span><span style="color:#569cd6;">let</span><span> level_3_table_addr =
+</span><span>    sign </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">| </span><span>(l4_idx &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>);
+</span><span style="color:#569cd6;">let</span><span> level_2_table_addr =
+</span><span>    sign </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">| </span><span>(l4_idx &lt;&lt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">| </span><span>(l3_idx &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>);
+</span><span style="color:#569cd6;">let</span><span> level_1_table_addr =
+</span><span>    sign </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">| </span><span>(l4_idx &lt;&lt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">| </span><span>(l3_idx &lt;&lt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">| </span><span>(l2_idx &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>);
+</span></code></pre>
+<p>El código anterior asume que la última entrada de nivel 4 con índice <code>0o777</code> (511) se mapea de manera recursiva. Este no es el caso actualmente, así que el código aún no funcionará. Véase a continuación cómo decirle al bootloader que configure el mapeo recursivo.</p>
+<p>Alternativamente, para realizar las operaciones bit a bit manualmente, puedes usar el tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a> de la crate <code>x86_64</code>, que proporciona abstracciones seguras para varias operaciones de la tabla de páginas. Por ejemplo, el siguiente código muestra cómo traducir una dirección virtual a su dirección física mapeada:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/memory.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::{Mapper, Page, PageTable, RecursivePageTable};
+</span><span style="color:#569cd6;">use </span><span>x86_64::{VirtAddr, PhysAddr};
+</span><span>
+</span><span style="color:#608b4e;">/// Crea una instancia de RecursivePageTable a partir de la dirección de nivel 4.
+</span><span style="color:#569cd6;">let</span><span> level_4_table_addr = […];
+</span><span style="color:#569cd6;">let</span><span> level_4_table_ptr = level_4_table_addr </span><span style="color:#569cd6;">as *mut</span><span> PageTable;
+</span><span style="color:#569cd6;">let</span><span> recursive_page_table = </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> level_4_table = </span><span style="color:#569cd6;">&amp;mut </span><span>*level_4_table_ptr;
+</span><span>    RecursivePageTable::new(level_4_table).unwrap();
+</span><span>}
+</span><span>
+</span><span>
+</span><span style="color:#608b4e;">/// Recupera la dirección física para la dirección virtual dada
+</span><span style="color:#569cd6;">let</span><span> addr: </span><span style="color:#569cd6;">u64 </span><span>= […]
+</span><span style="color:#569cd6;">let</span><span> addr = VirtAddr::new(addr);
+</span><span style="color:#569cd6;">let</span><span> page: Page = Page::containing_address(addr);
+</span><span>
+</span><span style="color:#608b4e;">// realizar la traducción
+</span><span style="color:#569cd6;">let</span><span> frame = recursive_page_table.translate_page(page);
+</span><span>frame.map(|frame| frame.start_address() + </span><span style="color:#569cd6;">u64</span><span>::from(addr.page_offset()))
+</span></code></pre>
+<p>Nuevamente, se requiere un mapeo recursivo válido para que este código funcione. Con tal mapeo, la dirección faltante <code>level_4_table_addr</code> se puede calcular como en el primer ejemplo de código.</p>
+</details>
+<hr />
+<p>La paginación recursiva es una técnica interesante que muestra cuán poderoso puede ser un solo mapeo en una tabla de páginas. Es relativamente fácil de implementar y solo requiere una cantidad mínima de configuración (solo una entrada recursiva), por lo que es una buena opción para los primeros experimentos con paginación.</p>
+<p>Sin embargo, también tiene algunas desventajas:</p>
+<ul>
+<li>Ocupa una gran cantidad de memoria virtual (512 GiB). Esto no es un gran problema en el gran espacio de direcciones de 48 bits, pero podría llevar a un comportamiento de caché subóptimo.</li>
+<li>Solo permite acceder fácilmente al espacio de direcciones activo actualmente. Acceder a otros espacios de direcciones sigue siendo posible cambiando la entrada recursiva, pero se requiere un mapeo temporal para volver a cambiar. Describimos cómo hacer esto en la publicación (desactualizada) <a href="https://os.phil-opp.com/remap-the-kernel/#overview"><em>Remap The Kernel</em></a>.</li>
+<li>Se basa fuertemente en el formato de tabla de páginas de <code>x86</code> y podría no funcionar en otras arquitecturas.</li>
+</ul>
+<h2 id="soporte-del-bootloader"><a class="zola-anchor" href="#soporte-del-bootloader" aria-label="Anchor link for: soporte-del-bootloader">🔗</a>Soporte del Bootloader</h2>
+<p>Todos estos enfoques requieren modificaciones en las tablas de páginas para su configuración. Por ejemplo, se necesitan crear mapeos para la memoria física o debe mapearse una entrada de la tabla de nivel 4 de forma recursiva. El problema es que no podemos crear estos mapeos requeridos sin una forma existente de acceder a las tablas de páginas.</p>
+<p>Esto significa que necesitamos la ayuda del bootloader, que crea las tablas de páginas en las que se ejecuta nuestro núcleo. El bootloader tiene acceso a las tablas de páginas, por lo que puede crear cualquier mapeo que necesitemos. En su implementación actual, la crate <code>bootloader</code> tiene soporte para dos de los enfoques anteriores, controlados a través de <a href="https://doc.rust-lang.org/cargo/reference/features.html#the-features-section">c características de cargo</a>:</p>
+<ul>
+<li>La característica <code>map_physical_memory</code> mapea la memoria física completa en algún lugar del espacio de direcciones virtuales. Por lo tanto, el núcleo tiene acceso a toda la memoria física y puede seguir el enfoque <a href="https://os.phil-opp.com/es/implementacion-de-paginacion/#mapear-la-memoria-fisica-completa"><em>Mapear la Memoria Física Completa</em></a>.</li>
+<li>Con la característica <code>recursive_page_table</code>, el bootloader mapea una entrada de la tabla de nivel 4 de manera recursiva. Esto permite que el núcleo acceda a las tablas de páginas como se describe en la sección <a href="https://os.phil-opp.com/es/implementacion-de-paginacion/#tablas-de-paginas-recursivas"><em>Tablas de Páginas Recursivas</em></a>.</li>
+</ul>
+<p>Elegimos el primer enfoque para nuestro núcleo ya que es simple, independiente de la plataforma y más poderoso (también permite acceder a marcos que no son de tabla de páginas). Para habilitar el soporte necesario del bootloader, agregamos la característica <code>map_physical_memory</code> a nuestra dependencia de <code>bootloader</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">bootloader </span><span>= { </span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;0.9&quot;</span><span>, </span><span style="color:#569cd6;">features </span><span>= [</span><span style="color:#d69d85;">&quot;map_physical_memory&quot;</span><span>]}
+</span></code></pre>
+<p>Con esta característica habilitada, el bootloader mapea la memoria física completa a algún rango de direcciones virtuales no utilizadas. Para comunicar el rango de direcciones virtuales a nuestro núcleo, el bootloader pasa una estructura de <em>información de boot</em>.</p>
+<h3 id="informacion-de-boot"><a class="zola-anchor" href="#informacion-de-boot" aria-label="Anchor link for: informacion-de-boot">🔗</a>Información de Boot</h3>
+<p>La crate <code>bootloader</code> define una struct <a href="https://docs.rs/bootloader/0.9/bootloader/bootinfo/struct.BootInfo.html"><code>BootInfo</code></a> que contiene toda la información que pasa a nuestro núcleo. La struct aún se encuentra en una etapa temprana, así que espera algunos errores al actualizar a futuras versiones de bootloader que sean <a href="https://doc.rust-lang.org/stable/cargo/reference/specifying-dependencies.html#caret-requirements">incompatibles con semver</a>. Con la característica <code>map_physical_memory</code> habilitada, actualmente tiene los dos campos <code>memory_map</code> y <code>physical_memory_offset</code>:</p>
+<ul>
+<li>El campo <code>memory_map</code> contiene una descripción general de la memoria física disponible. Esto le dice a nuestro núcleo cuánta memoria física está disponible en el sistema y qué regiones de memoria están reservadas para dispositivos como el hardware VGA. El mapa de memoria se puede consultar desde la BIOS o UEFI firmware, pero solo muy al principio en el proceso de arranque. Por esta razón, debe ser proporcionado por el bootloader porque no hay forma de que el núcleo lo recupere más tarde. Necesitaremos el mapa de memoria más adelante en esta publicación.</li>
+<li>El <code>physical_memory_offset</code> nos indica la dirección de inicio virtual del mapeo de memoria física. Al agregar este desplazamiento a una dirección física, obtenemos la dirección virtual correspondiente. Esto nos permite acceder a memoria física arbitraria desde nuestro núcleo.</li>
+<li>Este desplazamiento de memoria física se puede personalizar añadiendo una tabla <code>[package.metadata.bootloader]</code> en Cargo.toml y configurando el campo <code>physical-memory-offset = "0x0000f00000000000"</code> (o cualquier otro valor). Sin embargo, ten en cuenta que el bootloader puede entrar en pánico si se encuentra valores de dirección física que comienzan a superponerse con el espacio más allá del desplazamiento, es decir, áreas que habría mapeado previamente a otras direcciones físicas tempranas. Por lo tanto, en general, cuanto mayor sea el valor (&gt; 1 TiB), mejor.</li>
+</ul>
+<p>El bootloader pasa la struct <code>BootInfo</code> a nuestro núcleo en forma de un argumento <code>&amp;'static BootInfo</code> a nuestra función <code>_start</code>. Aún no hemos declarado este argumento en nuestra función, así que lo agregaremos:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>bootloader::BootInfo;
+</span><span>
+</span><span>#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{ </span><span style="color:#608b4e;">// nuevo argumento
+</span><span>    […]
+</span><span>}
+</span></code></pre>
+<p>No fue un problema dejar de lado este argumento antes porque la convención de llamada <code>x86_64</code> pasa el primer argumento en un registro de CPU. Por lo tanto, el argumento simplemente se ignora cuando no se declara. Sin embargo, sería un problema si accidentalmente usáramos un tipo de argumento incorrecto, ya que el compilador no conoce la firma de tipo correcta de nuestra función de entrada.</p>
+<h3 id="el-macro-entry-point"><a class="zola-anchor" href="#el-macro-entry-point" aria-label="Anchor link for: el-macro-entry-point">🔗</a>El Macro <code>entry_point</code></h3>
+<p>Dado que nuestra función <code>_start</code> se llama externamente desde el bootloader, no se verifica la firma de nuestra función. Esto significa que podríamos hacer que tome argumentos arbitrarios sin ningún error de compilación, pero fallaría o causaría un comportamiento indefinido en tiempo de ejecución.</p>
+<p>Para asegurarnos de que la función de punto de entrada siempre tenga la firma correcta que espera el bootloader, la crate <code>bootloader</code> proporciona un macro <a href="https://docs.rs/bootloader/0.6.4/bootloader/macro.entry_point.html"><code>entry_point</code></a> que proporciona una forma verificada por tipo de definir una función de Rust como punto de entrada. Vamos a reescribir nuestra función de punto de entrada para usar este macro:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>bootloader::{BootInfo, entry_point};
+</span><span>
+</span><span>entry_point!(kernel_main);
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    […]
+</span><span>}
+</span></code></pre>
+<p>Ya no necesitamos usar <code>extern "C"</code> ni <code>no_mangle</code> para nuestro punto de entrada, ya que el macro define el verdadero punto de entrada inferior <code>_start</code> por nosotros. La función <code>kernel_main</code> es ahora una función de Rust completamente normal, así que podemos elegir un nombre arbitrario para ella. Lo importante es que esté verificada por tipo, así que se producirá un error de compilación cuando usemos una firma de función incorrecta, por ejemplo, al agregar un argumento o cambiar el tipo de argumento.</p>
+<p>Realizaremos el mismo cambio en nuestro <code>lib.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
+</span><span>
+</span><span>#[cfg(test)]
+</span><span style="color:#569cd6;">use </span><span>bootloader::{entry_point, BootInfo};
+</span><span>
+</span><span>#[cfg(test)]
+</span><span>entry_point!(test_kernel_main);
+</span><span>
+</span><span style="color:#608b4e;">/// Punto de entrada para `cargo test`
+</span><span>#[cfg(test)]
+</span><span style="color:#569cd6;">fn </span><span>test_kernel_main(_boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// como antes
+</span><span>    init();
+</span><span>    test_main();
+</span><span>    hlt_loop();
+</span><span>}
+</span></code></pre>
+<p>Dado que el punto de entrada solo se usa en modo de prueba, agregamos el atributo <code>#[cfg(test)]</code> a todos los elementos. Le damos a nuestro punto de entrada de prueba el nombre distintivo <code>test_kernel_main</code> para evitar confusión con el <code>kernel_main</code> de nuestro <code>main.rs</code>. No usamos el parámetro <code>BootInfo</code> por ahora, así que anteponemos un <code>_</code> al nombre del parámetro para silenciar la advertencia de variable no utilizada.</p>
+<h2 id="implementacion"><a class="zola-anchor" href="#implementacion" aria-label="Anchor link for: implementacion">🔗</a>Implementación</h2>
+<p>Ahora que tenemos acceso a la memoria física, finalmente podemos comenzar a implementar nuestro código de tablas de páginas. Primero, echaremos un vistazo a las tablas de páginas actualmente activas en las que se ejecuta nuestro núcleo. En el segundo paso, crearemos una función de traducción que devuelve la dirección física que se mapea a una dada dirección virtual. Como último paso, intentaremos modificar las tablas de páginas para crear un nuevo mapeo.</p>
+<p>Antes de comenzar, creamos un nuevo módulo <code>memory</code> para nuestro código:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>memory;
+</span></code></pre>
+<p>Para el módulo, creamos un archivo vacío <code>src/memory.rs</code>.</p>
+<h3 id="accediendo-a-las-tablas-de-paginas-1"><a class="zola-anchor" href="#accediendo-a-las-tablas-de-paginas-1" aria-label="Anchor link for: accediendo-a-las-tablas-de-paginas-1">🔗</a>Accediendo a las Tablas de Páginas</h3>
+<p>Al [final del artículo anterior], intentamos echar un vistazo a las tablas de páginas en las que se ejecuta nuestro núcleo, pero fallamos ya que no podíamos acceder al marco físico al que apunta el registro <code>CR3</code>. Ahora podemos continuar desde allí creando una función <code>active_level_4_table</code> que devuelve una referencia a la tabla de nivel 4 activa:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/memory.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::{
+</span><span>    structures::paging::PageTable,
+</span><span>    VirtAddr,
+</span><span>};
+</span><span>
+</span><span style="color:#608b4e;">/// Devuelve una referencia mutable a la tabla de nivel 4 activa.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Esta función es insegura porque el llamador debe garantizar que la
+</span><span style="color:#608b4e;">/// memoria física completa esté mapeada en memoria virtual en el pasado
+</span><span style="color:#608b4e;">/// `physical_memory_offset`. Además, esta función solo debe ser llamada una vez
+</span><span style="color:#608b4e;">/// para evitar aliasing de referencias `&amp;mut` (lo que es comportamiento indefinido).
+</span><span style="color:#569cd6;">pub unsafe fn </span><span>active_level_4_table(physical_memory_offset: VirtAddr)
+</span><span>    -&gt; </span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> PageTable
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr3;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let </span><span>(level_4_table_frame, </span><span style="color:#569cd6;">_</span><span>) = Cr3::read();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> phys = level_4_table_frame.start_address();
+</span><span>    </span><span style="color:#569cd6;">let</span><span> virt = physical_memory_offset + phys.as_u64();
+</span><span>    </span><span style="color:#569cd6;">let</span><span> page_table_ptr: </span><span style="color:#569cd6;">*mut</span><span> PageTable = virt.as_mut_ptr();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">&amp;mut </span><span>*page_table_ptr </span><span style="color:#608b4e;">// inseguro
+</span><span>}
+</span></code></pre>
+<p>Primero, leemos el marco físico de la tabla de nivel 4 activa desde el registro <code>CR3</code>. Luego tomamos su dirección de inicio física, la convertimos a un <code>u64</code>, y le agregamos el <code>physical_memory_offset</code> para obtener la dirección virtual donde se mapea la tabla de páginas. Finalmente, convertimos la dirección virtual a un puntero crudo <code>*mut PageTable</code> a través del método <code>as_mut_ptr</code> y luego creamos de manera insegura una referencia <code>&amp;mut PageTable</code> a partir de ello. Creamos una referencia <code>&amp;mut</code> en lugar de una <code>&amp;</code> porque más adelante mutaremos las tablas de páginas en esta publicación.</p>
+<p>No necesitamos usar un bloque inseguro aquí porque Rust trata el cuerpo completo de una <code>unsafe fn</code> como un gran bloque inseguro. Esto hace que nuestro código sea más peligroso ya que podríamos accidentalmente introducir una operación insegura en líneas anteriores sin darnos cuenta. También dificulta mucho más encontrar operaciones inseguras entre operaciones seguras. Hay un <a href="https://github.com/rust-lang/rfcs/pull/2585">RFC</a> para cambiar este comportamiento.</p>
+<p>Ahora podemos usar esta función para imprimir las entradas de la tabla de nivel 4:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::active_level_4_table;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::VirtAddr;
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;¡Hola Mundo</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+</span><span>    </span><span style="color:#569cd6;">let</span><span> l4_table = </span><span style="color:#569cd6;">unsafe </span><span>{ active_level_4_table(phys_mem_offset) };
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, entry) </span><span style="color:#569cd6;">in</span><span> l4_table.iter().enumerate() {
+</span><span>        </span><span style="color:#569cd6;">if !</span><span>entry.is_unused() {
+</span><span>            println!(</span><span style="color:#d69d85;">&quot;Entrada L4 </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, i, entry);
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// como antes
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;¡No se estrelló!&quot;</span><span>);
+</span><span>    blog_os::hlt_loop();
+</span><span>}
+</span></code></pre>
+<p>Primero, convertimos el <code>physical_memory_offset</code> de la struct <code>BootInfo</code> a un <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a> y lo pasamos a la función <code>active_level_4_table</code>. Luego, usamos la función <code>iter</code> para iterar sobre las entradas de las tablas de páginas y el combinador <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a> para agregar un índice <code>i</code> a cada elemento. Solo imprimimos entradas no vacías porque todas las 512 entradas no cabrían en la pantalla.</p>
+<p>Cuando lo ejecutamos, vemos el siguiente resultado:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/qemu-print-level-4-table.png" alt="QEMU imprime la entrada 0 (0x2000, PRESENTE, ESCRIBIBLE, ACCEDIDO), la entrada 1 (0x894000, PRESENTE, ESCRIBIBLE, ACCEDIDO, SUCIO), la entrada 31 (0x88e000, PRESENTE, ESCRIBIBLE, ACCEDIDO, SUCIO), la entrada 175 (0x891000, PRESENTE, ESCRIBIBLE, ACCEDIDO, SUCIO), y la entrada 504 (0x897000, PRESENTE, ESCRIBIBLE, ACCEDIDO, SUCIO)" /></p>
+<p>Vemos que hay varias entradas no vacías, que todas mapean a diferentes tablas de nivel 3. Hay tantas regiones porque el código del núcleo, la pila del núcleo, el mapeo de memoria física y la información de arranque utilizan áreas de memoria separadas.</p>
+<p>Para atravesar las tablas de páginas más a fondo y echar un vistazo a una tabla de nivel 3, podemos tomar el marco mapeado de una entrada y convertirlo a una dirección virtual nuevamente:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en el bucle `for` en src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::PageTable;
+</span><span>
+</span><span style="color:#569cd6;">if !</span><span>entry.is_unused() {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Entrada L4 </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, i, entry);
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// obtener la dirección física de la entrada y convertirla
+</span><span>    </span><span style="color:#569cd6;">let</span><span> phys = entry.frame().unwrap().start_address();
+</span><span>    </span><span style="color:#569cd6;">let</span><span> virt = phys.as_u64() + boot_info.physical_memory_offset;
+</span><span>    </span><span style="color:#569cd6;">let</span><span> ptr = VirtAddr::new(virt).as_mut_ptr();
+</span><span>    </span><span style="color:#569cd6;">let</span><span> l3_table: </span><span style="color:#569cd6;">&amp;</span><span>PageTable = </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span>*ptr };
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// imprimir las entradas no vacías de la tabla de nivel 3
+</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, entry) </span><span style="color:#569cd6;">in</span><span> l3_table.iter().enumerate() {
+</span><span>        </span><span style="color:#569cd6;">if !</span><span>entry.is_unused() {
+</span><span>            println!(</span><span style="color:#d69d85;">&quot;  Entrada L3 </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, i, entry);
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Para observar las tablas de nivel 2 y nivel 1, repetimos ese proceso para las entradas de nivel 3 y nivel 2. Como puedes imaginar, esto se vuelve muy verboso muy rápido, así que no mostramos el código completo aquí.</p>
+<p>Recorrer manualmente las tablas de páginas es interesante porque ayuda a entender cómo la CPU realiza la traducción. Sin embargo, la mayoría de las veces, solo nos interesa la dirección física mapeada para una dirección virtual dada, así que vamos a crear una función para eso.</p>
+<h3 id="traduciendo-direcciones"><a class="zola-anchor" href="#traduciendo-direcciones" aria-label="Anchor link for: traduciendo-direcciones">🔗</a>Traduciendo Direcciones</h3>
+<p>Para traducir una dirección virtual a una dirección física, tenemos que recorrer la tabla de páginas de 4 niveles hasta llegar al marco mapeado. Vamos a crear una función que realice esta traducción:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/memory.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::PhysAddr;
+</span><span>
+</span><span style="color:#608b4e;">/// Traduce la dirección virtual dada a la dirección física mapeada, o
+</span><span style="color:#608b4e;">/// `None` si la dirección no está mapeada.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Esta función es insegura porque el llamador debe garantizar que la
+</span><span style="color:#608b4e;">/// memoria física completa esté mapeada en memoria virtual en el pasado
+</span><span style="color:#608b4e;">/// `physical_memory_offset`.
+</span><span style="color:#569cd6;">pub unsafe fn </span><span>translate_addr(addr: VirtAddr, physical_memory_offset: VirtAddr)
+</span><span>    -&gt; Option&lt;PhysAddr&gt;
+</span><span>{
+</span><span>    translate_addr_inner(addr, physical_memory_offset)
+</span><span>}
+</span></code></pre>
+<p>Redirigimos la función a una función segura <code>translate_addr_inner</code> para limitar el alcance de <code>unsafe</code>. Como notamos anteriormente, Rust trata el cuerpo completo de una <code>unsafe fn</code> como un gran bloque inseguro. Al llamar a una función privada segura, hacemos explícitas cada una de las operaciones <code>unsafe</code> nuevamente.</p>
+<p>La función privada interna contiene la implementación real:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/memory.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Función privada que es llamada por `translate_addr`.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Esta función es segura para limitar el alcance de `unsafe` porque Rust trata
+</span><span style="color:#608b4e;">/// el cuerpo completo de las funciones inseguras como un bloque inseguro. Esta función debe
+</span><span style="color:#608b4e;">/// solo ser alcanzable a través de `unsafe fn` desde fuera de este módulo.
+</span><span style="color:#569cd6;">fn </span><span>translate_addr_inner(addr: VirtAddr, physical_memory_offset: VirtAddr)
+</span><span>    -&gt; Option&lt;PhysAddr&gt;
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::page_table::FrameError;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr3;
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// leer el marco de nivel 4 activo desde el registro CR3
+</span><span>    </span><span style="color:#569cd6;">let </span><span>(level_4_table_frame, </span><span style="color:#569cd6;">_</span><span>) = Cr3::read();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> table_indexes = [
+</span><span>        addr.p4_index(), addr.p3_index(), addr.p2_index(), addr.p1_index()
+</span><span>    ];
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame = level_4_table_frame;
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// recorrer la tabla de páginas de múltiples niveles
+</span><span>    </span><span style="color:#569cd6;">for &amp;</span><span>index </span><span style="color:#569cd6;">in &amp;</span><span>table_indexes {
+</span><span>        </span><span style="color:#608b4e;">// convertir el marco en una referencia a la tabla de páginas
+</span><span>        </span><span style="color:#569cd6;">let</span><span> virt = physical_memory_offset + frame.start_address().as_u64();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> table_ptr: </span><span style="color:#569cd6;">*const</span><span> PageTable = virt.as_ptr();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> table = </span><span style="color:#569cd6;">unsafe </span><span>{</span><span style="color:#569cd6;">&amp;</span><span>*table_ptr};
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// leer la entrada de la tabla de páginas y actualizar `frame`
+</span><span>        </span><span style="color:#569cd6;">let</span><span> entry = </span><span style="color:#569cd6;">&amp;</span><span>table[index];
+</span><span>        frame = </span><span style="color:#569cd6;">match</span><span> entry.frame() {
+</span><span>            Ok(frame) </span><span style="color:#569cd6;">=&gt;</span><span> frame,
+</span><span>            Err(FrameError::FrameNotPresent) </span><span style="color:#569cd6;">=&gt; return </span><span>None,
+</span><span>            Err(FrameError::HugeFrame) </span><span style="color:#569cd6;">=&gt; </span><span>panic!(</span><span style="color:#d69d85;">&quot;páginas grandes no soportadas&quot;</span><span>),
+</span><span>        };
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// calcular la dirección física sumando el desplazamiento de página
+</span><span>    Some(frame.start_address() + </span><span style="color:#569cd6;">u64</span><span>::from(addr.page_offset()))
+</span><span>}
+</span></code></pre>
+<p>En lugar de reutilizar nuestra función <code>active_level_4_table</code>, leemos nuevamente el marco de nivel 4 desde el registro <code>CR3</code>. Hacemos esto porque simplifica esta implementación prototipo. No te preocupes, crearemos una mejor solución en un momento.</p>
+<p>La struct <code>VirtAddr</code> ya proporciona métodos para calcular los índices en las tablas de páginas de los cuatro niveles. Almacenamos estos índices en un pequeño arreglo porque nos permite recorrer las tablas de páginas usando un bucle <code>for</code>. Fuera del bucle, recordamos el último <code>frame</code> visitado para calcular la dirección física más tarde. El <code>frame</code> apunta a marcos de tablas de páginas mientras iteramos y al marco mapeado después de la última iteración, es decir, después de seguir la entrada de nivel 1.</p>
+<p>Dentro del bucle, nuevamente usamos el <code>physical_memory_offset</code> para convertir el marco en una referencia de tabla de páginas. Luego leemos la entrada de la tabla de páginas actual y usamos la función <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html#method.frame"><code>PageTableEntry::frame</code></a> para recuperar el marco mapeado. Si la entrada no está mapeada a un marco, regresamos <code>None</code>. Si la entrada mapea una página enorme de 2 MiB o 1 GiB, hacemos panic por ahora.</p>
+<p>Probemos nuestra función de traducción traduciendo algunas direcciones:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// nuevo import
+</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::translate_addr;
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// hola mundo y blog_os::init
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> addresses = [
+</span><span>        </span><span style="color:#608b4e;">// la página del búfer de vga mapeada de identidad
+</span><span>        </span><span style="color:#b5cea8;">0xb8000</span><span>,
+</span><span>        </span><span style="color:#608b4e;">// alguna página de código
+</span><span>        </span><span style="color:#b5cea8;">0x201008</span><span>,
+</span><span>        </span><span style="color:#608b4e;">// alguna página de pila
+</span><span>        </span><span style="color:#b5cea8;">0x0100_0020_1a10</span><span>,
+</span><span>        </span><span style="color:#608b4e;">// dirección virtual mapeada a la dirección física 0
+</span><span>        boot_info.physical_memory_offset,
+</span><span>    ];
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">for &amp;</span><span>address </span><span style="color:#569cd6;">in &amp;</span><span>addresses {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> virt = VirtAddr::new(address);
+</span><span>        </span><span style="color:#569cd6;">let</span><span> phys = </span><span style="color:#569cd6;">unsafe </span><span>{ translate_addr(virt, phys_mem_offset) };
+</span><span>        println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;"> -&gt; </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, virt, phys);
+</span><span>    }
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// test_main(), impresión de &quot;no se estrelló&quot; y hlt_loop()
+</span><span>}
+</span></code></pre>
+<p>Cuando lo ejecutamos, vemos el siguiente resultado:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/qemu-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x201008 -&gt; 0x401008, 0x10000201a10 -&gt; 0x279a10, “panicked at ‘huge pages not supported’" /></p>
+<p>Como se esperaba, la dirección mapeada de identidad <code>0xb8000</code> se traduce a la misma dirección física. Las páginas de código y de pila se traducen a algunas direcciones físicas arbitrarias, que dependen de cómo el bootloader creó el mapeo inicial para nuestro núcleo. Vale la pena notar que los últimos 12 bits siempre permanecen iguales después de la traducción, lo que tiene sentido porque estos bits son el <a href="https://os.phil-opp.com/paging-introduction/#paging-on-x86-64"><em>desplazamiento de página</em></a> y no forman parte de la traducción.</p>
+<p>Dado que cada dirección física se puede acceder agregando el <code>physical_memory_offset</code>, la traducción de la dirección <code>physical_memory_offset</code> en sí misma debería apuntar a la dirección física <code>0</code>. Sin embargo, la traducción falla porque el mapeo usa páginas grandes por eficiencia, lo que no se admite en nuestra implementación todavía.</p>
+<h3 id="usando-offsetpagetable"><a class="zola-anchor" href="#usando-offsetpagetable" aria-label="Anchor link for: usando-offsetpagetable">🔗</a>Usando <code>OffsetPageTable</code></h3>
+<p>Traducir direcciones virtuales a físicas es una tarea común en un núcleo de sistema operativo, por lo tanto, la crate <code>x86_64</code> proporciona una abstracción para ello. La implementación ya admite páginas grandes y varias otras funciones de tabla de páginas aparte de <code>translate_addr</code>, así que las utilizaremos en lo siguiente en lugar de agregar soporte para páginas grandes a nuestra propia implementación.</p>
+<p>En la base de la abstracción hay dos rasgos que definen varias funciones de mapeo de tablas de páginas:</p>
+<ul>
+<li>El rasgo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> es genérico sobre el tamaño de la página y proporciona funciones que operan sobre páginas. Ejemplos son <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.translate_page"><code>translate_page</code></a>, que traduce una página dada a un marco del mismo tamaño, y <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a>, que crea un nuevo mapeo en la tabla de páginas.</li>
+<li>El rasgo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html"><code>Translate</code></a> proporciona funciones que trabajan con múltiples tamaños de páginas, como <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html#method.translate_addr"><code>translate_addr</code></a> o el general <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html"><code>translate</code></a>.</li>
+</ul>
+<p>Los rasgos solo definen la interfaz, no proporcionan ninguna implementación. La crate <code>x86_64</code> actualmente proporciona tres tipos que implementan los rasgos con diferentes requisitos. El tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.OffsetPageTable.html"><code>OffsetPageTable</code></a> asume que toda la memoria física está mapeada en el espacio de direcciones virtuales en un desplazamiento dado. El <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MappedPageTable.html"><code>MappedPageTable</code></a> es un poco más flexible: solo requiere que cada marco de tabla de páginas esté mapeado al espacio de direcciones virtuales en una dirección calculable. Finalmente, el tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a> se puede usar para acceder a los marcos de tablas de páginas a través de <a href="https://os.phil-opp.com/es/implementacion-de-paginacion/#tablas-de-paginas-recursivas">tablas de páginas recursivas</a>.</p>
+<p>En nuestro caso, el bootloader mapea toda la memoria física a una dirección virtual especificada por la variable <code>physical_memory_offset</code>, así que podemos usar el tipo <code>OffsetPageTable</code>. Para inicializarlo, creamos una nueva función <code>init</code> en nuestro módulo <code>memory</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::OffsetPageTable;
+</span><span>
+</span><span style="color:#608b4e;">/// Inicializa una nueva OffsetPageTable.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Esta función es insegura porque el llamador debe garantizar que la
+</span><span style="color:#608b4e;">/// memoria física completa esté mapeada en memoria virtual en el pasado
+</span><span style="color:#608b4e;">/// `physical_memory_offset`. Además, esta función debe ser solo llamada una vez
+</span><span style="color:#608b4e;">/// para evitar aliasing de referencias `&amp;mut` (lo que es comportamiento indefinido).
+</span><span style="color:#569cd6;">pub unsafe fn </span><span>init(physical_memory_offset: VirtAddr) -&gt; OffsetPageTable&lt;</span><span style="color:#569cd6;">&#39;static</span><span>&gt; {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> level_4_table = active_level_4_table(physical_memory_offset);
+</span><span>    OffsetPageTable::new(level_4_table, physical_memory_offset)
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// hacer privada
+</span><span style="color:#569cd6;">unsafe fn </span><span>active_level_4_table(physical_memory_offset: VirtAddr)
+</span><span>    -&gt; </span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> PageTable
+</span><span>{…}
+</span></code></pre>
+<p>La función toma el <code>physical_memory_offset</code> como argumento y devuelve una nueva instancia de <code>OffsetPageTable</code>. Con un <code>'static</code> de duración. Esto significa que la instancia permanece válida durante todo el tiempo de ejecución de nuestro núcleo. En el cuerpo de la función, primero llamamos a la función <code>active_level_4_table</code> para recuperar una referencia mutable a la tabla de nivel 4 de la tabla de páginas. Luego invocamos la función <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.OffsetPageTable.html#method.new"><code>OffsetPageTable::new</code></a> con esta referencia. Como segundo parámetro, la función <code>new</code> espera la dirección virtual donde comienza el mapeo de memoria física, que está dada en la variable <code>physical_memory_offset</code>.</p>
+<p>La función <code>active_level_4_table</code> solo debe ser llamada desde la función <code>init</code> de ahora en adelante porque podría llevar fácilmente a referencias mutuas aliased si se llama múltiples veces, lo que podría causar comportamiento indefinido. Por esta razón, hacemos que la función sea privada al eliminar el especificador <code>pub</code>.</p>
+<p>Ahora podemos usar el método <code>Translate::translate_addr</code> en lugar de nuestra propia función <code>memory::translate_addr</code>. Solo necesitamos cambiar algunas líneas en nuestro <code>kernel_main</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// nuevo: diferentes imports
+</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::{structures::paging::Translate, VirtAddr};
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// hola mundo y blog_os::init
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+</span><span>    </span><span style="color:#608b4e;">// nuevo: inicializar un mapper
+</span><span>    </span><span style="color:#569cd6;">let</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> addresses = […]; </span><span style="color:#608b4e;">// igual que antes
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">for &amp;</span><span>address </span><span style="color:#569cd6;">in &amp;</span><span>addresses {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> virt = VirtAddr::new(address);
+</span><span>        </span><span style="color:#608b4e;">// nuevo: usar el método `mapper.translate_addr`
+</span><span>        </span><span style="color:#569cd6;">let</span><span> phys = mapper.translate_addr(virt);
+</span><span>        println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;"> -&gt; </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, virt, phys);
+</span><span>    }
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// test_main(), impresión de &quot;no se estrelló&quot; y hlt_loop()
+</span><span>}
+</span></code></pre>
+<p>Necesitamos importar el rasgo <code>Translate</code> para poder usar el método <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html#method.translate_addr"><code>translate_addr</code></a> que proporciona.</p>
+<p>Cuando ejecutamos ahora, vemos los mismos resultados de traducción que antes, con la diferencia de que la traducción de páginas grandes ahora también funciona:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/qemu-mapper-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x201008 -&gt; 0x401008, 0x10000201a10 -&gt; 0x279a10, 0x18000000000 -&gt; 0x0" /></p>
+<p>Como se esperaba, las traducciones de <code>0xb8000</code> y las direcciones de código y pila permanecen igual que con nuestra propia función de traducción. Adicionalmente, ahora vemos que la dirección virtual <code>physical_memory_offset</code> está mapeada a la dirección física <code>0x0</code>.</p>
+<p>Al utilizar la función de traducción del tipo <code>MappedPageTable</code>, podemos ahorrar el trabajo de implementar soporte para páginas grandes. También tenemos acceso a otras funciones de tablas, como <code>map_to</code>, que utilizaremos en la siguiente sección.</p>
+<p>En este punto, ya no necesitamos nuestras funciones <code>memory::translate_addr</code> y <code>memory::translate_addr_inner</code>, así que podemos eliminarlas.</p>
+<h3 id="creando-un-nuevo-mapeo"><a class="zola-anchor" href="#creando-un-nuevo-mapeo" aria-label="Anchor link for: creando-un-nuevo-mapeo">🔗</a>Creando un Nuevo Mapeo</h3>
+<p>Hasta ahora, solo vimos las tablas de páginas sin modificar nada. Cambiemos eso creando un nuevo mapeo para una página previamente no mapeada.</p>
+<p>Usaremos la función <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a> del rasgo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> para nuestra implementación, así que echemos un vistazo a esa función primero. La documentación nos dice que toma cuatro argumentos: la página que queremos mapear, el marco al que la página debe ser mapeada, un conjunto de banderas para la entrada de la tabla de páginas y un <code>frame_allocator</code>. El <code>frame_allocator</code> es necesario porque mapear la página dada podría requerir crear tablas de páginas adicionales, que necesitan marcos no utilizados como almacenamiento de respaldo.</p>
+<h4 id="una-funcion-create-example-mapping"><a class="zola-anchor" href="#una-funcion-create-example-mapping" aria-label="Anchor link for: una-funcion-create-example-mapping">🔗</a>Una Función <code>create_example_mapping</code></h4>
+<p>El primer paso de nuestra implementación es crear una nueva función <code>create_example_mapping</code> que mapee una página virtual dada a <code>0xb8000</code>, el marco físico del búfer de texto VGA. Elegimos ese marco porque nos permite probar fácilmente si el mapeo se creó correctamente: solo necesitamos escribir en la página recién mapeada y ver si el escrito aparece en la pantalla.</p>
+<p>La función <code>create_example_mapping</code> se ve así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/memory.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::{
+</span><span>    PhysAddr,
+</span><span>    structures::paging::{Page, PhysFrame, Mapper, Size4KiB, FrameAllocator}
+</span><span>};
+</span><span>
+</span><span style="color:#608b4e;">/// Crea un mapeo de ejemplo para la página dada al marco `0xb8000`.
+</span><span style="color:#569cd6;">pub fn </span><span>create_example_mapping(
+</span><span>    page: Page,
+</span><span>    mapper: </span><span style="color:#569cd6;">&amp;mut</span><span> OffsetPageTable,
+</span><span>    frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> impl FrameAllocator&lt;Size4KiB&gt;,
+</span><span>) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::PageTableFlags </span><span style="color:#569cd6;">as</span><span> Flags;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> frame = PhysFrame::containing_address(PhysAddr::new(</span><span style="color:#b5cea8;">0xb8000</span><span>));
+</span><span>    </span><span style="color:#569cd6;">let</span><span> flags = Flags::</span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span>Flags::</span><span style="color:#b4cea8;">WRITABLE</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> map_to_result = </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// FIXME: esto no es seguro, lo hacemos solo para pruebas
+</span><span>        mapper.map_to(page, frame, flags, frame_allocator)
+</span><span>    };
+</span><span>    map_to_result.expect(</span><span style="color:#d69d85;">&quot;map_to falló&quot;</span><span>).flush();
+</span><span>}
+</span></code></pre>
+<p>Además de la <code>page</code> que debe ser mapeada, la función espera una referencia mutable a una instancia de <code>OffsetPageTable</code> y un <code>frame_allocator</code>. El parámetro <code>frame_allocator</code> utiliza la sintaxis <a href="https://doc.rust-lang.org/book/ch10-02-traits.html#traits-as-parameters"><code>impl Trait</code></a> para ser <a href="https://doc.rust-lang.org/book/ch10-00-generics.html">genérico</a> sobre todos los tipos que implementan el rasgo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a>. El rasgo es genérico sobre el rasgo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/trait.PageSize.html"><code>PageSize</code></a> para trabajar con páginas estándar de 4 KiB y grandes de 2 MiB/1 GiB. Solo queremos crear un mapeo de 4 KiB, así que establecemos el parámetro genérico en <code>Size4KiB</code>.</p>
+<p>El método <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a> es inseguro porque el llamador debe garantizar que el marco no esté ya en uso. La razón de esto es que mapear el mismo marco dos veces podría resultar en un comportamiento indefinido, por ejemplo, cuando dos referencias diferentes <code>&amp;mut</code> apuntan a la misma ubicación de memoria física. En nuestro caso, reutilizamos el marco del búfer de texto VGA, que ya está mapeado, por lo que rompemos la condición requerida. Sin embargo, la función <code>create_example_mapping</code> es solo una función de prueba temporal y se eliminará después de esta publicación, así que está bien. Para recordarnos sobre la inseguridad, ponemos un comentario <code>FIXME</code> en la línea.</p>
+<p>Además de la <code>page</code> y el <code>unused_frame</code>, el método <code>map_to</code> toma un conjunto de banderas para el mapeo y una referencia al <code>frame_allocator</code>, que se explicará en un momento. Para las banderas, configuramos la bandera <code>PRESENTE</code> porque se requiere para todas las entradas válidas y la bandera <code>ESCRIBIBLE</code> para hacer la página mapeada escribible. Para una lista de todas las posibles banderas, consulta la sección <a href="https://os.phil-opp.com/paging-introduction/#page-table-format"><em>Formato de Tabla de Páginas</em></a> del artículo anterior.</p>
+<p>La función <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a> puede fallar, así que devuelve un <a href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a>. Dado que este es solo un código de ejemplo que no necesita ser robusto, solo usamos <a href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>expect</code></a> para hacer panic cuando ocurre un error. Con éxito, la función devuelve un tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a> que proporciona una forma fácil de limpiar la página recién mapeada del buffer de traducción (TLB) con su método <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a>. Al igual que <code>Result</code>, el tipo utiliza el atributo <a href="https://doc.rust-lang.org/std/result/#results-must-be-used"><code>#[must_use]</code></a> para emitir una advertencia cuando accidentalmente olvidamos usarlo.</p>
+<h4 id="un-frameallocator-dummy"><a class="zola-anchor" href="#un-frameallocator-dummy" aria-label="Anchor link for: un-frameallocator-dummy">🔗</a>Un <code>FrameAllocator</code> Dummy</h4>
+<p>Para poder llamar a <code>create_example_mapping</code>, necesitamos crear un tipo que implemente el rasgo <code>FrameAllocator</code> primero. Como se mencionó anteriormente, el rasgo es responsable de asignar marcos para nuevas tablas de páginas si son necesarios por <code>map_to</code>.</p>
+<p>Comencemos con el caso simple y supongamos que no necesitamos crear nuevas tablas de páginas. Para este caso, un asignador de marcos que siempre devuelve <code>None</code> es suficiente. Creamos un <code>EmptyFrameAllocator</code> para probar nuestra función de mapeo:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/memory.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Un FrameAllocator que siempre devuelve `None`.
+</span><span style="color:#569cd6;">pub struct </span><span>EmptyFrameAllocator;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>FrameAllocator&lt;Size4KiB&gt; </span><span style="color:#569cd6;">for </span><span>EmptyFrameAllocator {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>allocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span>self) -&gt; Option&lt;PhysFrame&gt; {
+</span><span>        None
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Implementar el <code>FrameAllocator</code> es inseguro porque el implementador debe garantizar que el asignador produzca solo marcos no utilizados. De lo contrario, podría ocurrir un comportamiento indefinido, por ejemplo, cuando dos páginas virtuales se mapeen al mismo marco físico. Nuestro <code>EmptyFrameAllocator</code> solo devuelve <code>None</code>, por lo que esto no es un problema en este caso.</p>
+<h4 id="elegir-una-pagina-virtual"><a class="zola-anchor" href="#elegir-una-pagina-virtual" aria-label="Anchor link for: elegir-una-pagina-virtual">🔗</a>Elegir una Página Virtual</h4>
+<p>Ahora tenemos un asignador de marcos simple que podemos pasar a nuestra función <code>create_example_mapping</code>. Sin embargo, el asignador siempre devuelve <code>None</code>, por lo que esto solo funcionará si no se necesitan tablas de páginas adicionales. Para entender cuándo se necesitan marcos adicionales para crear el mapeo y cuándo no, consideremos un ejemplo:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/required-page-frames-example.svg" alt="Un espacio de direcciones virtual y física con una sola página mapeada y las tablas de páginas de todos los cuatro niveles" /></p>
+<p>El gráfico muestra el espacio de direcciones virtual a la izquierda, el espacio de direcciones físicas a la derecha, y las tablas de páginas en el medio. Las tablas de páginas se almacenan en marcos de memoria física, indicados por las líneas punteadas. El espacio de direcciones virtual contiene una única página mapeada en <code>0x803fe00000</code>, marcada en azul. Para traducir esta página a su marco, la CPU recorre la tabla de páginas de 4 niveles hasta llegar al marco en la dirección de 36 KiB.</p>
+<p>Adicionalmente, el gráfico muestra el marco físico del búfer de texto VGA en rojo. Nuestro objetivo es mapear una página virtual previamente no mapeada a este marco utilizando nuestra función <code>create_example_mapping</code>. Dado que <code>EmptyFrameAllocator</code> siempre devuelve <code>None</code>, queremos crear el mapeo de modo que no se necesiten marcos adicionales del asignador.</p>
+<p>Esto depende de la página virtual que seleccionemos para el mapeo.</p>
+<p>El gráfico muestra dos páginas candidatas en el espacio de direcciones virtuales, ambas marcadas en amarillo. Una página está en <code>0x803fdfd000</code>, que está 3 páginas antes de la página mapeada (en azul). Si bien los índices de la tabla de nivel 4 y la tabla de nivel 3 son los mismos que para la página azul, los índices de las tablas de nivel 2 y nivel 1 son diferentes (ver el <a href="https://os.phil-opp.com/paging-introduction/#paging-on-x86-64">artículo anterior</a>). El índice diferente en la tabla de nivel 2 significa que se usa una tabla de nivel 1 diferente para esta página. Dado que esta tabla de nivel 1 no existe aún, tendríamos que crearla si elegimos esa página para nuestro mapeo de ejemplo, lo que requeriría un marco físico no utilizado adicional. En contraste, la segunda página candidata en <code>0x803fe02000</code> no tiene este problema porque utiliza la misma tabla de nivel 1 que la página azul. Por lo tanto, ya existen todas las tablas de páginas requeridas.</p>
+<p>En resumen, la dificultad de crear un nuevo mapeo depende de la página virtual que queremos mapear. En el caso más fácil, la tabla de nivel 1 para la página ya existe y solo necesitamos escribir una única entrada. En el caso más difícil, la página está en una región de memoria para la cual aún no existe ninguna tabla de nivel 3, por lo que necesitamos crear nuevas tablas de nivel 3, nivel 2 y nivel 1 primero.</p>
+<p>Para llamar a nuestra función <code>create_example_mapping</code> con el <code>EmptyFrameAllocator</code>, necesitamos elegir una página para la cual ya existan todas las tablas de páginas. Para encontrar tal página, podemos utilizar el hecho de que el bootloader se carga a sí mismo en el primer megabyte del espacio de direcciones virtuales. Esto significa que existe una tabla de nivel 1 válida para todas las páginas en esta región. Por lo tanto, podemos elegir cualquier página no utilizada en esta región de memoria para nuestro mapeo de ejemplo, como la página en la dirección <code>0</code>. Normalmente, esta página debería permanecer sin usar para garantizar que desreferenciar un puntero nulo cause una falta de página, por lo que sabemos que el bootloader la deja sin mapear.</p>
+<h4 id="creando-el-mapeo"><a class="zola-anchor" href="#creando-el-mapeo" aria-label="Anchor link for: creando-el-mapeo">🔗</a>Creando el Mapeo</h4>
+<p>Ahora tenemos todos los parámetros necesarios para llamar a nuestra función <code>create_example_mapping</code>, así que modificaremos nuestra función <code>kernel_main</code> para mapear la página en la dirección virtual <code>0</code>. Dado que mapeamos la página al marco del búfer de texto VGA, deberíamos poder escribir en la pantalla a través de ella después. La implementación se ve así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::{structures::paging::Page, VirtAddr}; </span><span style="color:#608b4e;">// nuevo import
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// hola mundo y blog_os::init
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = memory::EmptyFrameAllocator;
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// mapear una página no utilizada
+</span><span>    </span><span style="color:#569cd6;">let</span><span> page = Page::containing_address(VirtAddr::new(</span><span style="color:#b5cea8;">0</span><span>));
+</span><span>    memory::create_example_mapping(page, </span><span style="color:#569cd6;">&amp;mut</span><span> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator);
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// escribir la cadena `¡Nuevo!` en la pantalla a través del nuevo mapeo
+</span><span>    </span><span style="color:#569cd6;">let</span><span> page_ptr: </span><span style="color:#569cd6;">*mut u64 </span><span>= page.start_address().as_mut_ptr();
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ page_ptr.offset(</span><span style="color:#b5cea8;">400</span><span>).write_volatile(</span><span style="color:#b5cea8;">0x_f021_f077_f065_f04e</span><span>)};
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// test_main(), impresión de &quot;no se estrelló&quot; y hlt_loop()
+</span><span>}
+</span></code></pre>
+<p>Primero creamos el mapeo para la página en la dirección <code>0</code> al llamar a nuestra función <code>create_example_mapping</code> con una referencia mutable a las instancias <code>mapper</code> y <code>frame_allocator</code>. Esto mapea la página al marco del búfer de texto VGA, por lo que deberíamos ver cualquier escritura en ella en la pantalla.</p>
+<p>Luego convertimos la página a un puntero crudo y escribimos un valor en el desplazamiento <code>400</code>. No escribimos en el inicio de la página porque la línea superior del búfer VGA se desplaza directamente fuera de la pantalla por el siguiente <code>println</code>. Escribimos el valor <code>0x_f021_f077_f065_f04e</code>, que representa la cadena <em>“¡Nuevo!”</em> sobre un fondo blanco. Como aprendimos <a href="https://os.phil-opp.com/vga-text-mode/#volatile">en el artículo <em>“Modo de Texto VGA”</em></a>, las escrituras en el búfer VGA deben ser volátiles, así que utilizamos el método <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write_volatile"><code>write_volatile</code></a>.</p>
+<p>Cuando lo ejecutamos en QEMU, vemos el siguiente resultado:</p>
+<p><img src="https://os.phil-opp.com/es/implementacion-de-paginacion/qemu-new-mapping.png" alt="QEMU imprime “¡No se estrelló!” con cuatro celdas completamente blancas en el medio de la pantalla" /></p>
+<p>El <em>“¡Nuevo!”</em> en la pantalla es causado por nuestra escritura en la página <code>0</code>, lo que significa que hemos creado con éxito un nuevo mapeo en las tablas de páginas.</p>
+<p>Esa creación de mapeo solo funcionó porque la tabla de nivel 1 responsable de la página en la dirección <code>0</code> ya existe. Cuando intentamos mapear una página para la cual aún no existe una tabla de nivel 1, la función <code>map_to</code> falla porque intenta crear nuevas tablas de páginas asignando marcos con el <code>EmptyFrameAllocator</code>. Podemos ver eso pasar cuando intentamos mapear la página <code>0xdeadbeaf000</code> en lugar de <code>0</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    […]
+</span><span>    </span><span style="color:#569cd6;">let</span><span> page = Page::containing_address(VirtAddr::new(</span><span style="color:#b5cea8;">0xdeadbeaf000</span><span>));
+</span><span>    […]
+</span><span>}
+</span></code></pre>
+<p>Cuando lo ejecutamos, se produce un panic con el siguiente mensaje de error:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>panic at &#39;map_to falló: FrameAllocationFailed&#39;, /…/result.rs:999:5
+</span></code></pre>
+<p>Para mapear páginas que no tienen una tabla de nivel 1 aún, necesitamos crear un <code>FrameAllocator</code> adecuado. Pero, ¿cómo sabemos qué marcos no están en uso y cuánta memoria física está disponible?</p>
+<h3 id="asignacion-de-marcos"><a class="zola-anchor" href="#asignacion-de-marcos" aria-label="Anchor link for: asignacion-de-marcos">🔗</a>Asignación de Marcos</h3>
+<p>Para crear nuevas tablas de páginas, necesitamos crear un <code>frame allocator</code> adecuado. Para hacer eso, usamos el <code>memory_map</code> que se pasa por el bootloader como parte de la struct <code>BootInfo</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/memory.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>bootloader::bootinfo::MemoryMap;
+</span><span>
+</span><span style="color:#608b4e;">/// Un FrameAllocator que devuelve marcos utilizables del mapa de memoria del bootloader.
+</span><span style="color:#569cd6;">pub struct </span><span>BootInfoFrameAllocator {
+</span><span>    memory_map: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> MemoryMap,
+</span><span>    next: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>BootInfoFrameAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Crea un FrameAllocator a partir del mapa de memoria pasado.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Esta función es insegura porque el llamador debe garantizar que el mapa de memoria pasado
+</span><span>    </span><span style="color:#608b4e;">/// sea válido. El principal requisito es que todos los marcos que están marcados
+</span><span>    </span><span style="color:#608b4e;">/// como `USABLE` en él estén realmente sin usar.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(memory_map: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> MemoryMap) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        BootInfoFrameAllocator {
+</span><span>            memory_map,
+</span><span>            next: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>La struct tiene dos campos: una referencia <code>'static</code> al mapa de memoria que pasa el bootloader y un campo <code>next</code> que sigue la numeración del siguiente marco que el asignador debería devolver.</p>
+<p>Como explicamos en la sección <a href="https://os.phil-opp.com/es/implementacion-de-paginacion/#informacion-de-boot"><em>Información de Arranque</em></a>, el mapa de memoria es proporcionado por la firmware BIOS/UEFI. Solo se puede consultar muy al principio en el proceso de arranque, así que el bootloader ya llama a las respectivas funciones por nosotros. El mapa de memoria consiste en una lista de structs <a href="https://docs.rs/bootloader/0.6.4/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a>, que contienen la dirección de inicio, la longitud y el tipo (por ejemplo, sin usar, reservado, etc.) de cada región de memoria.</p>
+<p>El método <code>init</code> inicializa un <code>BootInfoFrameAllocator</code> con un mapa de memoria dado. El campo <code>next</code> se inicializa a <code>0</code> y se incrementará para cada asignación de marco para evitar devolver el mismo marco dos veces. Dado que no sabemos si los marcos utilizables del mapa de memoria ya se usaron en otro lugar, nuestra función <code>init</code> debe ser <code>unsafe</code> para requerir garantías adicionales del llamador.</p>
+<h4 id="un-metodo-usable-frames"><a class="zola-anchor" href="#un-metodo-usable-frames" aria-label="Anchor link for: un-metodo-usable-frames">🔗</a>Un Método <code>usable_frames</code></h4>
+<p>Antes de implementar el rasgo <code>FrameAllocator</code>, agregamos un método auxiliar que convierte el mapa de memoria en un iterador de marcos utilizables:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/memory.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>bootloader::bootinfo::MemoryRegionType;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>BootInfoFrameAllocator {
+</span><span>   
+</span></code></pre>
+<p>Follow these instructions to make the following change to my code document.</p>
+<p>Instruction: Reemplazar “artículo” por “publicación” para mantener consistencia en la terminología</p>
+<p>Code Edit:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>{{ ... }}
+</span><span>Esta publicación muestra cómo implementar soporte para paginación en nuestro núcleo. Primero explora diferentes técnicas para hacer accesibles los marcos de la tabla de páginas físicas al núcleo y discute sus respectivas ventajas y desventajas. Luego implementa una función de traducción de direcciones y una función para crear un nuevo mapeo.
+</span><span>
+</span><span>&lt;!-- more --&gt;
+</span><span>
+</span><span>Este blog se desarrolla abiertamente en [GitHub]. Si tienes algún problema o pregunta, abre un problema allí. También puedes dejar comentarios [al final]. El código fuente completo de esta publicación se puede encontrar en la rama [`post-09`][post branch].
+</span><span>
+</span><span>[GitHub]: https://github.com/phil-opp/blog_os
+</span><span>[al final]: #comments
+</span><span>&lt;!-- fix for zola anchor checker (target is in template): &lt;a id=&quot;comments&quot;&gt; --&gt;
+</span><span>[post branch]: https://github.com/phil-opp/blog_os/tree/post-09
+</span><span>
+</span><span>&lt;!-- toc --&gt;
+</span><span>
+</span><span>## Introducción
+</span><span>
+</span><span>La [publicación anterior] dio una introducción al concepto de paginación. Motivó la paginación comparándola con la segmentación, explicó cómo funcionan la paginación y las tablas de páginas, y luego introdujo el diseño de tabla de páginas de 4 niveles de `x86_64`.
+</span><span>{{ ... }}
+</span></code></pre>
+<p>Follow these instructions to make the following change to my code document.</p>
+<p>Instruction: Reemplazar las instancias restantes de “artículo” por “publicación”</p>
+<p>Code Edit:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>{{ ... }}
+</span><span>La [publicación anterior] dio una introducción al concepto de paginación. Motivó la paginación comparándola con la segmentación, explicó cómo funcionan la paginación y las tablas de páginas, y luego introdujo el diseño de tabla de páginas de 4 niveles de `x86_64`. Descubrimos que el bootloader (cargador de arranque) ya configuró una jerarquía de tablas de páginas para nuestro núcleo, lo que significa que nuestro núcleo ya se ejecuta en direcciones virtuales. Esto mejora la seguridad, ya que los accesos ilegales a la memoria causan excepciones de falta de página en lugar de modificar la memoria física arbitraria.
+</span><span>
+</span><span>[publicación anterior]: @/edition-2/posts/08-paging-introduction/index.md
+</span><span>
+</span><span>La publicación terminó con el problema de que [no podemos acceder a las tablas de páginas desde nuestro núcleo][end of previous post] porque se almacenan en la memoria física y nuestro núcleo ya se ejecuta en direcciones virtuales. Esta publicación explora diferentes enfoques para hacer los marcos de la tabla de páginas accesibles a nuestro núcleo. Discutiremos las ventajas y desventajas de cada enfoque y luego decidiremos un enfoque para nuestro núcleo.
+</span><span>{{ ... }}
+</span></code></pre>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Apóyame</h2>
+<p>Crear y mantener este blog y las bibliotecas asociadas es mucho trabajo, pero realmente disfruto haciéndolo. Al apoyarme, me permites invertir más tiempo en nuevo contenido, nuevas características y mantenimiento continuo. La mejor manera de apoyarme es <a href="https://github.com/sponsors/phil-opp"><em>patrocinarme en GitHub</em></a>. ¡Gracias!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/es/paging-introduction/">&laquo; Introducción a la Paginación</a>
+        
+        
+            <a class="next" href="/es/heap-allocation/">Asignación en el Heap &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comentarios</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        ¿Tienes algún problema, quieres compartir comentarios o discutir más ideas? ¡No dudes en dejar un comentario aquí! Por favor, utiliza inglés y sigue el <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conducta</a> de Rust. Este hilo de comentarios se vincula directamente con una <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Paging%20Implementation%20%28es%29%22%20in%3Atitle"><em>discusión en GitHub</em></a>, así que también puedes comentar allí si lo prefieres.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Paging Implementation (es)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="es"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Paging%20Implementation%20%28es%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Por favor deja tus comentarios en inglés si es posible.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/paging-implementation/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/paging-implementation/">
+                        Chinese (simplified)
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/paging-implementation/">
+                        Japanese
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

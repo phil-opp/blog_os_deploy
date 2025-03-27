@@ -1,0 +1,582 @@
+<!doctype html>
+
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Las excepciones de CPU ocurren en diversas situaciones erróneas, por ejemplo, al acceder a una dirección de memoria inválida o al dividir por cero. Pa…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/es/cpu-exceptions/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Excepciones de CPU | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/es" title="All Posts">« Todos los Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Tabla de Contenidos</h2>
+    <ol>
+        <li>
+            <a href="#descripcion-general">Descripción general</a>
+            <ol>
+                <li>
+                    <a href="#la-tabla-de-descriptores-de-interrupcion">La tabla de descriptores de interrupción</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#un-tipo-de-idt">Un tipo de IDT</a>
+            
+        </li><li>
+            <a href="#la-convencion-de-llamada-de-interrupcion">La convención de llamada de interrupción</a>
+            <ol>
+                <li>
+                    <a href="#registros-preservados-y-de-uso">Registros preservados y de uso</a>
+                </li><li>
+                    <a href="#preservando-todos-los-registros">Preservando todos los registros</a>
+                </li><li>
+                    <a href="#el-marco-de-pila-de-interrupcion">El marco de pila de interrupción</a>
+                </li><li>
+                    <a href="#demasiada-magia">Detrás de las escenas</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#implementacion">Implementación</a>
+            <ol>
+                <li>
+                    <a href="#cargando-la-idt">Cargando la IDT</a>
+                </li><li>
+                    <a href="#ejecutandolo">Ejecutándolo</a>
+                </li><li>
+                    <a href="#agregando-una-prueba">Agregando una prueba</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#demasiada-magia-1">¿Demasiada magia?</a>
+            
+        </li><li>
+            <a href="#que-sigue">¿Qué sigue?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Excepciones de CPU</h1>
+    <time datetime="2018-06-17" class="post-date">
+        Jun 17, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Contenido Traducido:</b>
+            Esta es una traducción comunitaria del post <strong><a href="https://os.phil-opp.com/cpu-exceptions/">CPU Exceptions</a></strong>. Puede estar incompleta, desactualizada o contener errores. ¡Por favor reporta cualquier problema!
+            </p>
+            <p>
+                Traducción por <a href="https://github.com/dobleuber">@dobleuber</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Las excepciones de CPU ocurren en diversas situaciones erróneas, por ejemplo, al acceder a una dirección de memoria inválida o al dividir por cero. Para reaccionar ante ellas, tenemos que configurar una <em>tabla de descriptores de interrupción</em> (IDT, por sus siglas en inglés) que proporcione funciones manejadoras. Al final de esta publicación, nuestro núcleo será capaz de capturar <a href="https://wiki.osdev.org/Exceptions#Breakpoint">excepciones de punto de interrupción</a> y reanudar la ejecución normal después.</p>
+<span id="continue-reading"></span>
+<p>Este blog se desarrolla abiertamente en <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Si tiene algún problema o pregunta, por favor abra un problema allí. También puede dejar comentarios <a href="https://os.phil-opp.com/es/cpu-exceptions/#comments">al final</a>. El código fuente completo de esta publicación se puede encontrar en la rama <a href="https://github.com/phil-opp/blog_os/tree/post-05"><code>post-05</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Tabla de Contenidos</b></summary>
+        <ul>
+            <li>
+                <a href="#descripcion-general">Descripción general</a>
+                <ul>
+                    <li>
+                        <a href="#la-tabla-de-descriptores-de-interrupcion">La tabla de descriptores de interrupción</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#un-tipo-de-idt">Un tipo de IDT</a>
+                
+            </li><li>
+                <a href="#la-convencion-de-llamada-de-interrupcion">La convención de llamada de interrupción</a>
+                <ul>
+                    <li>
+                        <a href="#registros-preservados-y-de-uso">Registros preservados y de uso</a>
+                    </li><li>
+                        <a href="#preservando-todos-los-registros">Preservando todos los registros</a>
+                    </li><li>
+                        <a href="#el-marco-de-pila-de-interrupcion">El marco de pila de interrupción</a>
+                    </li><li>
+                        <a href="#demasiada-magia">Detrás de las escenas</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#implementacion">Implementación</a>
+                <ul>
+                    <li>
+                        <a href="#cargando-la-idt">Cargando la IDT</a>
+                    </li><li>
+                        <a href="#ejecutandolo">Ejecutándolo</a>
+                    </li><li>
+                        <a href="#agregando-una-prueba">Agregando una prueba</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#demasiada-magia-1">¿Demasiada magia?</a>
+                
+            </li><li>
+                <a href="#que-sigue">¿Qué sigue?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
+        </ul>
+    </details>
+
+<h2 id="descripcion-general"><a class="zola-anchor" href="#descripcion-general" aria-label="Anchor link for: descripcion-general">🔗</a>Descripción general</h2>
+<p>Una excepción indica que algo está mal con la instrucción actual. Por ejemplo, la CPU emite una excepción si la instrucción actual intenta dividir por 0. Cuando se produce una excepción, la CPU interrumpe su trabajo actual y llama inmediatamente a una función manejadora de excepciones específica, dependiendo del tipo de excepción.</p>
+<p>En x86, hay alrededor de 20 tipos diferentes de excepciones de CPU. Las más importantes son:</p>
+<ul>
+<li><strong>Fallo de página</strong>: Un fallo de página ocurre en accesos a memoria ilegales. Por ejemplo, si la instrucción actual intenta leer de una página no mapeada o intenta escribir en una página de solo lectura.</li>
+<li><strong>Código de operación inválido</strong>: Esta excepción ocurre cuando la instrucción actual es inválida, por ejemplo, cuando intentamos usar nuevas <a href="https://en.wikipedia.org/wiki/Streaming_SIMD_Extensions">instrucciones SSE</a> en una CPU antigua que no las soporta.</li>
+<li><strong>Fallo de protección general</strong>: Esta es la excepción con el rango más amplio de causas. Ocurre en varios tipos de violaciones de acceso, como intentar ejecutar una instrucción privilegiada en código de nivel de usuario o escribir en campos reservados en registros de configuración.</li>
+<li><strong>Doble fallo</strong>: Cuando ocurre una excepción, la CPU intenta llamar a la función manejadora correspondiente. Si ocurre otra excepción <em>mientras se llama a la función manejadora de excepciones</em>, la CPU genera una excepción de doble fallo. Esta excepción también ocurre cuando no hay una función manejadora registrada para una excepción.</li>
+<li><strong>Triple fallo</strong>: Si ocurre una excepción mientras la CPU intenta llamar a la función manejadora de doble fallo, emite un <em>triple fallo</em> fatal. No podemos capturar o manejar un triple fallo. La mayoría de los procesadores reaccionan reiniciándose y reiniciando el sistema operativo.</li>
+</ul>
+<p>Para ver la lista completa de excepciones, consulte la <a href="https://wiki.osdev.org/Exceptions">wiki de OSDev</a>.</p>
+<h3 id="la-tabla-de-descriptores-de-interrupcion"><a class="zola-anchor" href="#la-tabla-de-descriptores-de-interrupcion" aria-label="Anchor link for: la-tabla-de-descriptores-de-interrupcion">🔗</a>La tabla de descriptores de interrupción</h3>
+<p>Para poder capturar y manejar excepciones, tenemos que configurar una llamada <em>tabla de descriptores de interrupción</em> (IDT). En esta tabla, podemos especificar una función manejadora para cada excepción de CPU. El hardware utiliza esta tabla directamente, por lo que necesitamos seguir un formato predefinido. Cada entrada debe tener la siguiente estructura de 16 bytes:</p>
+<table><thead><tr><th>Tipo</th><th>Nombre</th><th>Descripción</th></tr></thead><tbody>
+<tr><td>u16</td><td>Puntero a función [0:15]</td><td>Los bits más bajos del puntero a la función manejadora.</td></tr>
+<tr><td>u16</td><td>Selector GDT</td><td>Selector de un segmento de código en la <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table">tabla de descriptores global</a>.</td></tr>
+<tr><td>u16</td><td>Opciones</td><td>(ver abajo)</td></tr>
+<tr><td>u16</td><td>Puntero a función [16:31]</td><td>Los bits del medio del puntero a la función manejadora.</td></tr>
+<tr><td>u32</td><td>Puntero a función [32:63]</td><td>Los bits restantes del puntero a la función manejadora.</td></tr>
+<tr><td>u32</td><td>Reservado</td><td></td></tr>
+</tbody></table>
+<p>El campo de opciones tiene el siguiente formato:</p>
+<table><thead><tr><th>Bits</th><th>Nombre</th><th>Descripción</th></tr></thead><tbody>
+<tr><td>0-2</td><td>Índice de tabla de pila de interrupción</td><td>0: No cambiar pilas, 1-7: Cambiar a la n-ésima pila en la Tabla de Pila de Interrupción cuando se llama a este manejador.</td></tr>
+<tr><td>3-7</td><td>Reservado</td><td></td></tr>
+<tr><td>8</td><td>0: Puerta de interrupción, 1: Puerta de trampa</td><td>Si este bit es 0, las interrupciones están deshabilitadas cuando se llama a este manejador.</td></tr>
+<tr><td>9-11</td><td>debe ser uno</td><td></td></tr>
+<tr><td>12</td><td>debe ser cero</td><td></td></tr>
+<tr><td>13‑14</td><td>Nivel de privilegio del descriptor (DPL)</td><td>El nivel mínimo de privilegio requerido para llamar a este manejador.</td></tr>
+<tr><td>15</td><td>Presente</td><td></td></tr>
+</tbody></table>
+<p>Cada excepción tiene un índice de IDT predefinido. Por ejemplo, la excepción de código de operación inválido tiene índice de tabla 6 y la excepción de fallo de página tiene índice de tabla 14. Así, el hardware puede cargar automáticamente la entrada de IDT correspondiente para cada excepción. La <a href="https://wiki.osdev.org/Exceptions">Tabla de Excepciones</a> en la wiki de OSDev muestra los índices de IDT de todas las excepciones en la columna “Vector nr.”.</p>
+<p>Cuando ocurre una excepción, la CPU realiza aproximadamente lo siguiente:</p>
+<ol>
+<li>Empuja algunos registros en la pila, incluyendo el puntero de instrucción y el registro <a href="https://en.wikipedia.org/wiki/FLAGS_register">RFLAGS</a>. (Usaremos estos valores más adelante en esta publicación.)</li>
+<li>Lee la entrada correspondiente de la tabla de descriptores de interrupción (IDT). Por ejemplo, la CPU lee la 14ª entrada cuando ocurre un fallo de página.</li>
+<li>Verifica si la entrada está presente y, si no, genera un doble fallo.</li>
+<li>Deshabilita las interrupciones de hardware si la entrada es una puerta de interrupción (bit 40 no establecido).</li>
+<li>Carga el selector <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table">GDT</a> especificado en el CS (segmento de código).</li>
+<li>Salta a la función manejadora especificada.</li>
+</ol>
+<p>No se preocupe por los pasos 4 y 5 por ahora; aprenderemos sobre la tabla de descriptores global y las interrupciones de hardware en publicaciones futuras.</p>
+<h2 id="un-tipo-de-idt"><a class="zola-anchor" href="#un-tipo-de-idt" aria-label="Anchor link for: un-tipo-de-idt">🔗</a>Un tipo de IDT</h2>
+<p>En lugar de crear nuestro propio tipo de IDT, utilizaremos la estructura <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> del crate <code>x86_64</code>, que luce así:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[repr(C)]
+</span><span style="color:#569cd6;">pub struct </span><span>InterruptDescriptorTable {
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>divide_by_zero: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>debug: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>non_maskable_interrupt: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>breakpoint: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>overflow: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>bound_range_exceeded: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>invalid_opcode: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>device_not_available: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>double_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>invalid_tss: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>segment_not_present: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>stack_segment_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>general_protection_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>page_fault: Entry&lt;PageFaultHandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>x87_floating_point: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>alignment_check: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>machine_check: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>simd_floating_point: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>virtualization: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>security_exception: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#608b4e;">// algunos campos omitidos
+</span><span>}
+</span></code></pre>
+<p>Los campos tienen el tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.Entry.html"><code>idt::Entry&lt;F&gt;</code></a>, que es una estructura que representa los campos de una entrada de IDT (ver tabla anterior). El parámetro de tipo <code>F</code> define el tipo esperado de la función manejadora. Vemos que algunas entradas requieren un <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFunc.html"><code>HandlerFunc</code></a> y algunas entradas requieren un <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>. El fallo de página incluso tiene su propio tipo especial: <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.PageFaultHandlerFunc.html"><code>PageFaultHandlerFunc</code></a>.</p>
+<p>Veamos primero el tipo <code>HandlerFunc</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">HandlerFunc </span><span>= </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn</span><span>(</span><span style="color:#569cd6;">_</span><span>: InterruptStackFrame);
+</span></code></pre>
+<p>Es un <a href="https://doc.rust-lang.org/book/ch19-04-advanced-types.html#creating-type-synonyms-with-type-aliases">alias de tipo</a> para un tipo de <code>extern "x86-interrupt" fn</code>. La palabra clave <code>extern</code> define una función con una <a href="https://doc.rust-lang.org/nomicon/ffi.html#foreign-calling-conventions">convención de llamada foránea</a> y se utiliza a menudo para comunicarse con código C (<code>extern "C" fn</code>). Pero, ¿cuál es la convención de llamada <code>x86-interrupt</code>?</p>
+<h2 id="la-convencion-de-llamada-de-interrupcion"><a class="zola-anchor" href="#la-convencion-de-llamada-de-interrupcion" aria-label="Anchor link for: la-convencion-de-llamada-de-interrupcion">🔗</a>La convención de llamada de interrupción</h2>
+<p>Las excepciones son bastante similares a las llamadas a funciones: la CPU salta a la primera instrucción de la función llamada y la ejecuta. Después, la CPU salta a la dirección de retorno y continúa la ejecución de la función madre.</p>
+<p>Sin embargo, hay una gran diferencia entre excepciones y llamadas a funciones: una llamada a función es invocada voluntariamente por una instrucción <code>call</code> insertada por el compilador, mientras que una excepción puede ocurrir en <em>cualquier</em> instrucción. Para entender las consecuencias de esta diferencia, necesitamos examinar las llamadas a funciones en más detalle.</p>
+<p><a href="https://en.wikipedia.org/wiki/Calling_convention">Convenciones de llamada</a> especifican los detalles de una llamada a función. Por ejemplo, especifican dónde se colocan los parámetros de la función (por ejemplo, en registros o en la pila) y cómo se devuelven los resultados. En x86_64 Linux, se aplican las siguientes reglas para funciones C (especificadas en el <a href="https://refspecs.linuxbase.org/elf/x86_64-abi-0.99.pdf">ABI de System V</a>):</p>
+<ul>
+<li>los primeros seis argumentos enteros se pasan en los registros <code>rdi</code>, <code>rsi</code>, <code>rdx</code>, <code>rcx</code>, <code>r8</code>, <code>r9</code></li>
+<li>argumentos adicionales se pasan en la pila</li>
+<li>los resultados se devuelven en <code>rax</code> y <code>rdx</code></li>
+</ul>
+<p>Tenga en cuenta que Rust no sigue el ABI de C (de hecho, <a href="https://github.com/rust-lang/rfcs/issues/600">ni siquiera hay un ABI de Rust todavía</a>), por lo que estas reglas solo se aplican a funciones declaradas como <code>extern "C" fn</code>.</p>
+<h3 id="registros-preservados-y-de-uso"><a class="zola-anchor" href="#registros-preservados-y-de-uso" aria-label="Anchor link for: registros-preservados-y-de-uso">🔗</a>Registros preservados y de uso</h3>
+<p>La convención de llamada divide los registros en dos partes: registros <em>preservados</em> y registros <em>de uso</em>.</p>
+<p>Los valores de los registros <em>preservados</em> deben permanecer sin cambios a través de llamadas a funciones. Por lo tanto, una función llamada (la <em>“llamada”</em>) solo puede sobrescribir estos registros si restaura sus valores originales antes de retornar. Por ello, estos registros se llaman <em>“guardados por el llamado”</em>. Un patrón común es guardar estos registros en la pila al inicio de la función y restaurarlos justo antes de retornar.</p>
+<p>En contraste, una función llamada puede sobrescribir registros <em>de uso</em> sin restricciones. Si el llamador quiere preservar el valor de un registro de uso a través de una llamada a función, necesita respaldarlo y restaurarlo antes de la llamada a la función (por ejemplo, empujándolo a la pila). Así, los registros de uso son <em>guardados por el llamador</em>.</p>
+<p>En x86_64, la convención de llamada C especifica los siguientes registros preservados y de uso:</p>
+<table><thead><tr><th>registros preservados</th><th>registros de uso</th></tr></thead><tbody>
+<tr><td><code>rbp</code>, <code>rbx</code>, <code>rsp</code>, <code>r12</code>, <code>r13</code>, <code>r14</code>, <code>r15</code></td><td><code>rax</code>, <code>rcx</code>, <code>rdx</code>, <code>rsi</code>, <code>rdi</code>, <code>r8</code>, <code>r9</code>, <code>r10</code>, <code>r11</code></td></tr>
+<tr><td><em>guardados por el llamado</em></td><td><em>guardados por el llamador</em></td></tr>
+</tbody></table>
+<p>El compilador conoce estas reglas, por lo que genera el código en consecuencia. Por ejemplo, la mayoría de las funciones comienzan con un <code>push rbp</code>, que respalda <code>rbp</code> en la pila (porque es un registro guardado por el llamado).</p>
+<h3 id="preservando-todos-los-registros"><a class="zola-anchor" href="#preservando-todos-los-registros" aria-label="Anchor link for: preservando-todos-los-registros">🔗</a>Preservando todos los registros</h3>
+<p>A diferencia de las llamadas a funciones, las excepciones pueden ocurrir en <em>cualquier</em> instrucción. En la mayoría de los casos, ni siquiera sabemos en tiempo de compilación si el código generado causará una excepción. Por ejemplo, el compilador no puede saber si una instrucción provoca un desbordamiento de pila o un fallo de página.</p>
+<p>Dado que no sabemos cuándo ocurrirá una excepción, no podemos respaldar ningún registro antes. Esto significa que no podemos usar una convención de llamada que dependa de registros guardados por el llamador para los manejadores de excepciones. En su lugar, necesitamos una convención de llamada que preserve <em>todos los registros</em>. La convención de llamada <code>x86-interrupt</code> es una de esas convenciones, por lo que garantiza que todos los valores de los registros se restauren a sus valores originales al retornar de la función.</p>
+<p>Tenga en cuenta que esto no significa que todos los registros se guarden en la pila al ingresar la función. En su lugar, el compilador solo respalda los registros que son sobrescritos por la función. De esta manera, se puede generar un código muy eficiente para funciones cortas que solo utilizan unos pocos registros.</p>
+<h3 id="el-marco-de-pila-de-interrupcion"><a class="zola-anchor" href="#el-marco-de-pila-de-interrupcion" aria-label="Anchor link for: el-marco-de-pila-de-interrupcion">🔗</a>El marco de pila de interrupción</h3>
+<p>En una llamada a función normal (usando la instrucción <code>call</code>), la CPU empuja la dirección de retorno antes de saltar a la función objetivo. Al retornar de la función (usando la instrucción <code>ret</code>), la CPU extrae esta dirección de retorno y salta a ella. Por lo tanto, el marco de pila de una llamada a función normal se ve así:</p>
+<p><img src="https://os.phil-opp.com/es/cpu-exceptions/function-stack-frame.svg" alt="marco de pila de función" /></p>
+<p>Sin embargo, para los manejadores de excepciones e interrupciones, empujar una dirección de retorno no sería suficiente, ya que los manejadores de interrupción a menudo se ejecutan en un contexto diferente (puntero de pila, flags de CPU, etc.). En cambio, la CPU realiza los siguientes pasos cuando ocurre una interrupción:</p>
+<ol start="0">
+<li><strong>Guardando el antiguo puntero de pila</strong>: La CPU lee los valores del puntero de pila (<code>rsp</code>) y del registro del segmento de pila (<code>ss</code>) y los recuerda en un búfer interno.</li>
+<li><strong>Alineando el puntero de pila</strong>: Una interrupción puede ocurrir en cualquier instrucción, por lo que el puntero de pila también puede tener cualquier valor. Sin embargo, algunas instrucciones de CPU (por ejemplo, algunas instrucciones SSE) requieren que el puntero de pila esté alineado en un límite de 16 bytes, por lo que la CPU realiza tal alineación inmediatamente después de la interrupción.</li>
+<li><strong>Cambiando de pilas</strong> (en algunos casos): Se produce un cambio de pila cuando cambia el nivel de privilegio de la CPU, por ejemplo, cuando ocurre una excepción de CPU en un programa en modo usuario. También es posible configurar los cambios de pila para interrupciones específicas utilizando la llamada <em>Tabla de Pila de Interrupción</em> (descrita en la próxima publicación).</li>
+<li><strong>Empujando el antiguo puntero de pila</strong>: La CPU empuja los valores <code>rsp</code> y <code>ss</code> del paso 0 a la pila. Esto hace posible restaurar el puntero de pila original al retornar de un manejador de interrupción.</li>
+<li><strong>Empujando y actualizando el registro <code>RFLAGS</code></strong>: El registro <a href="https://en.wikipedia.org/wiki/FLAGS_register"><code>RFLAGS</code></a> contiene varios bits de control y estado. Al entrar en la interrupción, la CPU cambia algunos bits y empuja el antiguo valor.</li>
+<li><strong>Empujando el puntero de instrucción</strong>: Antes de saltar a la función manejadora de la interrupción, la CPU empuja el puntero de instrucción (<code>rip</code>) y el segmento de código (<code>cs</code>). Esto es comparable al empuje de la dirección de retorno de una llamada a función normal.</li>
+<li><strong>Empujando un código de error</strong> (para algunas excepciones): Para algunas excepciones específicas, como los fallos de página, la CPU empuja un código de error, que describe la causa de la excepción.</li>
+<li><strong>Invocando el manejador de interrupción</strong>: La CPU lee la dirección y el descriptor de segmento de la función manejadora de interrupción del campo correspondiente en la IDT. Luego, invoca este manejador cargando los valores en los registros <code>rip</code> y <code>cs</code>.</li>
+</ol>
+<p>Así, el <em>marco de pila de interrupción</em> se ve así:</p>
+<p><img src="https://os.phil-opp.com/es/cpu-exceptions/exception-stack-frame.svg" alt="marco de pila de interrupción" /></p>
+<p>En el crate <code>x86_64</code>, el marco de pila de interrupción está representado por la estructura <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptStackFrame.html"><code>InterruptStackFrame</code></a>. Se pasa a los manejadores de interrupción como <code>&amp;mut</code> y se puede utilizar para recuperar información adicional sobre la causa de la excepción. La estructura no contiene un campo de código de error, ya que solo algunas pocas excepciones empujan un código de error. Estas excepciones utilizan el tipo de función separado <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>, que tiene un argumento adicional <code>error_code</code>.</p>
+<h3 id="demasiada-magia"><a class="zola-anchor" href="#demasiada-magia" aria-label="Anchor link for: demasiada-magia">🔗</a>Detrás de las escenas</h3>
+<p>La convención de llamada <code>x86-interrupt</code> es una potente abstracción que oculta casi todos los detalles desordenados del proceso de manejo de excepciones. Sin embargo, a veces es útil saber lo que sucede tras el telón. Aquí hay un breve resumen de las cosas que la convención de llamada <code>x86-interrupt</code> maneja:</p>
+<ul>
+<li><strong>Recuperando los argumentos</strong>: La mayoría de las convenciones de llamada esperan que los argumentos se pasen en registros. Esto no es posible para los manejadores de excepciones, ya que no debemos sobrescribir los valores de ningún registro antes de respaldarlos en la pila. En cambio, la convención de llamada <code>x86-interrupt</code> es consciente de que los argumentos ya están en la pila en un desplazamiento específico.</li>
+<li><strong>Retornando usando <code>iretq</code></strong>: Dado que el marco de pila de interrupción difiere completamente de los marcos de pila de llamadas a funciones normales, no podemos retornar de las funciones manejadoras a través de la instrucción <code>ret</code> normal. Así que en su lugar, se debe usar la instrucción <code>iretq</code>.</li>
+<li><strong>Manejando el código de error</strong>: El código de error, que se empuja para algunas excepciones, hace que las cosas sean mucho más complejas. Cambia la alineación de la pila (vea el siguiente punto) y debe ser extraído de la pila antes de retornar. La convención de llamada <code>x86-interrupt</code> maneja toda esa complejidad. Sin embargo, no sabe qué función manejadora se utiliza para qué excepción, por lo que necesita deducir esa información del número de argumentos de función. Esto significa que el programador sigue siendo responsable de utilizar el tipo de función correcto para cada excepción. Afortunadamente, el tipo <code>InterruptDescriptorTable</code> definido por el crate <code>x86_64</code> asegura que se utilicen los tipos de función correctos.</li>
+<li><strong>Alineando la pila</strong>: Algunas instrucciones (especialmente las instrucciones SSE) requieren que la pila esté alineada a 16 bytes. La CPU asegura esta alineación cada vez que ocurre una excepción, pero para algunas excepciones, puede destruirla de nuevo más tarde cuando empuja un código de error. La convención de llamada <code>x86-interrupt</code> se encarga de esto al realinear la pila en este caso.</li>
+</ul>
+<p>Si está interesado en más detalles, también tenemos una serie de publicaciones que explican el manejo de excepciones utilizando <a href="https://github.com/rust-lang/rfcs/blob/master/text/1201-naked-fns.md">funciones desnudas</a> vinculadas <a href="https://os.phil-opp.com/es/cpu-exceptions/#demasiada-magia">al final de esta publicación</a>.</p>
+<h2 id="implementacion"><a class="zola-anchor" href="#implementacion" aria-label="Anchor link for: implementacion">🔗</a>Implementación</h2>
+<p>Ahora que hemos entendido la teoría, es hora de manejar las excepciones de CPU en nuestro núcleo. Comenzaremos creando un nuevo módulo de interrupciones en <code>src/interrupts.rs</code>, que primero crea una función <code>init_idt</code> que crea una nueva <code>InterruptDescriptorTable</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>interrupts;
+</span><span>
+</span><span style="color:#608b4e;">// en src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::InterruptDescriptorTable;
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>}
+</span></code></pre>
+<p>Ahora podemos agregar funciones manejadoras. Comenzamos agregando un manejador para la <a href="https://wiki.osdev.org/Exceptions#Breakpoint">excepción de punto de interrupción</a>. La excepción de punto de interrupción es la excepción perfecta para probar el manejo de excepciones. Su único propósito es pausar temporalmente un programa cuando se ejecuta la instrucción de punto de interrupción <code>int3</code>.</p>
+<p>La excepción de punto de interrupción se utiliza comúnmente en depuradores: cuando el usuario establece un punto de interrupción, el depurador sobrescribe la instrucción correspondiente con la instrucción <code>int3</code> para que la CPU lance la excepción de punto de interrupción al llegar a esa línea. Cuando el usuario quiere continuar el programa, el depurador reemplaza la instrucción <code>int3</code> con la instrucción original nuevamente y continúa el programa. Para más detalles, vea la serie <a href="https://eli.thegreenplace.net/2011/01/27/how-debuggers-work-part-2-breakpoints">“<em>Cómo funcionan los depuradores</em>”</a>.</p>
+<p>Para nuestro caso de uso, no necesitamos sobrescribir instrucciones. En su lugar, solo queremos imprimir un mensaje cuando la instrucción de punto de interrupción se ejecute y luego continuar el programa. Así que creemos una simple función <code>breakpoint_handler</code> y la agreguemos a nuestra IDT:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+</span><span style="color:#569cd6;">use crate</span><span>::println;
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>    idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>breakpoint_handler(
+</span><span>    stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;EXCEPCIÓN: PUNTO DE INTERRUPCIÓN</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span>, stack_frame);
+</span><span>}
+</span></code></pre>
+<p>Nuestro manejador simplemente muestra un mensaje y imprime en formato bonito el marco de pila de interrupción.</p>
+<p>Cuando intentamos compilarlo, ocurre el siguiente error:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0658]: la ABI de x86-interrupt es experimental y está sujeta a cambios (ver issue #40180)
+</span><span>  --&gt; src/main.rs:53:1
+</span><span>   |
+</span><span>53 | / extern &quot;x86-interrupt&quot; fn breakpoint_handler(stack_frame: InterruptStackFrame) {
+</span><span>54 | |     println!(&quot;EXCEPCIÓN: PUNTO DE INTERRUPCIÓN\n{:#?}&quot;, stack_frame);
+</span><span>55 | | }
+</span><span>   | |_^
+</span><span>   |
+</span><span>   = ayuda: añade #![feature(abi_x86_interrupt)] a los atributos del crate para habilitarlo
+</span></code></pre>
+<p>Este error ocurre porque la convención de llamada <code>x86-interrupt</code> sigue siendo inestable. Para utilizarla de todos modos, tenemos que habilitarla explícitamente añadiendo <code>#![feature(abi_x86_interrupt)]</code> en la parte superior de nuestro <code>lib.rs</code>.</p>
+<h3 id="cargando-la-idt"><a class="zola-anchor" href="#cargando-la-idt" aria-label="Anchor link for: cargando-la-idt">🔗</a>Cargando la IDT</h3>
+<p>Para que la CPU utilice nuestra nueva tabla de descriptores de interrupción, necesitamos cargarla usando la instrucción <a href="https://www.felixcloutier.com/x86/lgdt:lidt"><code>lidt</code></a>. La estructura <code>InterruptDescriptorTable</code> del crate <code>x86_64</code> proporciona un método <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html#method.load"><code>load</code></a> para eso. Intentemos usarlo:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>    idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>    idt.load();
+</span><span>}
+</span></code></pre>
+<p>Cuando intentamos compilarlo ahora, ocurre el siguiente error:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: `idt` no vive lo suficiente
+</span><span>  --&gt; src/interrupts/mod.rs:43:5
+</span><span>   |
+</span><span>43 |     idt.load();
+</span><span>   |     ^^^ no vive lo suficiente
+</span><span>44 | }
+</span><span>   | - el valor prestado solo es válido hasta aquí
+</span><span>   |
+</span><span>   = nota: el valor prestado debe ser válido durante la vida estática...
+</span></code></pre>
+<p>Así que el método <code>load</code> espera un <code>&amp;'static self</code>, es decir, una referencia válida para la duración completa del programa. La razón es que la CPU accederá a esta tabla en cada interrupción hasta que se cargue una IDT diferente. Por lo tanto, usar una vida más corta que <code>'static</code> podría llevar a errores de uso después de liberar.</p>
+<p>De hecho, esto es exactamente lo que sucede aquí. Nuestra <code>idt</code> se crea en la pila, por lo que solo es válida dentro de la función <code>init</code>. Después, la memoria de la pila se reutiliza para otras funciones, por lo que la CPU podría interpretar una memoria aleatoria de la pila como IDT. Afortunadamente, el método <code>load</code> de <code>InterruptDescriptorTable</code> codifica este requisito de vida en su definición de función, para que el compilador de Rust pueda prevenir este posible error en tiempo de compilación.</p>
+<p>Para solucionar este problema, necesitamos almacenar nuestra <code>idt</code> en un lugar donde tenga una vida <code>'static</code>. Para lograr esto, podríamos asignar nuestra IDT en el montón usando <a href="https://doc.rust-lang.org/std/boxed/struct.Box.html"><code>Box</code></a> y luego convertirla en una referencia <code>'static</code>, pero estamos escribiendo un núcleo de sistema operativo y, por lo tanto, no tenemos un montón (todavía).</p>
+<p>Como alternativa, podríamos intentar almacenar la IDT como una <code>static</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = InterruptDescriptorTable::new();
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>}
+</span></code></pre>
+<p>Sin embargo, hay un problema: las estáticas son inmutables, por lo que no podemos modificar la entrada de punto de interrupción desde nuestra función <code>init</code>. Podríamos resolver este problema utilizando un <a href="https://doc.rust-lang.org/1.30.0/book/second-edition/ch19-01-unsafe-rust.html#accessing-or-modifying-a-mutable-static-variable"><code>static mut</code></a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = InterruptDescriptorTable::new();
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">IDT</span><span>.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Esta variante se compila sin errores, pero está lejos de ser idiomática. Las variables <code>static mut</code> son muy propensas a condiciones de carrera, por lo que necesitamos un bloque <a href="https://doc.rust-lang.org/1.30.0/book/second-edition/ch19-01-unsafe-rust.html#unsafe-superpowers"><code>unsafe</code></a> en cada acceso.</p>
+<h4 id="las-estaticas-perezosas-al-rescate"><a class="zola-anchor" href="#las-estaticas-perezosas-al-rescate" aria-label="Anchor link for: las-estaticas-perezosas-al-rescate">🔗</a>Las estáticas perezosas al rescate</h4>
+<p>Afortunadamente, existe el macro <code>lazy_static</code>. En lugar de evaluar una <code>static</code> en tiempo de compilación, el macro realiza la inicialización de cuando la <code>static</code> es referenciada por primera vez. Por lo tanto, podemos hacer casi todo en el bloque de inicialización e incluso ser capaces de leer valores en tiempo de ejecución.</p>
+<p>Ya importamos el crate <code>lazy_static</code> cuando <a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">creamos una abstracción para el búfer de texto VGA</a>. Así que podemos utilizar directamente el macro <code>lazy_static!</code> para crear nuestra IDT estática:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>}
+</span></code></pre>
+<p>Tenga en cuenta cómo esta solución no requiere bloques <code>unsafe</code>. El macro <code>lazy_static!</code> utiliza <code>unsafe</code> detrás de escena, pero está abstraído en una interfaz segura.</p>
+<h3 id="ejecutandolo"><a class="zola-anchor" href="#ejecutandolo" aria-label="Anchor link for: ejecutandolo">🔗</a>Ejecutándolo</h3>
+<p>El último paso para hacer que las excepciones funcionen en nuestro núcleo es llamar a la función <code>init_idt</code> desde nuestro <code>main.rs</code>. En lugar de llamarla directamente, introducimos una función de inicialización general en nuestro <code>lib.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    interrupts::init_idt();
+</span><span>}
+</span></code></pre>
+<p>Con esta función, ahora tenemos un lugar central para las rutinas de inicialización que se pueden compartir entre las diferentes funciones <code>_start</code> en nuestro <code>main.rs</code>, <code>lib.rs</code> y pruebas de integración.</p>
+<p>Ahora podemos actualizar la función <code>_start</code> de nuestro <code>main.rs</code> para llamar a <code>init</code> y luego activar una excepción de punto de interrupción:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
+</span><span>
+</span><span>#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;¡Hola Mundo</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init(); </span><span style="color:#608b4e;">// nueva
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// invocar una excepción de punto de interrupción
+</span><span>    x86_64::instructions::interrupts::int3(); </span><span style="color:#608b4e;">// nueva
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// como antes
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;¡No se bloqueó!&quot;</span><span>);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Cuando lo ejecutamos en QEMU ahora (usando <code>cargo run</code>), vemos lo siguiente:</p>
+<p><img src="https://os.phil-opp.com/es/cpu-exceptions/qemu-breakpoint-exception.png" alt="QEMU imprimiendo EXCEPCIÓN: PUNTO DE INTERRUPCIÓN y el marco de pila de interrupción" /></p>
+<p>¡Funciona! La CPU invoca exitosamente nuestro manejador de punto de interrupción, que imprime el mensaje, y luego devuelve a la función <code>_start</code>, donde se imprime el mensaje <code>¡No se bloqueó!</code>.</p>
+<p>Vemos que el marco de pila de interrupción nos indica los punteros de instrucción y de pila en el momento en que ocurrió la excepción. Esta información es muy útil al depurar excepciones inesperadas.</p>
+<h3 id="agregando-una-prueba"><a class="zola-anchor" href="#agregando-una-prueba" aria-label="Anchor link for: agregando-una-prueba">🔗</a>Agregando una prueba</h3>
+<p>Creemos una prueba que asegure que lo anterior sigue funcionando. Primero, actualizamos la función <code>_start</code> para que también llame a <code>init</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Punto de entrada para `cargo test`
+</span><span>#[cfg(test)]
+</span><span>#[no_mangle]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    init();      </span><span style="color:#608b4e;">// nueva
+</span><span>    test_main();
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Recuerde, esta función <code>_start</code> se utiliza al ejecutar <code>cargo test --lib</code>, ya que Rust prueba el <code>lib.rs</code> completamente de forma independiente de <code>main.rs</code>. Necesitamos llamar a <code>init</code> aquí para configurar una IDT antes de ejecutar las pruebas.</p>
+<p>Ahora podemos crear una prueba <code>test_breakpoint_exception</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/interrupts.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_breakpoint_exception() {
+</span><span>    </span><span style="color:#608b4e;">// invocar una excepción de punto de interrupción
+</span><span>    x86_64::instructions::interrupts::int3();
+</span><span>}
+</span></code></pre>
+<p>La prueba invoca la función <code>int3</code> para activar una excepción de punto de interrupción. Al verificar que la ejecución continúa después, verificamos que nuestro manejador de punto de interrupción está funcionando correctamente.</p>
+<p>Puedes probar esta nueva prueba ejecutando <code>cargo test</code> (todas las pruebas) o <code>cargo test --lib</code> (solo las pruebas de <code>lib.rs</code> y sus módulos). Deberías ver lo siguiente en la salida:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>blog_os::interrupts::test_breakpoint_exception...	[ok]
+</span></code></pre>
+<h2 id="demasiada-magia-1"><a class="zola-anchor" href="#demasiada-magia-1" aria-label="Anchor link for: demasiada-magia-1">🔗</a>¿Demasiada magia?</h2>
+<p>La convención de llamada <code>x86-interrupt</code> y el tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> hicieron que el proceso de manejo de excepciones fuera relativamente sencillo y sin dolor. Si esto fue demasiada magia para ti y te gusta aprender todos los detalles sucios del manejo de excepciones, tenemos cubiertos: Nuestra serie <a href="https://os.phil-opp.com/edition-1/extra/naked-exceptions/">“Manejo de Excepciones con Funciones Desnudas”</a> muestra cómo manejar excepciones sin la convención de llamada <code>x86-interrupt</code> y también crea su propio tipo de IDT. Históricamente, estas publicaciones eran las principales publicaciones sobre manejo de excepciones antes de que existieran la convención de llamada <code>x86-interrupt</code> y el crate <code>x86_64</code>. Tenga en cuenta que estas publicaciones se basan en la <a href="https://os.phil-opp.com/edition-1/">primera edición</a> de este blog y pueden estar desactualizadas.</p>
+<h2 id="que-sigue"><a class="zola-anchor" href="#que-sigue" aria-label="Anchor link for: que-sigue">🔗</a>¿Qué sigue?</h2>
+<p>¡Hemos capturado con éxito nuestra primera excepción y regresamos de ella! El siguiente paso es asegurarnos de que capturamos todas las excepciones porque una excepción no capturada causa un <a href="https://wiki.osdev.org/Triple_Fault">triple fallo</a> fatal, lo que lleva a un reinicio del sistema. La próxima publicación explica cómo podemos evitar esto al capturar correctamente <a href="https://wiki.osdev.org/Double_Fault#Double_Fault">dobles fallos</a>.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Apóyame</h2>
+<p>Crear y mantener este blog y las bibliotecas asociadas es mucho trabajo, pero realmente disfruto haciéndolo. Al apoyarme, me permites invertir más tiempo en nuevo contenido, nuevas características y mantenimiento continuo. La mejor manera de apoyarme es <a href="https://github.com/sponsors/phil-opp"><em>patrocinarme en GitHub</em></a>. ¡Gracias!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/es/testing/">&laquo; Pruebas</a>
+        
+        
+            <a class="next" href="/es/double-fault-exceptions/">Excepciones de Doble Fallo &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comentarios</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        ¿Tienes algún problema, quieres compartir comentarios o discutir más ideas? ¡No dudes en dejar un comentario aquí! Por favor, utiliza inglés y sigue el <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conducta</a> de Rust. Este hilo de comentarios se vincula directamente con una <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22CPU%20Exceptions%20%28es%29%22%20in%3Atitle"><em>discusión en GitHub</em></a>, así que también puedes comentar allí si lo prefieres.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="CPU Exceptions (es)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="es"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22CPU%20Exceptions%20%28es%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Por favor deja tus comentarios en inglés si es posible.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/cpu-exceptions/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/cpu-exceptions/">
+                        Chinese (simplified)
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/cpu-exceptions/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/cpu-exceptions/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/cpu-exceptions/">
+                        Korean
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>
