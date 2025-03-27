@@ -348,7 +348,7 @@
 </span><span>
 </span><span style="color:#569cd6;">use </span><span>bootloader::BootInfo;
 </span><span>
-</span><span>#[no_mangle]
+</span><span>#[unsafe(no_mangle)]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{ </span><span style="color:#608b4e;">// new argument
 </span><span>    […]
 </span><span>}
@@ -421,11 +421,10 @@
 </span><span>    </span><span style="color:#569cd6;">let</span><span> virt = physical_memory_offset + phys.as_u64();
 </span><span>    </span><span style="color:#569cd6;">let</span><span> page_table_ptr: </span><span style="color:#569cd6;">*mut</span><span> PageTable = virt.as_mut_ptr();
 </span><span>
-</span><span>    </span><span style="color:#569cd6;">&amp;mut </span><span>*page_table_ptr </span><span style="color:#608b4e;">// unsafe
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">mut </span><span>*page_table_ptr }
 </span><span>}
 </span></code></pre>
 <p>First, we read the physical frame of the active level 4 table from the <code>CR3</code> register. We then take its physical start address, convert it to a <code>u64</code>, and add it to <code>physical_memory_offset</code> to get the virtual address where the page table frame is mapped. Finally, we convert the virtual address to a <code>*mut PageTable</code> raw pointer through the <code>as_mut_ptr</code> method and then unsafely create a <code>&amp;mut PageTable</code> reference from it. We create a <code>&amp;mut</code> reference instead of a <code>&amp;</code> reference because we will mutate the page tables later in this post.</p>
-<p>We don’t need to use an unsafe block here because Rust treats the complete body of an <code>unsafe fn</code> like a large <code>unsafe</code> block. This makes our code more dangerous since we could accidentally introduce an unsafe operation in previous lines without noticing. It also makes it much more difficult to spot unsafe operations in between safe operations. There is an <a href="https://github.com/rust-lang/rfcs/pull/2585">RFC</a> to change this behavior.</p>
 <p>We can now use this function to print the entries of the level 4 table:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>
@@ -598,8 +597,10 @@
 </span><span style="color:#608b4e;">/// `physical_memory_offset`. Also, this function must be only called once
 </span><span style="color:#608b4e;">/// to avoid aliasing `&amp;mut` references (which is undefined behavior).
 </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(physical_memory_offset: VirtAddr) -&gt; OffsetPageTable&lt;</span><span style="color:#569cd6;">&#39;static</span><span>&gt; {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> level_4_table = active_level_4_table(physical_memory_offset);
-</span><span>    OffsetPageTable::new(level_4_table, physical_memory_offset)
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let</span><span> level_4_table = active_level_4_table(physical_memory_offset);
+</span><span>        OffsetPageTable::new(level_4_table, physical_memory_offset)
+</span><span>    }
 </span><span>}
 </span><span>
 </span><span style="color:#608b4e;">// make private

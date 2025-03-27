@@ -359,7 +359,7 @@
 </span><span>
 </span><span style="color:#569cd6;">use </span><span>bootloader::BootInfo;
 </span><span>
-</span><span>#[no_mangle]
+</span><span>#[unsafe(no_mangle)]
 </span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{ </span><span style="color:#608b4e;">// 新しい引数
 </span><span>    […]
 </span><span>}
@@ -434,11 +434,10 @@
 </span><span>    </span><span style="color:#569cd6;">let</span><span> virt = physical_memory_offset + phys.as_u64();
 </span><span>    </span><span style="color:#569cd6;">let</span><span> page_table_ptr: </span><span style="color:#569cd6;">*mut</span><span> PageTable = virt.as_mut_ptr();
 </span><span>
-</span><span>    </span><span style="color:#569cd6;">&amp;mut </span><span>*page_table_ptr </span><span style="color:#608b4e;">// unsafe
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*page_table_ptr }
 </span><span>}
 </span></code></pre>
 <p>まず、有効なレベル4テーブルの物理フレームを<code>CR3</code>レジスタから読みます。その開始物理アドレスを取り出し、<code>u64</code>に変換し、<code>physical_memory_offset</code>に足すことでそのページテーブルフレームに対応する仮想アドレスを得ます。最後に、<code>as_mut_ptr</code>メソッドを使ってこの仮想アドレスを<code>*mut PageTable</code>生ポインタに変換し、これから<code>&amp;mut PageTable</code>参照を作ります（ここがunsafe）。<code>&amp;</code>参照ではなく<code>&amp;mut</code>参照にしているのは、後でこのページテーブルを変更するためです。</p>
-<p>Rustは<code>unsafe fn</code>の中身全体を大きな<code>unsafe</code>ブロックであるかのように扱うので、ここでunsafeブロックを使う必要はありません。これでは、（unsafeを意図した）最後の行より前の行に間違ってunsafeな操作を書いても気づけないので、コードがより危険になります。また、どこがunsafeな操作であるのかを探すのも非常に難しくなります。そのため、この挙動を変更する<a href="https://github.com/rust-lang/rfcs/pull/2585">RFC</a>が提案されています。</p>
 <p>この関数を使って、レベル4テーブルのエントリを出力してみましょう：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>
@@ -615,8 +614,10 @@
 </span><span style="color:#608b4e;">/// 名称を持つこと (mutable aliasingといい、動作が未定義)
 </span><span style="color:#608b4e;">/// につながるため、この関数は一度しか呼び出してはならない。
 </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(physical_memory_offset: VirtAddr) -&gt; OffsetPageTable&lt;</span><span style="color:#569cd6;">&#39;static</span><span>&gt; {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> level_4_table = active_level_4_table(physical_memory_offset);
-</span><span>    OffsetPageTable::new(level_4_table, physical_memory_offset)
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let</span><span> level_4_table = active_level_4_table(physical_memory_offset);
+</span><span>        OffsetPageTable::new(level_4_table, physical_memory_offset)
+</span><span>    }
 </span><span>}
 </span><span>
 </span><span style="color:#608b4e;">// これは非公開にする
