@@ -93,6 +93,13 @@
             <a href="#summary">Summary</a>
             
         </li><li>
+            <a href="#making-rust-analyzer-happy">Making rust-analyzer happy</a>
+            <ol>
+                <li>
+                    <a href="#the-two-meanings-of-target">The two meanings of “target”</a>
+                </li>
+            </ol>
+        </li><li>
             <a href="#what-s-next">What’s next?</a>
             
         </li>
@@ -159,6 +166,13 @@
             </li><li>
                 <a href="#summary">Summary</a>
                 
+            </li><li>
+                <a href="#making-rust-analyzer-happy">Making rust-analyzer happy</a>
+                <ul>
+                    <li>
+                        <a href="#the-two-meanings-of-target">The two meanings of “target”</a>
+                    </li>
+                </ul>
             </li><li>
                 <a href="#what-s-next">What’s next?</a>
                 
@@ -443,6 +457,56 @@
 </span><span>cargo rustc</span><span style="color:#569cd6;"> --</span><span> -C link-args=</span><span style="color:#d69d85;">&quot;-e __start -static -nostartfiles&quot;
 </span></code></pre>
 <p>Note that this is just a minimal example of a freestanding Rust binary. This binary expects various things, for example, that a stack is initialized when the <code>_start</code> function is called. <strong>So for any real use of such a binary, more steps are required</strong>.</p>
+<h2 id="making-rust-analyzer-happy"><a class="zola-anchor" href="#making-rust-analyzer-happy" aria-label="Anchor link for: making-rust-analyzer-happy">🔗</a>Making <code>rust-analyzer</code> happy</h2>
+<p>The <a href="https://rust-analyzer.github.io/"><code>rust-analyzer</code></a> project is a great way to get code completion and “go to definition” support (and many other features) for Rust code in your editor.
+It works really well for <code>#![no_std]</code> projects too, so I recommend using it for kernel development!</p>
+<p>If you’re using the <a href="https://rust-analyzer.github.io/book/configuration.html#checkOnSave"><code>checkOnSave</code></a> feature of <code>rust-analyzer</code> (enabled by default), it might report an error for the panic function of our kernel:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>found duplicate lang item `panic_impl`
+</span></code></pre>
+<p>The reason for this error is that <code>rust-analyzer</code> invokes <code>cargo check --all-targets</code> by default, which also tries to build the binary in <a href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html">test</a> and <a href="https://doc.rust-lang.org/rustc/tests/index.html#benchmarks">benchmark</a> mode.</p>
+<div class="note">
+<h3 id="the-two-meanings-of-target"><a class="zola-anchor" href="#the-two-meanings-of-target" aria-label="Anchor link for: the-two-meanings-of-target">🔗</a>The two meanings of “target”</h3>
+<p>The <code>--all-targets</code> flag is completely unrelated to the <code>--target</code> argument.
+There are two different meanings of the term “target” in <code>cargo</code>:</p>
+<ul>
+<li>The <code>--target</code> flag specifies the <strong><a href="https://doc.rust-lang.org/rustc/targets/index.html"><em>compilation target</em></a></strong> that should be passed to the <code>rustc</code> compiler. This should be set to the <a href="https://clang.llvm.org/docs/CrossCompilation.html#target-triple">target triple</a> of the machine that should run our code.</li>
+<li>The <code>--all-targets</code> flag references the <strong><a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html"><em>package target</em></a></strong> of Cargo. Cargo packages can be a library and binary at the same time, so you can specify in which way you like to build your crate. In addition, Cargo also has package targets for <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#examples">examples</a>, <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#tests">tests</a>, and <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#benchmarks">benchmarks</a>. These package targets can co-exist, so you can build/check the same crate in e.g. library or test mode.</li>
+</ul>
+</div>
+<p>By default, <code>cargo check</code> only builds the <em>library</em> and <em>binary</em> package targets.
+However, <code>rust-analyzer</code> chooses to check all package targets by default when <a href="https://rust-analyzer.github.io/book/configuration.html#checkOnSave"><code>checkOnSave</code></a> is enabled.
+This is the reason that <code>rust-analyzer</code> reports the above <code>lang item</code> error that we don’t see in <code>cargo check</code>.
+If we run <code>cargo check --all-targets</code>, we see the error too:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0152]: found duplicate lang item `panic_impl`
+</span><span>  --&gt; src/main.rs:13:1
+</span><span>   |
+</span><span>13 | / fn panic(_info: &amp;PanicInfo) -&gt; ! {
+</span><span>14 | |     loop {}
+</span><span>15 | | }
+</span><span>   | |_^
+</span><span>   |
+</span><span>   = note: the lang item is first defined in crate `std` (which `test` depends on)
+</span><span>   = note: first definition in `std` loaded from /home/[...]/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-8df6be531efb3fd0.rlib
+</span><span>   = note: second definition in the local crate (`blog_os`)
+</span></code></pre>
+<p>The first <code>note</code> tells us that the panic language item is already defined in the <code>std</code> crate, which is a dependency of the <code>test</code> crate.
+The <code>test</code> crate is automatically included when building a crate in <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#tests">test mode</a>.
+This does not make sense for our <code>#![no_std]</code> kernel as there is no way to support the standard library on bare metal.
+So this error is not relevant to our project and we can safely ignore it.</p>
+<p>The proper way to avoid this error is to specify in our <code>Cargo.toml</code> that our binary does not support building in <code>test</code> and <code>bench</code> modes.
+We can do that by adding a <code>[[bin]]</code> section to our <code>Cargo.toml</code> to <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#configuring-a-target">configure the build</a> of our binary:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[[</span><span style="color:#808080;">bin</span><span>]]
+</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;blog_os&quot;
+</span><span style="color:#569cd6;">test </span><span>= </span><span style="color:#569cd6;">false
+</span><span style="color:#569cd6;">bench </span><span>= </span><span style="color:#569cd6;">false
+</span></code></pre>
+<p>The double-brackets around <code>bin</code> are not a mistake, this is how the TOML format defines keys that can appear multiple times.
+Since a crate can have multiple binaries, the <code>[[bin]]</code> section can appear multiple times in the <code>Cargo.toml</code> as well.
+This is also the reason for the mandatory <code>name</code> field, which needs to match the name of the binary (so that <code>cargo</code> knows which settings should be applied to whick binary).</p>
+<p>By setting the <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#the-test-field"><code>test</code></a> and <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#the-bench-field"><code>bench</code> </a> fields to <code>false</code>, we instruct <code>cargo</code> to not build our binary in test or benchmark mode.
+Now <code>cargo check --all-targets</code> should not throw any errors anymore, and the <code>checkOnSave</code> implementation of <code>rust-analyzer</code> should be happy too.</p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What’s next?</h2>
 <p>The <a href="https://os.phil-opp.com/minimal-rust-kernel/">next post</a> explains the steps needed for turning our freestanding binary into a minimal operating system kernel. This includes creating a custom target, combining our executable with a bootloader, and learning how to print something to the screen.</p>
 
