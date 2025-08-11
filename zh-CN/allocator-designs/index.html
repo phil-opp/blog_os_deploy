@@ -85,7 +85,12 @@
                     <a href="#yong-fa-1">用法</a>
                 </li><li>
                     <a href="#tao-lun-1">讨论</a>
-                </li><li>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#gu-ding-da-xiao-kuai-fen-pei-qi">固定大小块分配器</a>
+            <ol>
+                <li>
                     <a href="#jie-shao-1">介绍</a>
                 </li><li>
                     <a href="#shi-xian-2">实现</a>
@@ -170,7 +175,12 @@
                         <a href="#yong-fa-1">用法</a>
                     </li><li>
                         <a href="#tao-lun-1">讨论</a>
-                    </li><li>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#gu-ding-da-xiao-kuai-fen-pei-qi">固定大小块分配器</a>
+                <ul>
+                    <li>
                         <a href="#jie-shao-1">介绍</a>
                     </li><li>
                         <a href="#shi-xian-2">实现</a>
@@ -406,7 +416,7 @@
 <li>通过将给定地址和 <code>!(align - 1)</code> 执行<a href="https://en.wikipedia.org/wiki/Bitwise_operation#AND">按位与</a>操作，我们将该地址 <em>向下</em> 对齐。这是通过将所有低于 <code>align</code> 的比特位清除来实现的。</li>
 <li>因为我们想要向上对齐而不是向下对齐，在执行按位 <code>AND</code> 操作之前，先将 <code>addr</code> 增加 <code>align - 1</code> 的值。这种方式下，已对齐的地址保持不变，而未对齐的地址将被对齐到下一个对齐边界。</li>
 </ul>
-<p>你选择使用哪一个变体，这取决于你。这两种方法计算的结果相同，只是使用不同的方法。</p>
+<p>你选择使用哪一个变体，这取决于你。它们计算的结果相同，只是使用的方法不同。</p>
 <h3 id="yong-fa"><a class="zola-anchor" href="#yong-fa" aria-label="Anchor link for: yong-fa">🔗</a>用法</h3>
 <p>为了使用我们的bump分配器，我们需要更新 <code>allocator.rs</code> 中的 <code>ALLOCATOR</code> 静态变量：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
@@ -727,7 +737,7 @@
 </span></code></pre>
 <p>这表明我们的链表分配器可以重用已释放的内存，以满足后续的分配。</p>
 <h3 id="tao-lun-1"><a class="zola-anchor" href="#tao-lun-1" aria-label="Anchor link for: tao-lun-1">🔗</a>讨论</h3>
-<p>和bump分配器相比，链表分配器更适合于作为一个通用分配器，主要是因为它可以直接重用已释放的内存。然而，它也有一些缺点，一部分是由于我们的基础实现所致，另一部分则是由于分配器设计本身的缺陷。</p>
+<p>和bump分配器相比，链表分配器更适合作为一个通用分配器，主要是因为它可以直接重用已释放的内存。然而，它也有一些缺点，一部分是由于我们的基础实现所致，另一部分则是由于分配器设计本身的缺陷。</p>
 <h4 id="merge-free-blocks"><a class="zola-anchor" href="#merge-free-blocks" aria-label="Anchor link for: merge-free-blocks">🔗</a>合并已释放的内存块</h4>
 <p>我们的实现主要的问题就是它只将堆分成更小的内存块，但从不将它们合并到一起。考虑下面的例子：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/allocator-designs/linked-list-allocator-fragmentation-on-dealloc.svg" alt="" /></p>
@@ -740,10 +750,10 @@
 <p>我们在之前了解到的，bump分配器的性能非常好，因为它只需要几个简单的汇编指令就可以完成。链表分配器的性能要差得多，因为一次分配或许需要遍历整个链表才能找到一个合适的内存块。</p>
 <p>因为链表长度取决于未使用内存块的数量，不同程序的性能表现可能差异极大。对于仅创建少量分配的程序，分配性能相对较好。而对于因大量分配导致堆碎片化的程序，分配性能会非常差，因为链表会非常长，大部分内存块尺寸极小。</p>
 <p>值得强调的是，相比于我们基础的实现而言，链表方法本身的缺陷才是造成性能问题的主要原因。因为在内核级代码中分配性能相当重要，所以我们将在下文中探索第三种通过降低内存使用率换取性能提升的分配器设计。</p>
-<p>固定大小块分配器</p>
+<h2 id="gu-ding-da-xiao-kuai-fen-pei-qi"><a class="zola-anchor" href="#gu-ding-da-xiao-kuai-fen-pei-qi" aria-label="Anchor link for: gu-ding-da-xiao-kuai-fen-pei-qi">🔗</a>固定大小块分配器</h2>
 <p>接下来，我们展示一种使用固定大小的内存块来满足分配请求的分配器设计。使用这种方法，分配器往往会返回比实际需要更大的内存块，这将会由于 <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">内部碎片</a> 导致浪费内存，但它会显著减少寻找合适的内存块的时间（相比链表分配器而言），从而获得更好的分配性能。</p>
 <h3 id="jie-shao-1"><a class="zola-anchor" href="#jie-shao-1" aria-label="Anchor link for: jie-shao-1">🔗</a>介绍</h3>
-<p><em>固定大小分配器</em> 背后的思想如下：我们不再精确分配请求所需的内存大小，而是定义一个固定的块大小列表，并且将每个分配向上取整为列表中的下一个内存块大小。例如，对于 16、64 和 512 的块大小，一个 4 字节的分配将返回一个 16 字节的块，一个 48 字节的分配将返回一个 64 字节的块，一个 128 字节的分配将返回一个 512 字节的块。</p>
+<p><em>固定大小块分配器</em> 背后的思想如下：我们不再精确分配请求所需的内存大小，而是定义一个固定的块大小列表，并且将每个分配向上取整为列表中的下一个内存块大小。例如，对于 16、64 和 512 的块大小，一个 4 字节的分配将返回一个 16 字节的块，一个 48 字节的分配将返回一个 64 字节的块，一个 128 字节的分配将返回一个 512 字节的块。</p>
 <p>和链表分配器相同，我们通过在未使用的内存区域中创建链表来跟踪未使用的内存。然而，不再使用单一链表管理不同尺块大小的内存区域，而是为每个尺寸类别创建一个单独的链表。每个列表只存储相同大小的块。例如，对于块大小为 16、64 和 512 的情况，内存中会存在三个单独的链表：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/allocator-designs/fixed-size-block-example.svg" alt="" />.</p>
 <p>不同于单个的 <code>head</code> 指针，我们现在有三个 <code>head</code> 指针 <code>head_16</code>、<code>head_64</code> 和 <code>head_512</code>，它们分别指向对应块大小的第一个未使用内存块。每个链表中的所有节点都具有相同的大小。例如，<code>head_16</code> 指针指向的链表只包含 16 字节的块。这意味着我们不再需要在每个链表节点中存储大小，因为它已经由头指针的名称指定。</p>
