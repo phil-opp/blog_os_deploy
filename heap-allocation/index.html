@@ -189,7 +189,7 @@
 </span><span>    </span><span style="color:#569cd6;">&amp;</span><span>z[i]
 </span><span>}
 </span></code></pre>
-<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=6186a0f3a54f468e1de8894996d12819">run the example on the playground</a>)</p>
+<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=6186a0f3a54f468e1de8894996d12819">run the example on the playground</a>)</p>
 <p>While returning a reference makes no sense in this example, there are cases where we want a variable to live longer than the function. We already saw such a case in our kernel when we tried to <a href="https://os.phil-opp.com/cpu-exceptions/#loading-the-idt">load an interrupt descriptor table</a> and had to use a <code>static</code> variable to extend the lifetime.</p>
 <h3 id="static-variables"><a class="zola-anchor" href="#static-variables" aria-label="Anchor link for: static-variables">🔗</a>Static Variables</h3>
 <p>Static variables are stored at a fixed memory location separate from the stack. This memory location is assigned at compile time by the linker and encoded in the executable. Statics live for the complete runtime of the program, so they have the <code>'static</code> lifetime and can always be referenced from local variables:</p>
@@ -235,13 +235,14 @@
 </span><span>}; </span><span style="color:#608b4e;">// z goes out of scope and `deallocate` is called
 </span><span>println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, x);
 </span></code></pre>
-<p>This is where Rust’s ownership comes in. It assigns an abstract <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">lifetime</a> to each reference, which is the scope in which the reference is valid. In the above example, the <code>x</code> reference is taken from the <code>z</code> array, so it becomes invalid after <code>z</code> goes out of scope. When you <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">run the above example on the playground</a> you see that the Rust compiler indeed throws an error:</p>
+<p>This is where Rust’s ownership comes in. It assigns an abstract <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">lifetime</a> to each reference, which is the scope in which the reference is valid. In the above example, the <code>x</code> reference is taken from the <code>z</code> array, so it becomes invalid after <code>z</code> goes out of scope. When you <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">run the above example on the playground</a> you see that the Rust compiler indeed throws an error:</p>
 <pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0597]: `z[_]` does not live long enough
 </span><span> --&gt; src/main.rs:4:9
 </span><span>  |
 </span><span>2 |     let x = {
 </span><span>  |         - borrow later stored here
 </span><span>3 |         let z = Box::new([1,2,3]);
+</span><span>  |             - binding `z` declared here
 </span><span>4 |         &amp;z[1]
 </span><span>  |         ^^^^^ borrowed value does not live long enough
 </span><span>5 |     }; // z goes out of scope and `deallocate` is called
@@ -416,13 +417,13 @@
 <p><strong>Mapping the pages:</strong> The second step is to map all pages of the page range we just created. For that, we iterate over these pages using a <code>for</code> loop. For each page, we do the following:</p>
 <ul>
 <li>
-<p>We allocate a physical frame that the page should be mapped to using the <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a> method. This method returns <a href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a> when there are no more frames left. We deal with that case by mapping it to a <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a> error through the <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a> method and then applying the <a href="https://doc.rust-lang.org/edition-guide/rust-2018/error-handling-and-panics/the-question-mark-operator-for-easier-error-handling.html">question mark operator</a> to return early in the case of an error.</p>
+<p>We allocate a physical frame that the page should be mapped to using the <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a> method. This method returns <a href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a> when there are no more frames left. We deal with that case by mapping it to a <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a> error through the <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a> method and then applying the <a href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">question mark operator</a> to return early in the case of an error.</p>
 </li>
 <li>
 <p>We set the required <code>PRESENT</code> flag and the <code>WRITABLE</code> flag for the page. With these flags, both read and write accesses are allowed, which makes sense for heap memory.</p>
 </li>
 <li>
-<p>We use the <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> method for creating the mapping in the active page table. The method can fail, so we use the <a href="https://doc.rust-lang.org/edition-guide/rust-2018/error-handling-and-panics/the-question-mark-operator-for-easier-error-handling.html">question mark operator</a> again to forward the error to the caller. On success, the method returns a <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a> instance that we can use to update the <a href="https://os.phil-opp.com/paging-introduction/#the-translation-lookaside-buffer"><em>translation lookaside buffer</em></a> using the <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a> method.</p>
+<p>We use the <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> method for creating the mapping in the active page table. The method can fail, so we use the <a href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">question mark operator</a> again to forward the error to the caller. On success, the method returns a <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a> instance that we can use to update the <a href="https://os.phil-opp.com/paging-introduction/#the-translation-lookaside-buffer"><em>translation lookaside buffer</em></a> using the <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a> method.</p>
 </li>
 </ul>
 </li>
