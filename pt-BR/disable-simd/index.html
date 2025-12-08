@@ -1,0 +1,133 @@
+<!doctype html>
+
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Instruções Single Instruction Multiple Data (SIMD) são capazes de realizar uma operação (por exemplo, adição) simultaneamente em múltiplas palavras de…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/pt-BR/disable-simd/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Desabilitando SIMD | Escrevendo um OS em Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Escrevendo um OS em Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+            <main>
+    <h1>Desabilitando SIMD</h1>
+    <p>Instruções <a href="https://en.wikipedia.org/wiki/SIMD">Single Instruction Multiple Data (SIMD)</a> são capazes de realizar uma operação (por exemplo, adição) simultaneamente em múltiplas palavras de dados, o que pode acelerar programas significativamente. A arquitetura <code>x86_64</code> suporta vários padrões SIMD:</p>
+<span id="continue-reading"></span>
+<ul>
+<li><a href="https://en.wikipedia.org/wiki/MMX_(instruction_set)">MMX</a>: O conjunto de instruções <em>Multi Media Extension</em> foi introduzido em 1997 e define oito registradores de 64 bits chamados <code>mm0</code> até <code>mm7</code>. Esses registradores são apenas aliases para os registradores da <a href="https://en.wikipedia.org/wiki/X87">unidade de ponto flutuante x87</a>.</li>
+<li><a href="https://en.wikipedia.org/wiki/Streaming_SIMD_Extensions">SSE</a>: O conjunto de instruções <em>Streaming SIMD Extensions</em> foi introduzido em 1999. Em vez de reutilizar os registradores de ponto flutuante, ele adiciona um conjunto de registradores completamente novo. Os dezesseis novos registradores são chamados <code>xmm0</code> até <code>xmm15</code> e têm 128 bits cada.</li>
+<li><a href="https://en.wikipedia.org/wiki/Advanced_Vector_Extensions">AVX</a>: As <em>Advanced Vector Extensions</em> são extensões que aumentam ainda mais o tamanho dos registradores multimídia. Os novos registradores são chamados <code>ymm0</code> até <code>ymm15</code> e têm 256 bits cada. Eles estendem os registradores <code>xmm</code>, então por exemplo <code>xmm0</code> é a metade inferior de <code>ymm0</code>.</li>
+</ul>
+<p>Ao usar tais padrões SIMD, programas frequentemente podem acelerar significativamente. Bons compiladores são capazes de transformar loops normais em tal código SIMD automaticamente através de um processo chamado <a href="https://en.wikipedia.org/wiki/Automatic_vectorization">auto-vetorização</a>.</p>
+<p>No entanto, os grandes registradores SIMD levam a problemas em kernels de SO. A razão é que o kernel tem que fazer backup de todos os registradores que usa para a memória em cada interrupção de hardware, porque eles precisam ter seus valores originais quando o programa interrompido continua. Então, se o kernel usa registradores SIMD, ele tem que fazer backup de muito mais dados (512-1600 bytes), o que diminui notavelmente o desempenho. Para evitar esta perda de desempenho, queremos desabilitar os recursos <code>sse</code> e <code>mmx</code> (o recurso <code>avx</code> é desabilitado por padrão).</p>
+<p>Podemos fazer isso através do campo <code>features</code> na nossa especificação de alvo. Para desabilitar os recursos <code>mmx</code> e <code>sse</code>, nós os adicionamos prefixados com um menos:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;features&quot;</span><span>: </span><span style="color:#d69d85;">&quot;-mmx,-sse&quot;
+</span></code></pre>
+<h2 id="ponto-flutuante">Ponto Flutuante</h2>
+<p>Infelizmente para nós, a arquitetura <code>x86_64</code> usa registradores SSE para operações de ponto flutuante. Assim, todo uso de ponto flutuante com SSE desabilitado causa um erro no LLVM. O problema é que a biblioteca core do Rust já usa floats (por exemplo, ela implementa traits para <code>f32</code> e <code>f64</code>), então evitar floats no nosso kernel não é suficiente.</p>
+<p>Felizmente, o LLVM tem suporte para um recurso <code>soft-float</code> que emula todas as operações de ponto flutuante através de funções de software baseadas em inteiros normais. Isso torna possível usar floats no nosso kernel sem SSE; será apenas um pouco mais lento.</p>
+<p>Para ativar o recurso <code>soft-float</code> para o nosso kernel, nós o adicionamos à linha <code>features</code> na nossa especificação de alvo, prefixado com um mais:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;features&quot;</span><span>: </span><span style="color:#d69d85;">&quot;-mmx,-sse,+soft-float&quot;
+</span></code></pre>
+
+</main>
+        </div>
+
+        <div>
+    <hr>
+    <section>
+        <h2 id="comments">Comments</h2>
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Teve algum problema, quer deixar um feedback ou discutir mais ideias? Fique à vontade para deixar um comentário aqui! Por favor, use o inglês e siga o <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conduta</a> do Rust. Este tópico de comentários está diretamente vinculado a uma <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Desabilitando%20SIMD%20%28Extra%20Post%29%22%20in%3Atitle"><em>discussão no GitHub</em></a>, então você também pode comentar lá se preferir.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Desabilitando SIMD (Extra Post)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="pt-BR"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Desabilitando%20SIMD%20%28Extra%20Post%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+    </section>
+</div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

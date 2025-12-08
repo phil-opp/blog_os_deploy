@@ -1,0 +1,535 @@
+<!doctype html>
+
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Esta postagem introduz paginação, um esquema de gerenciamento de memória muito comum que também usaremos para nosso sistema operacional. Ela explica p…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/pt-BR/paging-introduction/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Introdução à Paginação | Escrevendo um OS em Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Escrevendo um OS em Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/pt-BR" title="All Posts">« Todos os Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Tabela de Conteúdos</h2>
+    <ol>
+        <li>
+            <a href="#protecao-de-memoria">Proteção de Memória</a>
+            
+        </li><li>
+            <a href="#segmentacao">Segmentação</a>
+            <ol>
+                <li>
+                    <a href="#memoria-virtual">Memória Virtual</a>
+                </li><li>
+                    <a href="#fragmentacao">Fragmentação</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#paginacao">Paginação</a>
+            <ol>
+                <li>
+                    <a href="#fragmentacao-escondida">Fragmentação Escondida</a>
+                </li><li>
+                    <a href="#tabelas-de-pagina">Tabelas de Página</a>
+                </li><li>
+                    <a href="#tabelas-de-pagina-multinivel">Tabelas de Página Multinível</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#paginacao-no-x86-64">Paginação no x86_64</a>
+            <ol>
+                <li>
+                    <a href="#exemplo-de-traducao">Exemplo de Tradução</a>
+                </li><li>
+                    <a href="#formato-da-tabela-de-pagina">Formato da Tabela de Página</a>
+                </li><li>
+                    <a href="#o-translation-lookaside-buffer">O Translation Lookaside Buffer</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#implementacao">Implementação</a>
+            <ol>
+                <li>
+                    <a href="#page-faults">Page Faults</a>
+                </li><li>
+                    <a href="#acessando-as-tabelas-de-pagina">Acessando as Tabelas de Página</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#resumo">Resumo</a>
+            
+        </li><li>
+            <a href="#o-que-vem-a-seguir">O Que Vem a Seguir?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comentários</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Introdução à Paginação</h1>
+    <time datetime="2019-01-14" class="post-date">
+        Jan 14, 2019
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Conteúdo Traduzido:</b>
+            Esta é uma tradução comunitária do post <strong><a href="https://os.phil-opp.com/paging-introduction/">Introduction to Paging</a></strong>. Pode estar incompleta, desatualizada ou conter erros. Por favor, reporte qualquer problema!
+            </p>
+            <p>
+                Traduzido por <a href="https://github.com/richarddalves">@richarddalves</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Esta postagem introduz <em>paginação</em>, um esquema de gerenciamento de memória muito comum que também usaremos para nosso sistema operacional. Ela explica por que o isolamento de memória é necessário, como <em>segmentação</em> funciona, o que é <em>memória virtual</em>, e como paginação resolve problemas de fragmentação de memória. Também explora o layout de tabelas de página multinível na arquitetura x86_64.</p>
+<span id="continue-reading"></span>
+<p>Este blog é desenvolvido abertamente no <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Se você tiver algum problema ou dúvida, abra um issue lá. Você também pode deixar comentários <a href="https://os.phil-opp.com/pt-BR/paging-introduction/#comments">na parte inferior</a>. O código-fonte completo desta publicação pode ser encontrado na branch <a href="https://github.com/phil-opp/blog_os/tree/post-08"><code>post-08</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Tabela de Conteúdos</b></summary>
+        <ul>
+            <li>
+                <a href="#protecao-de-memoria">Proteção de Memória</a>
+                
+            </li><li>
+                <a href="#segmentacao">Segmentação</a>
+                <ul>
+                    <li>
+                        <a href="#memoria-virtual">Memória Virtual</a>
+                    </li><li>
+                        <a href="#fragmentacao">Fragmentação</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#paginacao">Paginação</a>
+                <ul>
+                    <li>
+                        <a href="#fragmentacao-escondida">Fragmentação Escondida</a>
+                    </li><li>
+                        <a href="#tabelas-de-pagina">Tabelas de Página</a>
+                    </li><li>
+                        <a href="#tabelas-de-pagina-multinivel">Tabelas de Página Multinível</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#paginacao-no-x86-64">Paginação no x86_64</a>
+                <ul>
+                    <li>
+                        <a href="#exemplo-de-traducao">Exemplo de Tradução</a>
+                    </li><li>
+                        <a href="#formato-da-tabela-de-pagina">Formato da Tabela de Página</a>
+                    </li><li>
+                        <a href="#o-translation-lookaside-buffer">O Translation Lookaside Buffer</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#implementacao">Implementação</a>
+                <ul>
+                    <li>
+                        <a href="#page-faults">Page Faults</a>
+                    </li><li>
+                        <a href="#acessando-as-tabelas-de-pagina">Acessando as Tabelas de Página</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#resumo">Resumo</a>
+                
+            </li><li>
+                <a href="#o-que-vem-a-seguir">O Que Vem a Seguir?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comentários</a></li>
+        </ul>
+    </details>
+
+<h2 id="protecao-de-memoria"><a class="zola-anchor" href="#protecao-de-memoria" aria-label="Anchor link for: protecao-de-memoria">🔗</a>Proteção de Memória</h2>
+<p>Uma tarefa principal de um sistema operacional é isolar programas uns dos outros. Seu navegador web não deveria ser capaz de interferir com seu editor de texto, por exemplo. Para alcançar este objetivo, sistemas operacionais utilizam funcionalidade de hardware para garantir que áreas de memória de um processo não sejam acessíveis por outros processos. Existem diferentes abordagens dependendo do hardware e da implementação do SO.</p>
+<p>Como exemplo, alguns processadores ARM Cortex-M (usados para sistemas embarcados) têm uma <a href="https://developer.arm.com/docs/ddi0337/e/memory-protection-unit/about-the-mpu"><em>Memory Protection Unit</em></a> (MPU), que permite definir um pequeno número (por exemplo, 8) de regiões de memória com diferentes permissões de acesso (por exemplo, sem acesso, somente leitura, leitura-escrita). Em cada acesso à memória, a MPU garante que o endereço está em uma região com permissões de acesso corretas e lança uma exceção caso contrário. Ao mudar as regiões e permissões de acesso em cada troca de processo, o sistema operacional pode garantir que cada processo acesse apenas sua própria memória e assim isole processos uns dos outros.</p>
+<p>No x86, o hardware suporta duas abordagens diferentes para proteção de memória: <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation">segmentação</a> e <a href="https://en.wikipedia.org/wiki/Virtual_memory#Paged_virtual_memory">paginação</a>.</p>
+<h2 id="segmentacao"><a class="zola-anchor" href="#segmentacao" aria-label="Anchor link for: segmentacao">🔗</a>Segmentação</h2>
+<p>Segmentação já foi introduzida em 1978, originalmente para aumentar a quantidade de memória endereçável. A situação naquela época era que CPUs usavam apenas endereços de 16 bits, o que limitava a quantidade de memória endereçável a 64 KiB. Para tornar mais que esses 64 KiB acessíveis, registradores de segmento adicionais foram introduzidos, cada um contendo um endereço de deslocamento. A CPU automaticamente adicionava este deslocamento em cada acesso à memória, então até 1 MiB de memória era acessível.</p>
+<p>O registrador de segmento é escolhido automaticamente pela CPU dependendo do tipo de acesso à memória: Para buscar instruções, o segmento de código <code>CS</code> é usado, e para operações de pilha (push/pop), o segmento de pilha <code>SS</code> é usado. Outras instruções usam o segmento de dados <code>DS</code> ou o segmento extra <code>ES</code>. Posteriormente, dois registradores de segmento adicionais, <code>FS</code> e <code>GS</code>, foram adicionados, que podem ser usados livremente.</p>
+<p>Na primeira versão de segmentação, os registradores de segmento continham diretamente o deslocamento e nenhum controle de acesso era realizado. Isso mudou posteriormente com a introdução do <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation#Protected_mode"><em>modo protegido</em></a>. Quando a CPU executa neste modo, os descritores de segmento contêm um índice em uma <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table"><em>tabela de descritores</em></a> local ou global, que contém – além de um endereço de deslocamento – o tamanho do segmento e permissões de acesso. Ao carregar tabelas de descritores globais/locais separadas para cada processo, que confinam acessos à memória às próprias áreas de memória do processo, o SO pode isolar processos uns dos outros.</p>
+<p>Ao modificar os endereços de memória antes do acesso real, segmentação já empregava uma técnica que agora é usada em quase todo lugar: <em>memória virtual</em>.</p>
+<h3 id="memoria-virtual"><a class="zola-anchor" href="#memoria-virtual" aria-label="Anchor link for: memoria-virtual">🔗</a>Memória Virtual</h3>
+<p>A ideia por trás da memória virtual é abstrair os endereços de memória do dispositivo de armazenamento físico subjacente. Em vez de acessar diretamente o dispositivo de armazenamento, um passo de tradução é realizado primeiro. Para segmentação, o passo de tradução é adicionar o endereço de deslocamento do segmento ativo. Imagine um programa acessando o endereço de memória <code>0x1234000</code> em um segmento com deslocamento de <code>0x1111000</code>: O endereço que é realmente acessado é <code>0x2345000</code>.</p>
+<p>Para diferenciar os dois tipos de endereço, endereços antes da tradução são chamados <em>virtuais</em>, e endereços após a tradução são chamados <em>físicos</em>. Uma diferença importante entre esses dois tipos de endereços é que endereços físicos são únicos e sempre se referem à mesma localização de memória distinta. Endereços virtuais, por outro lado, dependem da função de tradução. É inteiramente possível que dois endereços virtuais diferentes se refiram ao mesmo endereço físico. Além disso, endereços virtuais idênticos podem se referir a endereços físicos diferentes quando usam funções de tradução diferentes.</p>
+<p>Um exemplo onde esta propriedade é útil é executar o mesmo programa duas vezes em paralelo:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/segmentation-same-program-twice.svg" alt="Two virtual address spaces with address 0–150, one translated to 100–250, the other to 300–450" /></p>
+<p>Aqui o mesmo programa executa duas vezes, mas com funções de tradução diferentes. A primeira instância tem um deslocamento de segmento de 100, então seus endereços virtuais 0–150 são traduzidos para os endereços físicos 100–250. A segunda instância tem um deslocamento de 300, que traduz seus endereços virtuais 0–150 para endereços físicos 300–450. Isso permite que ambos os programas executem o mesmo código e usem os mesmos endereços virtuais sem interferir uns com os outros.</p>
+<p>Outra vantagem é que programas agora podem ser colocados em localizações arbitrárias de memória física, mesmo se usarem endereços virtuais completamente diferentes. Assim, o SO pode utilizar a quantidade total de memória disponível sem precisar recompilar programas.</p>
+<h3 id="fragmentacao"><a class="zola-anchor" href="#fragmentacao" aria-label="Anchor link for: fragmentacao">🔗</a>Fragmentação</h3>
+<p>A diferenciação entre endereços virtuais e físicos torna a segmentação realmente poderosa. No entanto, ela tem o problema de fragmentação. Como exemplo, imagine que queremos executar uma terceira cópia do programa que vimos acima:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/segmentation-fragmentation.svg" alt="Three virtual address spaces, but there is not enough continuous space for the third" /></p>
+<p>Não há forma de mapear a terceira instância do programa para memória virtual sem sobreposição, mesmo que haja mais que memória livre suficiente disponível. O problema é que precisamos de memória <em>contínua</em> e não podemos usar os pequenos pedaços livres.</p>
+<p>Uma forma de combater esta fragmentação é pausar a execução, mover as partes usadas da memória mais próximas, atualizar a tradução, e então retomar a execução:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/segmentation-fragmentation-compacted.svg" alt="Three virtual address spaces after defragmentation" /></p>
+<p>Agora há espaço contínuo suficiente para iniciar a terceira instância do nosso programa.</p>
+<p>A desvantagem deste processo de desfragmentação é que ele precisa copiar grandes quantidades de memória, o que diminui o desempenho. Também precisa ser feito regularmente antes que a memória se torne muito fragmentada. Isso torna o desempenho imprevisível já que programas são pausados em momentos aleatórios e podem se tornar não responsivos.</p>
+<p>O problema de fragmentação é uma das razões pelas quais segmentação não é mais usada pela maioria dos sistemas. Na verdade, segmentação nem é mais suportada no modo de 64 bits no x86. Em vez disso, <em>paginação</em> é usada, que evita completamente o problema de fragmentação.</p>
+<h2 id="paginacao"><a class="zola-anchor" href="#paginacao" aria-label="Anchor link for: paginacao">🔗</a>Paginação</h2>
+<p>A ideia é dividir tanto o espaço de memória virtual quanto o físico em pequenos blocos de tamanho fixo. Os blocos do espaço de memória virtual são chamados <em>páginas</em>, e os blocos do espaço de endereço físico são chamados <em>frames</em>. Cada página pode ser individualmente mapeada para um frame, o que torna possível dividir regiões de memória maiores em frames físicos não contínuos.</p>
+<p>A vantagem disso se torna visível se recapitularmos o exemplo do espaço de memória fragmentado, mas usando paginação em vez de segmentação desta vez:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/paging-fragmentation.svg" alt="With paging, the third program instance can be split across many smaller physical areas." /></p>
+<p>Neste exemplo, temos um tamanho de página de 50 bytes, o que significa que cada uma de nossas regiões de memória é dividida em três páginas. Cada página é mapeada para um frame individualmente, então uma região de memória virtual contínua pode ser mapeada para frames físicos não contínuos. Isso nos permite iniciar a terceira instância do programa sem realizar nenhuma desfragmentação antes.</p>
+<h3 id="fragmentacao-escondida"><a class="zola-anchor" href="#fragmentacao-escondida" aria-label="Anchor link for: fragmentacao-escondida">🔗</a>Fragmentação Escondida</h3>
+<p>Comparado à segmentação, paginação usa muitas regiões de memória pequenas de tamanho fixo em vez de algumas regiões grandes de tamanho variável. Como cada frame tem o mesmo tamanho, não há frames que são muito pequenos para serem usados, então nenhuma fragmentação ocorre.</p>
+<p>Ou <em>parece</em> que nenhuma fragmentação ocorre. Ainda há algum tipo escondido de fragmentação, a chamada <em>fragmentação interna</em>. Fragmentação interna ocorre porque nem toda região de memória é um múltiplo exato do tamanho da página. Imagine um programa de tamanho 101 no exemplo acima: Ele ainda precisaria de três páginas de tamanho 50, então ocuparia 49 bytes a mais que o necessário. Para diferenciar os dois tipos de fragmentação, o tipo de fragmentação que acontece ao usar segmentação é chamado <em>fragmentação externa</em>.</p>
+<p>Fragmentação interna é infeliz mas frequentemente melhor que a fragmentação externa que ocorre com segmentação. Ela ainda desperdiça memória, mas não requer desfragmentação e torna a quantidade de fragmentação previsível (em média metade de uma página por região de memória).</p>
+<h3 id="tabelas-de-pagina"><a class="zola-anchor" href="#tabelas-de-pagina" aria-label="Anchor link for: tabelas-de-pagina">🔗</a>Tabelas de Página</h3>
+<p>Vimos que cada uma das potencialmente milhões de páginas é individualmente mapeada para um frame. Esta informação de mapeamento precisa ser armazenada em algum lugar. Segmentação usa um registrador seletor de segmento individual para cada região de memória ativa, o que não é possível para paginação já que há muito mais páginas que registradores. Em vez disso, paginação usa uma estrutura de tabela chamada <em>tabela de página</em> para armazenar a informação de mapeamento.</p>
+<p>Para nosso exemplo acima, as tabelas de página pareceriam com isto:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/paging-page-tables.svg" alt="Three page tables, one for each program instance. For instance 1, the mapping is 0-&gt;100, 50-&gt;150, 100-&gt;200. For instance 2, it is 0-&gt;300, 50-&gt;350, 100-&gt;400. For instance 3, it is 0-&gt;250, 50-&gt;450, 100-&gt;500." /></p>
+<p>Vemos que cada instância de programa tem sua própria tabela de página. Um ponteiro para a tabela atualmente ativa é armazenado em um registrador especial da CPU. No <code>x86</code>, este registrador é chamado <code>CR3</code>. É trabalho do sistema operacional carregar este registrador com o ponteiro para a tabela de página correta antes de executar cada instância de programa.</p>
+<p>Em cada acesso à memória, a CPU lê o ponteiro da tabela do registrador e procura o frame mapeado para a página acessada na tabela. Isso é inteiramente feito em hardware e completamente invisível para o programa em execução. Para acelerar o processo de tradução, muitas arquiteturas de CPU têm um cache especial que lembra os resultados das últimas traduções.</p>
+<p>Dependendo da arquitetura, entradas da tabela de página também podem armazenar atributos como permissões de acesso em um campo de flags. No exemplo acima, a flag “r/w” torna a página tanto legível quanto gravável.</p>
+<h3 id="tabelas-de-pagina-multinivel"><a class="zola-anchor" href="#tabelas-de-pagina-multinivel" aria-label="Anchor link for: tabelas-de-pagina-multinivel">🔗</a>Tabelas de Página Multinível</h3>
+<p>As tabelas de página simples que acabamos de ver têm um problema em espaços de endereço maiores: elas desperdiçam memória. Por exemplo, imagine um programa que usa as quatro páginas virtuais <code>0</code>, <code>1_000_000</code>, <code>1_000_050</code>, e <code>1_000_100</code> (usamos <code>_</code> como separador de milhares):</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/single-level-page-table.svg" alt="Page 0 mapped to frame 0 and pages 1_000_000–1_000_150 mapped to frames 100–250" /></p>
+<p>Ele precisa apenas de 4 frames físicos, mas a tabela de página tem mais de um milhão de entradas. Não podemos omitir as entradas vazias porque então a CPU não seria mais capaz de pular diretamente para a entrada correta no processo de tradução (por exemplo, não é mais garantido que a quarta página use a quarta entrada).</p>
+<p>Para reduzir a memória desperdiçada, podemos usar uma <strong>tabela de página de dois níveis</strong>. A ideia é que usamos tabelas de página diferentes para regiões de endereço diferentes. Uma tabela adicional chamada tabela de página de <em>nível 2</em> contém o mapeamento entre regiões de endereço e tabelas de página (nível 1).</p>
+<p>Isso é melhor explicado por um exemplo. Vamos definir que cada tabela de página de nível 1 é responsável por uma região de tamanho <code>10_000</code>. Então as seguintes tabelas existiriam para o exemplo de mapeamento acima:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/multilevel-page-table.svg" alt="Page 0 points to entry 0 of the level 2 page table, which points to the level 1 page table T1. The first entry of T1 points to frame 0; the other entries are empty. Pages 1_000_000–1_000_150 point to the 100th entry of the level 2 page table, which points to a different level 1 page table T2. The first three entries of T2 point to frames 100–250; the other entries are empty." /></p>
+<p>A página 0 cai na primeira região de <code>10_000</code> bytes, então usa a primeira entrada da tabela de página de nível 2. Esta entrada aponta para a tabela de página de nível 1 T1, que especifica que a página <code>0</code> aponta para o frame <code>0</code>.</p>
+<p>As páginas <code>1_000_000</code>, <code>1_000_050</code>, e <code>1_000_100</code> todas caem na 100ª região de <code>10_000</code> bytes, então usam a 100ª entrada da tabela de página de nível 2. Esta entrada aponta para uma tabela de página de nível 1 diferente T2, que mapeia as três páginas para frames <code>100</code>, <code>150</code>, e <code>200</code>. Note que o endereço da página em tabelas de nível 1 não inclui o deslocamento da região. Por exemplo, a entrada para a página <code>1_000_050</code> é apenas <code>50</code>.</p>
+<p>Ainda temos 100 entradas vazias na tabela de nível 2, mas muito menos que o milhão de entradas vazias antes. A razão para essas economias é que não precisamos criar tabelas de página de nível 1 para as regiões de memória não mapeadas entre <code>10_000</code> e <code>1_000_000</code>.</p>
+<p>O princípio de tabelas de página de dois níveis pode ser estendido para três, quatro, ou mais níveis. Então o registrador de tabela de página aponta para a tabela de nível mais alto, que aponta para a tabela de próximo nível mais baixo, que aponta para o próximo nível mais baixo, e assim por diante. A tabela de página de nível 1 então aponta para o frame mapeado. O princípio em geral é chamado de tabela de página <em>multinível</em> ou <em>hierárquica</em>.</p>
+<p>Agora que sabemos como paginação e tabelas de página multinível funcionam, podemos olhar como paginação é implementada na arquitetura x86_64 (assumimos no seguinte que a CPU executa no modo de 64 bits).</p>
+<h2 id="paginacao-no-x86-64"><a class="zola-anchor" href="#paginacao-no-x86-64" aria-label="Anchor link for: paginacao-no-x86-64">🔗</a>Paginação no x86_64</h2>
+<p>A arquitetura x86_64 usa uma tabela de página de 4 níveis e um tamanho de página de 4 KiB. Cada tabela de página, independente do nível, tem um tamanho fixo de 512 entradas. Cada entrada tem um tamanho de 8 bytes, então cada tabela tem 512 * 8 B = 4 KiB de tamanho e assim cabe exatamente em uma página.</p>
+<p>O índice da tabela de página para cada nível é derivado diretamente do endereço virtual:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/x86_64-table-indices-from-address.svg" alt="Bits 0–12 are the page offset, bits 12–21 the level 1 index, bits 21–30 the level 2 index, bits 30–39 the level 3 index, and bits 39–48 the level 4 index" /></p>
+<p>Vemos que cada índice de tabela consiste de 9 bits, o que faz sentido porque cada tabela tem 2^9 = 512 entradas. Os 12 bits mais baixos são o deslocamento na página de 4 KiB (2^12 bytes = 4 KiB). Os bits 48 a 64 são descartados, o que significa que x86_64 não é realmente 64 bits já que suporta apenas endereços de 48 bits.</p>
+<p>Mesmo que os bits 48 a 64 sejam descartados, eles não podem ser definidos para valores arbitrários. Em vez disso, todos os bits nesta faixa devem ser cópias do bit 47 para manter endereços únicos e permitir extensões futuras como a tabela de página de 5 níveis. Isso é chamado <em>extensão de sinal</em> porque é muito similar à <a href="https://en.wikipedia.org/wiki/Two&#x27;s_complement#Sign_extension">extensão de sinal em complemento de dois</a>. Quando um endereço não é corretamente estendido com sinal, a CPU lança uma exceção.</p>
+<p>Vale notar que as CPUs Intel “Ice Lake” recentes opcionalmente suportam <a href="https://en.wikipedia.org/wiki/Intel_5-level_paging">tabelas de página de 5 níveis</a> para estender endereços virtuais de 48 bits para 57 bits. Dado que otimizar nosso kernel para uma CPU específica não faz sentido neste estágio, trabalharemos apenas com tabelas de página padrão de 4 níveis nesta postagem.</p>
+<h3 id="exemplo-de-traducao"><a class="zola-anchor" href="#exemplo-de-traducao" aria-label="Anchor link for: exemplo-de-traducao">🔗</a>Exemplo de Tradução</h3>
+<p>Vamos passar por um exemplo para entender como o processo de tradução funciona em detalhes:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/x86_64-page-table-translation.svg" alt="An example of a 4-level page hierarchy with each page table shown in physical memory" /></p>
+<p>O endereço físico da tabela de página de nível 4 atualmente ativa, que é a raiz da tabela de página de 4 níveis, é armazenado no registrador <code>CR3</code>. Cada entrada da tabela de página então aponta para o frame físico da tabela de próximo nível. A entrada da tabela de nível 1 então aponta para o frame mapeado. Note que todos os endereços nas tabelas de página são físicos em vez de virtuais, porque caso contrário a CPU precisaria traduzi-los também (o que poderia causar uma recursão sem fim).</p>
+<p>A hierarquia de tabela de página acima mapeia duas páginas (em azul). Dos índices da tabela de página, podemos deduzir que os endereços virtuais dessas duas páginas são <code>0x803FE7F000</code> e <code>0x803FE00000</code>. Vamos ver o que acontece quando o programa tenta ler do endereço <code>0x803FE7F5CE</code>. Primeiro, convertemos o endereço para binário e determinamos os índices da tabela de página e o deslocamento de página para o endereço:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/x86_64-page-table-translation-addresses.png" alt="The sign extension bits are all 0, the level 4 index is 1, the level 3 index is 0, the level 2 index is 511, the level 1 index is 127, and the page offset is 0x5ce" /></p>
+<p>Com esses índices, agora podemos percorrer a hierarquia da tabela de página para determinar o frame mapeado para o endereço:</p>
+<ul>
+<li>Começamos lendo o endereço da tabela de nível 4 do registrador <code>CR3</code>.</li>
+<li>O índice de nível 4 é 1, então olhamos para a entrada com índice 1 daquela tabela, que nos diz que a tabela de nível 3 está armazenada no endereço 16 KiB.</li>
+<li>Carregamos a tabela de nível 3 daquele endereço e olhamos para a entrada com índice 0, que nos aponta para a tabela de nível 2 em 24 KiB.</li>
+<li>O índice de nível 2 é 511, então olhamos para a última entrada daquela página para descobrir o endereço da tabela de nível 1.</li>
+<li>Através da entrada com índice 127 da tabela de nível 1, finalmente descobrimos que a página está mapeada para o frame 12 KiB, ou 0x3000 em hexadecimal.</li>
+<li>O passo final é adicionar o deslocamento de página ao endereço do frame para obter o endereço físico 0x3000 + 0x5ce = 0x35ce.</li>
+</ul>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/x86_64-page-table-translation-steps.svg" alt="The same example 4-level page hierarchy with 5 additional arrows: “Step 0” from the CR3 register to the level 4 table, “Step 1” from the level 4 entry to the level 3 table, “Step 2” from the level 3 entry to the level 2 table, “Step 3” from the level 2 entry to the level 1 table, and “Step 4” from the level 1 table to the mapped frames." /></p>
+<p>As permissões para a página na tabela de nível 1 são <code>r</code>, o que significa somente leitura. O hardware reforça essas permissões e lançaria uma exceção se tentássemos escrever naquela página. Permissões em páginas de nível mais alto restringem as permissões possíveis em níveis mais baixos, então se definirmos a entrada de nível 3 como somente leitura, nenhuma página que use esta entrada pode ser gravável, mesmo se níveis mais baixos especificarem permissões de leitura/escrita.</p>
+<p>É importante notar que mesmo que este exemplo usasse apenas uma única instância de cada tabela, tipicamente há múltiplas instâncias de cada nível em cada espaço de endereço. No máximo, há:</p>
+<ul>
+<li>uma tabela de nível 4,</li>
+<li>512 tabelas de nível 3 (porque a tabela de nível 4 tem 512 entradas),</li>
+<li>512 * 512 tabelas de nível 2 (porque cada uma das 512 tabelas de nível 3 tem 512 entradas), e</li>
+<li>512 * 512 * 512 tabelas de nível 1 (512 entradas para cada tabela de nível 2).</li>
+</ul>
+<h3 id="formato-da-tabela-de-pagina"><a class="zola-anchor" href="#formato-da-tabela-de-pagina" aria-label="Anchor link for: formato-da-tabela-de-pagina">🔗</a>Formato da Tabela de Página</h3>
+<p>Tabelas de página na arquitetura x86_64 são basicamente um array de 512 entradas. Na sintaxe Rust:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[repr(align(4096))]
+</span><span style="color:#569cd6;">pub struct </span><span>PageTable {
+</span><span>    entries: [PageTableEntry; 512],
+</span><span>}
+</span></code></pre>
+<p>Como indicado pelo atributo <code>repr</code>, tabelas de página precisam ser alinhadas por página, isto é, alinhadas em um limite de 4 KiB. Este requisito garante que uma tabela de página sempre preenche uma página completa e permite uma otimização que torna as entradas muito compactas.</p>
+<p>Cada entrada tem 8 bytes (64 bits) de tamanho e tem o seguinte formato:</p>
+<table><thead><tr><th>Bit(s)</th><th>Nome</th><th>Significado</th></tr></thead><tbody>
+<tr><td>0</td><td>present</td><td>a página está atualmente na memória</td></tr>
+<tr><td>1</td><td>writable</td><td>é permitido escrever nesta página</td></tr>
+<tr><td>2</td><td>user accessible</td><td>se não definido, apenas código em modo kernel pode acessar esta página</td></tr>
+<tr><td>3</td><td>write-through caching</td><td>escritas vão diretamente para a memória</td></tr>
+<tr><td>4</td><td>disable cache</td><td>nenhum cache é usado para esta página</td></tr>
+<tr><td>5</td><td>accessed</td><td>a CPU define este bit quando esta página é usada</td></tr>
+<tr><td>6</td><td>dirty</td><td>a CPU define este bit quando uma escrita nesta página ocorre</td></tr>
+<tr><td>7</td><td>huge page/null</td><td>deve ser 0 em P1 e P4, cria uma página de 1 GiB em P3, cria uma página de 2 MiB em P2</td></tr>
+<tr><td>8</td><td>global</td><td>página não é removida dos caches em troca de espaço de endereço (bit PGE do registrador CR4 deve estar definido)</td></tr>
+<tr><td>9-11</td><td>available</td><td>pode ser usado livremente pelo SO</td></tr>
+<tr><td>12-51</td><td>physical address</td><td>o endereço físico de 52 bits alinhado por página do frame ou da próxima tabela de página</td></tr>
+<tr><td>52-62</td><td>available</td><td>pode ser usado livremente pelo SO</td></tr>
+<tr><td>63</td><td>no execute</td><td>proíbe executar código nesta página (o bit NXE no registrador EFER deve estar definido)</td></tr>
+</tbody></table>
+<p>Vemos que apenas os bits 12–51 são usados para armazenar o endereço físico do frame. Os bits restantes são usados como flags ou podem ser usados livremente pelo sistema operacional. Isso é possível porque sempre apontamos para um endereço alinhado em 4096 bytes, seja para uma tabela de página alinhada por página ou para o início de um frame mapeado. Isso significa que os bits 0–11 são sempre zero, então não há razão para armazenar esses bits porque o hardware pode simplesmente defini-los para zero antes de usar o endereço. O mesmo é verdade para os bits 52–63, porque a arquitetura x86_64 suporta apenas endereços físicos de 52 bits (similar a como suporta apenas endereços virtuais de 48 bits).</p>
+<p>Vamos olhar mais de perto as flags disponíveis:</p>
+<ul>
+<li>A flag <code>present</code> diferencia páginas mapeadas de não mapeadas. Ela pode ser usada para temporariamente trocar páginas para o disco quando a memória principal fica cheia. Quando a página é acessada subsequentemente, uma exceção especial chamada <em>page fault</em> ocorre, à qual o sistema operacional pode reagir recarregando a página faltante do disco e então continuando o programa.</li>
+<li>As flags <code>writable</code> e <code>no execute</code> controlam se o conteúdo da página é gravável ou contém instruções executáveis, respectivamente.</li>
+<li>As flags <code>accessed</code> e <code>dirty</code> são automaticamente definidas pela CPU quando uma leitura ou escrita na página ocorre. Esta informação pode ser aproveitada pelo sistema operacional, por exemplo, para decidir quais páginas trocar ou se o conteúdo da página foi modificado desde o último salvamento no disco.</li>
+<li>As flags <code>write-through caching</code> e <code>disable cache</code> permitem o controle de caches para cada página individualmente.</li>
+<li>A flag <code>user accessible</code> torna uma página disponível para código em espaço de usuário, caso contrário, é acessível apenas quando a CPU está em modo kernel. Este recurso pode ser usado para tornar <a href="https://en.wikipedia.org/wiki/System_call">chamadas de sistema</a> mais rápidas mantendo o kernel mapeado enquanto um programa em espaço de usuário está executando. No entanto, a vulnerabilidade <a href="https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)">Spectre</a> pode permitir que programas em espaço de usuário leiam essas páginas de qualquer forma.</li>
+<li>A flag <code>global</code> sinaliza ao hardware que uma página está disponível em todos os espaços de endereço e assim não precisa ser removida do cache de tradução (veja a seção sobre o TLB abaixo) em trocas de espaço de endereço. Esta flag é comumente usada junto com uma flag <code>user accessible</code> desmarcada para mapear o código do kernel para todos os espaços de endereço.</li>
+<li>A flag <code>huge page</code> permite a criação de páginas de tamanhos maiores permitindo que as entradas das tabelas de página de nível 2 ou nível 3 apontem diretamente para um frame mapeado. Com este bit definido, o tamanho da página aumenta por fator 512 para 2 MiB = 512 * 4 KiB para entradas de nível 2 ou até 1 GiB = 512 * 2 MiB para entradas de nível 3. A vantagem de usar páginas maiores é que menos linhas do cache de tradução e menos tabelas de página são necessárias.</li>
+</ul>
+<p>A crate <code>x86_64</code> fornece tipos para <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTable.html">tabelas de página</a> e suas <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html">entradas</a>, então não precisamos criar essas estruturas nós mesmos.</p>
+<h3 id="o-translation-lookaside-buffer"><a class="zola-anchor" href="#o-translation-lookaside-buffer" aria-label="Anchor link for: o-translation-lookaside-buffer">🔗</a>O Translation Lookaside Buffer</h3>
+<p>Uma tabela de página de 4 níveis torna a tradução de endereços virtuais cara porque cada tradução requer quatro acessos à memória. Para melhorar o desempenho, a arquitetura x86_64 armazena em cache as últimas traduções no chamado <em>translation lookaside buffer</em> (TLB). Isso permite pular a tradução quando ela ainda está em cache.</p>
+<p>Ao contrário dos outros caches da CPU, o TLB não é totalmente transparente e não atualiza ou remove traduções quando o conteúdo das tabelas de página muda. Isso significa que o kernel deve atualizar manualmente o TLB sempre que modifica uma tabela de página. Para fazer isso, há uma instrução especial da CPU chamada <a href="https://www.felixcloutier.com/x86/INVLPG.html"><code>invlpg</code></a> (“invalidate page”) que remove a tradução para a página especificada do TLB, para que seja carregada novamente da tabela de página no próximo acesso. O TLB também pode ser completamente esvaziado recarregando o registrador <code>CR3</code>, que simula uma troca de espaço de endereço. A crate <code>x86_64</code> fornece funções Rust para ambas as variantes no <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/tlb/index.html">módulo <code>tlb</code></a>.</p>
+<p>É importante lembrar de esvaziar o TLB em cada modificação de tabela de página porque caso contrário a CPU pode continuar usando a tradução antiga, o que pode levar a bugs não-determinísticos que são muito difíceis de depurar.</p>
+<h2 id="implementacao"><a class="zola-anchor" href="#implementacao" aria-label="Anchor link for: implementacao">🔗</a>Implementação</h2>
+<p>Uma coisa que ainda não mencionamos: <strong>Nosso kernel já executa em paginação</strong>. O bootloader que adicionamos na postagem <a href="https://os.phil-opp.com/minimal-rust-kernel/#creating-a-bootimage">“Um Kernel Rust Mínimo”</a> já configurou uma hierarquia de paginação de 4 níveis que mapeia cada página do nosso kernel para um frame físico. O bootloader faz isso porque paginação é obrigatória no modo de 64 bits no x86_64.</p>
+<p>Isso significa que cada endereço de memória que usamos em nosso kernel era um endereço virtual. Acessar o buffer VGA no endereço <code>0xb8000</code> só funcionou porque o bootloader fez <em>identity mapping</em> daquela página de memória, o que significa que ele mapeou a página virtual <code>0xb8000</code> para o frame físico <code>0xb8000</code>.</p>
+<p>Paginação já torna nosso kernel relativamente seguro, já que cada acesso à memória que está fora dos limites causa uma exceção de page fault em vez de escrever em memória física aleatória. O bootloader até define as permissões de acesso corretas para cada página, o que significa que apenas as páginas contendo código são executáveis e apenas páginas de dados são graváveis.</p>
+<h3 id="page-faults"><a class="zola-anchor" href="#page-faults" aria-label="Anchor link for: page-faults">🔗</a>Page Faults</h3>
+<p>Vamos tentar causar um page fault acessando alguma memória fora do nosso kernel. Primeiro, criamos um manipulador de page fault e o registramos em nossa IDT, para que vejamos uma exceção de page fault em vez de um <a href="https://os.phil-opp.com/double-fault-exceptions/">double fault</a> genérico:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/interrupts.rs
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>
+</span><span>        […]
+</span><span>
+</span><span>        idt.page_fault.set_handler_fn(page_fault_handler); </span><span style="color:#608b4e;">// novo
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::PageFaultErrorCode;
+</span><span style="color:#569cd6;">use crate</span><span>::hlt_loop;
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>page_fault_handler(
+</span><span>    stack_frame: InterruptStackFrame,
+</span><span>    error_code: PageFaultErrorCode,
+</span><span>) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr2;
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;EXCEÇÃO: PAGE FAULT&quot;</span><span>);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Endereço Acessado: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, Cr2::read());
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Código de Erro: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, error_code);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span>, stack_frame);
+</span><span>    hlt_loop();
+</span><span>}
+</span></code></pre>
+<p>O registrador <a href="https://en.wikipedia.org/wiki/Control_register#CR2"><code>CR2</code></a> é automaticamente definido pela CPU em um page fault e contém o endereço virtual acessado que causou o page fault. Usamos a função <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr2.html#method.read"><code>Cr2::read</code></a> da crate <code>x86_64</code> para lê-lo e imprimi-lo. O tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html"><code>PageFaultErrorCode</code></a> fornece mais informações sobre o tipo de acesso à memória que causou o page fault, por exemplo, se foi causado por uma operação de leitura ou escrita. Por esta razão, também o imprimimos. Não podemos continuar a execução sem resolver o page fault, então entramos em um <a href="https://os.phil-opp.com/hardware-interrupts/#the-hlt-instruction"><code>hlt_loop</code></a> no final.</p>
+<p>Agora podemos tentar acessar alguma memória fora do nosso kernel:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/main.rs
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Olá Mundo</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// novo
+</span><span>    </span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u8</span><span>;
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ *ptr = </span><span style="color:#b5cea8;">42</span><span>; }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// como antes
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Não crashou!&quot;</span><span>);
+</span><span>    blog_os::hlt_loop();
+</span><span>}
+</span></code></pre>
+<p>Quando o executamos, vemos que nosso manipulador de page fault é chamado:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/qemu-page-fault.png" alt="EXCEPTION: Page Fault, Accessed Address: VirtAddr(0xdeadbeaf), Error Code: CAUSED_BY_WRITE, InterruptStackFrame: {…}" /></p>
+<p>O registrador <code>CR2</code> de fato contém <code>0xdeadbeaf</code>, o endereço que tentamos acessar. O código de erro nos diz através do <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> que a falha ocorreu ao tentar realizar uma operação de escrita. Ele nos diz ainda mais através dos <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html">bits que <em>não</em> estão definidos</a>. Por exemplo, o fato de que a flag <code>PROTECTION_VIOLATION</code> não está definida significa que o page fault ocorreu porque a página alvo não estava presente.</p>
+<p>Vemos que o ponteiro de instrução atual é <code>0x2031b2</code>, então sabemos que este endereço aponta para uma página de código. Páginas de código são mapeadas como somente leitura pelo bootloader, então ler deste endereço funciona mas escrever causa um page fault. Você pode tentar isso mudando o ponteiro <code>0xdeadbeaf</code> para <code>0x2031b2</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Note: O endereço real pode ser diferente para você. Use o endereço que
+</span><span style="color:#608b4e;">// seu manipulador de page fault reporta.
+</span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#b5cea8;">0x2031b2 </span><span style="color:#569cd6;">as *mut u8</span><span>;
+</span><span>
+</span><span style="color:#608b4e;">// lê de uma página de código
+</span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">let</span><span> x = *ptr; }
+</span><span>println!(</span><span style="color:#d69d85;">&quot;leitura funcionou&quot;</span><span>);
+</span><span>
+</span><span style="color:#608b4e;">// escreve em uma página de código
+</span><span style="color:#569cd6;">unsafe </span><span>{ *ptr = </span><span style="color:#b5cea8;">42</span><span>; }
+</span><span>println!(</span><span style="color:#d69d85;">&quot;escrita funcionou&quot;</span><span>);
+</span></code></pre>
+<p>Ao comentar a última linha, vemos que o acesso de leitura funciona, mas o acesso de escrita causa um page fault:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/paging-introduction/qemu-page-fault-protection.png" alt="QEMU with output: “leitura funcionou, EXCEÇÃO: Page Fault, Accessed Address: VirtAddr(0x2031b2), Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE, InterruptStackFrame: {…}”" /></p>
+<p>Vemos que a mensagem <em>“leitura funcionou”</em> é impressa, o que indica que a operação de leitura não causou nenhum erro. No entanto, em vez da mensagem <em>“escrita funcionou”</em>, ocorre um page fault. Desta vez a flag <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.PROTECTION_VIOLATION"><code>PROTECTION_VIOLATION</code></a> está definida além da flag <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a>, o que indica que a página estava presente, mas a operação não era permitida nela. Neste caso, escritas na página não são permitidas já que páginas de código são mapeadas como somente leitura.</p>
+<h3 id="acessando-as-tabelas-de-pagina"><a class="zola-anchor" href="#acessando-as-tabelas-de-pagina" aria-label="Anchor link for: acessando-as-tabelas-de-pagina">🔗</a>Acessando as Tabelas de Página</h3>
+<p>Vamos tentar dar uma olhada nas tabelas de página que definem como nosso kernel é mapeado:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/main.rs
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Olá Mundo</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr3;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let </span><span>(level_4_page_table, </span><span style="color:#569cd6;">_</span><span>) = Cr3::read();
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Tabela de página de nível 4 em: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, level_4_page_table.start_address());
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// test_main(), println(…), e hlt_loop()
+</span><span>}
+</span></code></pre>
+<p>A função <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3.html#method.read"><code>Cr3::read</code></a> da crate <code>x86_64</code> retorna a tabela de página de nível 4 atualmente ativa do registrador <code>CR3</code>. Ela retorna uma tupla de um tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/frame/struct.PhysFrame.html"><code>PhysFrame</code></a> e um tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3Flags.html"><code>Cr3Flags</code></a>. Estamos interessados apenas no frame, então ignoramos o segundo elemento da tupla.</p>
+<p>Quando o executamos, vemos a seguinte saída:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>Tabela de página de nível 4 em: PhysAddr(0x1000)
+</span></code></pre>
+<p>Então a tabela de página de nível 4 atualmente ativa está armazenada no endereço <code>0x1000</code> na memória <em>física</em>, como indicado pelo tipo wrapper <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.PhysAddr.html"><code>PhysAddr</code></a>. A questão agora é: como podemos acessar esta tabela do nosso kernel?</p>
+<p>Acessar memória física diretamente não é possível quando paginação está ativa, já que programas poderiam facilmente contornar a proteção de memória e acessar a memória de outros programas caso contrário. Então a única forma de acessar a tabela é através de alguma página virtual que está mapeada para o frame físico no endereço <code>0x1000</code>. Este problema de criar mapeamentos para frames de tabela de página é um problema geral, já que o kernel precisa acessar as tabelas de página regularmente, por exemplo, ao alocar uma pilha para uma nova thread.</p>
+<p>Soluções para este problema são explicadas em detalhes na próxima postagem.</p>
+<h2 id="resumo"><a class="zola-anchor" href="#resumo" aria-label="Anchor link for: resumo">🔗</a>Resumo</h2>
+<p>Esta postagem introduziu duas técnicas de proteção de memória: segmentação e paginação. Enquanto a primeira usa regiões de memória de tamanho variável e sofre de fragmentação externa, a última usa páginas de tamanho fixo e permite controle muito mais refinado sobre permissões de acesso.</p>
+<p>Paginação armazena a informação de mapeamento para páginas em tabelas de página com um ou mais níveis. A arquitetura x86_64 usa tabelas de página de 4 níveis e um tamanho de página de 4 KiB. O hardware automaticamente percorre as tabelas de página e armazena em cache as traduções resultantes no translation lookaside buffer (TLB). Este buffer não é atualizado transparentemente e precisa ser esvaziado manualmente em mudanças de tabela de página.</p>
+<p>Aprendemos que nosso kernel já executa em cima de paginação e que acessos ilegais à memória causam exceções de page fault. Tentamos acessar as tabelas de página atualmente ativas, mas não conseguimos fazê-lo porque o registrador CR3 armazena um endereço físico que não podemos acessar diretamente do nosso kernel.</p>
+<h2 id="o-que-vem-a-seguir"><a class="zola-anchor" href="#o-que-vem-a-seguir" aria-label="Anchor link for: o-que-vem-a-seguir">🔗</a>O Que Vem a Seguir?</h2>
+<p>A próxima postagem explica como implementar suporte para paginação em nosso kernel. Ela apresenta diferentes formas de acessar memória física do nosso kernel, o que torna possível acessar as tabelas de página nas quais nosso kernel executa. Neste ponto, seremos capazes de implementar funções para traduzir endereços virtuais para físicos e para criar novos mapeamentos nas tabelas de página.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Apoie-me</h2>
+<p>Criar e manter este blog e as bibliotecas associadas dá muito trabalho, mas eu realmente gosto de fazê-lo. Ao me apoiar, você me permite investir mais tempo em novo conteúdo, novos recursos e manutenção contínua. A melhor forma de me apoiar é <a href="https://github.com/sponsors/phil-opp"><em>me patrocinar no GitHub</em></a>. Obrigado!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/pt-BR/hardware-interrupts/">&laquo; Interrupções de Hardware</a>
+        
+        
+            <a class="next" href="/pt-BR/paging-implementation/">Implementação de Paginação &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comentários</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Teve algum problema, quer deixar um feedback ou discutir mais ideias? Fique à vontade para deixar um comentário aqui! Por favor, use o inglês e siga o <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conduta</a> do Rust. Este tópico de comentários está diretamente vinculado a uma <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Introduction%20to%20Paging%20%28pt-BR%29%22%20in%3Atitle"><em>discussão no GitHub</em></a>, então você também pode comentar lá se preferir.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Introduction to Paging (pt-BR)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="pt-BR"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Introduction%20to%20Paging%20%28pt-BR%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Por favor, deixe seus comentários em inglês se possível.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/paging-introduction/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/paging-introduction/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/paging-introduction/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/paging-introduction/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/paging-introduction/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,640 @@
+<!doctype html>
+
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="O primeiro passo para criar nosso próprio kernel de sistema operacional é criar um executável Rust que não vincule a biblioteca padrão. Isso torna pos…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/pt-BR/freestanding-rust-binary/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Um Binário Rust Independente | Escrevendo um OS em Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Escrevendo um OS em Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/pt-BR" title="All Posts">« Todos os Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Tabela de Conteúdos</h2>
+    <ol>
+        <li>
+            <a href="#introducao">Introdução</a>
+            
+        </li><li>
+            <a href="#desativando-a-biblioteca-padrao">Desativando a biblioteca padrão</a>
+            <ol>
+                <li>
+                    <a href="#o-atributo-no-std">O Atributo no_std</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#implementacao-de-panic">Implementação de Panic</a>
+            
+        </li><li>
+            <a href="#o-item-de-linguagem-eh-personality">O Item de Linguagem eh_personality</a>
+            <ol>
+                <li>
+                    <a href="#desativando-o-unwinding">Desativando o Unwinding</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#o-atributo-start">O Atributo start</a>
+            <ol>
+                <li>
+                    <a href="#sobrescrevendo-o-ponto-de-entrada-entry-point">Sobrescrevendo o Ponto de Entrada (Entry Point)</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#erros-do-linker">Erros do Linker</a>
+            <ol>
+                <li>
+                    <a href="#compilando-para-um-alvo-bare-metal">Compilando para um Alvo Bare Metal</a>
+                </li><li>
+                    <a href="#argumentos-do-linker">Argumentos do Linker</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#resumo">Resumo</a>
+            
+        </li><li>
+            <a href="#deixando-rust-analyzer-feliz">Deixando rust-analyzer Feliz</a>
+            <ol>
+                <li>
+                    <a href="#os-dois-significados-de-target">Os dois significados de “target”</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#o-que-vem-a-seguir">O que vem a seguir?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comentários</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Um Binário Rust Independente</h1>
+    <time datetime="2018-02-10" class="post-date">
+        Feb 10, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Conteúdo Traduzido:</b>
+            Esta é uma tradução comunitária do post <strong><a href="https://os.phil-opp.com/freestanding-rust-binary/">A Freestanding Rust Binary</a></strong>. Pode estar incompleta, desatualizada ou conter erros. Por favor, reporte qualquer problema!
+            </p>
+            <p>
+                Traduzido por <a href="https://github.com/richarddalves">@richarddalves</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>O primeiro passo para criar nosso próprio kernel de sistema operacional é criar um executável Rust que não vincule a biblioteca padrão. Isso torna possível executar o código Rust no <a href="https://en.wikipedia.org/wiki/Bare_machine">bare metal</a> sem um sistema operacional subjacente.</p>
+<span id="continue-reading"></span>
+<p>Este blog é desenvolvido abertamente no <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Se você tiver algum problema ou dúvida, abra um issue lá. Você também pode deixar comentários <a href="https://os.phil-opp.com/pt-BR/freestanding-rust-binary/#comments">na parte inferior</a>. O código-fonte completo desta publicação pode ser encontrado na banch <a href="https://github.com/phil-opp/blog_os/tree/post-01"><code>post-01</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Tabela de Conteúdos</b></summary>
+        <ul>
+            <li>
+                <a href="#introducao">Introdução</a>
+                
+            </li><li>
+                <a href="#desativando-a-biblioteca-padrao">Desativando a biblioteca padrão</a>
+                <ul>
+                    <li>
+                        <a href="#o-atributo-no-std">O Atributo no_std</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#implementacao-de-panic">Implementação de Panic</a>
+                
+            </li><li>
+                <a href="#o-item-de-linguagem-eh-personality">O Item de Linguagem eh_personality</a>
+                <ul>
+                    <li>
+                        <a href="#desativando-o-unwinding">Desativando o Unwinding</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#o-atributo-start">O Atributo start</a>
+                <ul>
+                    <li>
+                        <a href="#sobrescrevendo-o-ponto-de-entrada-entry-point">Sobrescrevendo o Ponto de Entrada (Entry Point)</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#erros-do-linker">Erros do Linker</a>
+                <ul>
+                    <li>
+                        <a href="#compilando-para-um-alvo-bare-metal">Compilando para um Alvo Bare Metal</a>
+                    </li><li>
+                        <a href="#argumentos-do-linker">Argumentos do Linker</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#resumo">Resumo</a>
+                
+            </li><li>
+                <a href="#deixando-rust-analyzer-feliz">Deixando rust-analyzer Feliz</a>
+                <ul>
+                    <li>
+                        <a href="#os-dois-significados-de-target">Os dois significados de “target”</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#o-que-vem-a-seguir">O que vem a seguir?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comentários</a></li>
+        </ul>
+    </details>
+
+<h2 id="introducao"><a class="zola-anchor" href="#introducao" aria-label="Anchor link for: introducao">🔗</a>Introdução</h2>
+<p>Para escrever um kernel de sistema operacional, precisamos de código que não dependa de nenhum recurso do sistema operacional. Isso significa que não podemos usar threads, arquivos, memória heap, rede, números aleatórios, saída padrão ou qualquer outro recurso que exija abstrações do sistema operacional ou hardware específico. O que faz sentido, já que estamos tentando escrever nosso próprio sistema operacional e nossos próprios drivers.</p>
+<p>Isso significa que não podemos usar a maior parte da [biblioteca padrão do Rust], mas há muitos recursos do Rust que <em>podemos</em> usar. Por exemplo, podemos usar <a href="https://doc.rust-lang.org/book/ch13-02-iterators.html">iteradores</a>, <a href="https://doc.rust-lang.org/book/ch13-01-closures.html">closures</a>, <a href="https://doc.rust-lang.org/book/ch06-00-enums.html">pattern matching</a>, <a href="https://doc.rust-lang.org/core/option/">option</a> e <a href="https://doc.rust-lang.org/core/result/">result</a>, <a href="https://doc.rust-lang.org/core/macro.write.html">formatação de string</a> e, claro, o <a href="https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html">sistema de ownership</a>. Esses recursos tornam possível escrever um kernel de uma maneira muito expressiva e de alto nível, sem nos preocuparmos com <a href="https://www.nayuki.io/page/undefined-behavior-in-c-and-cplusplus-programs">undefined behavior</a> ou <a href="https://tonyarcieri.com/it-s-time-for-a-memory-safety-intervention">memory safety</a>.</p>
+<p>Para criar um kernel de sistema operacional em Rust, precisamos criar um executável que possa ser executado sem um sistema operacional subjacente. Esse executável é frequentemente chamado de executável “autônomo” ou “bare-metal”.</p>
+<p>Este post descreve as etapas necessárias para criar um binário Rust independente e explica por que essas etapas são necessárias. Se você estiver interessado apenas em um exemplo mínimo, pode <strong><a href="https://os.phil-opp.com/pt-BR/freestanding-rust-binary/#resumo">ir para o resumo</a></strong>.</p>
+<h2 id="desativando-a-biblioteca-padrao"><a class="zola-anchor" href="#desativando-a-biblioteca-padrao" aria-label="Anchor link for: desativando-a-biblioteca-padrao">🔗</a>Desativando a biblioteca padrão</h2>
+<p>Por padrão, todos as crates Rust vinculam a <a href="https://doc.rust-lang.org/std/">biblioteca padrão</a>, que depende do sistema operacional para recursos como threads, arquivos ou rede. Ela também depende da biblioteca padrão C <code>libc</code>, que interage intimamente com os serviços do sistema operacional. Como nosso plano é escrever um sistema operacional, não podemos usar nenhuma biblioteca dependente de um sistema operacional.
+Portanto, temos que desativar a inclusão automática da biblioteca padrão por meio do <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/using-rust-without-the-standard-library.html">atributo <code>no_std</code></a>.</p>
+<p>Começamos criando um novo projeto de binário cargo. A maneira mais fácil de fazer isso é através da linha de comando:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo new blog_os --bin --edition 2024
+</span></code></pre>
+<p>Eu nommei o projeto <code>blog_os</code>, mas claro que você pode escolher o seu próprio nome. A flag <code>--bin</code> especifica que queremos criar um executável binário (em contraste com uma biblioteca) e a flag <code>--edition 2024</code> especifica que queremos usar a <a href="https://doc.rust-lang.org/nightly/edition-guide/rust-2024/index.html">edição 2024</a> de Rust para nossa crate. Quando executamos o comando, o cargo cria a seguinte estrutura de diretório para nós:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>blog_os
+</span><span>├── Cargo.toml
+</span><span>└── src
+</span><span>    └── main.rs
+</span></code></pre>
+<p>O <code>Cargo.toml</code> contém a configuração da crate, por exemplo o nome da crate, o autor, o número da <a href="https://semver.org/">versão semântica</a> e dependências. O arquivo <code>src/main.rs</code> contém o módulo raiz da nossa crate e nossa função <code>main</code>. Você pode compilar sua crate através de <code>cargo build</code> e então executar o binário compilado <code>blog_os</code> na subpasta <code>target/debug</code>.</p>
+<h3 id="o-atributo-no-std"><a class="zola-anchor" href="#o-atributo-no-std" aria-label="Anchor link for: o-atributo-no-std">🔗</a>O Atributo <code>no_std</code></h3>
+<p>Agora nossa crate implicitamente vincula a biblioteca padrão. Vamos tentar desativar isso adicionando o <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/using-rust-without-the-standard-library.html">atributo <code>no_std</code></a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// main.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>main() {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Olá, mundo!&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Quando tentamos compilá-lo agora (executando <code>cargo build</code>), o seguinte erro ocorre:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: cannot find macro `println!` in this scope
+</span><span> --&gt; src/main.rs:4:5
+</span><span>  |
+</span><span>4 |     println!(&quot;Olá, mundo!&quot;);
+</span><span>  |     ^^^^^^^
+</span></code></pre>
+<p>A razão deste erro é que a <a href="https://doc.rust-lang.org/std/macro.println.html">macro <code>println</code></a> é parte da biblioteca padrão, que não incluímos mais. Então não conseguimos mais imprimir coisas. Isso faz sentido, já que <code>println</code> escreve no <a href="https://en.wikipedia.org/wiki/Standard_streams#Standard_output_.28stdout.29">standard output</a>, que é um descritor de arquivo especial fornecido pelo sistema operacional.</p>
+<p>Então vamos remover o println!() e tentar novamente com uma função main vazia:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// main.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>main() {}
+</span></code></pre>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build
+</span><span>error: `#[panic_handler]` function required, but not found
+</span><span>error: language item required, but not found: `eh_personality`
+</span></code></pre>
+<p>Agora o compilador está pedindo uma função <code>#[panic_handler]</code> e um <em>item de linguagem</em>.</p>
+<h2 id="implementacao-de-panic"><a class="zola-anchor" href="#implementacao-de-panic" aria-label="Anchor link for: implementacao-de-panic">🔗</a>Implementação de Panic</h2>
+<p>O atributo <code>panic_handler</code> define a função que o compilador deve invocar quando ocorre um <a href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a>. A biblioteca padrão fornece sua própria função de tratamento de panic, mas em um ambiente <code>no_std</code> precisamos defini-la nós mesmos:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in main.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span style="color:#608b4e;">/// Esta função é chamada em caso de pânico.
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>O parâmetro <a href="https://doc.rust-lang.org/nightly/core/panic/struct.PanicInfo.html"><code>PanicInfo</code></a> contém o arquivo e a linha onde o panic aconteceu e a mensagem de panic opcional. A função nunca deve retornar, então é marcada como uma <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/functions.html#diverging-functions">função divergente</a> ao retornar o <a href="https://doc.rust-lang.org/nightly/std/primitive.never.html">tipo “never”</a> <code>!</code>. Não há muito que possamos fazer nesta função por enquanto, então apenas fazemos um loop infinito.</p>
+<h2 id="o-item-de-linguagem-eh-personality"><a class="zola-anchor" href="#o-item-de-linguagem-eh-personality" aria-label="Anchor link for: o-item-de-linguagem-eh-personality">🔗</a>O Item de Linguagem <code>eh_personality</code></h2>
+<p>Items de linguagem são funções e tipos especiais necessários internamente pelo compilador. Por exemplo, a trait <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><code>Copy</code></a> é um item de linguagem que diz ao compilador quais tipos têm <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><em>semântica de cópia</em></a>. Quando olhamos para a <a href="https://github.com/rust-lang/rust/blob/485397e49a02a3b7ff77c17e4a3f16c653925cb3/src/libcore/marker.rs#L296-L299">implementação</a>, vemos que tem o atributo especial <code>#[lang = "copy"]</code> que o define como um item de linguagem (<em>Language Item</em> em inglês).</p>
+<p>Enquanto é possível fornecer implementações customizadas de items de linguagem, isso deve ser feito apenas como último recurso. A razão é que items de linguagem são detalhes de implementação altamente instáveis e nem mesmo verificados de tipo (então o compilador não verifica se uma função tem os tipos de argumento corretos). Felizmente, há uma forma mais estável de corrigir o erro de item de linguagem acima.</p>
+<p>O <a href="https://github.com/rust-lang/rust/blob/edb368491551a77d77a48446d4ee88b35490c565/src/libpanic_unwind/gcc.rs#L11-L45">item de linguagem <code>eh_personality</code></a> marca uma função que é usada para implementar <a href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">stack unwinding</a>. Por padrão, Rust usa unwinding para executar os destructores de todas as variáveis da stack vivas em caso de <a href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a>. Isso garante que toda memória usada seja liberada e permite que a thread pai capture o panic e continue a execução. Unwinding, no entanto, é um processo complicado e requer algumas bibliotecas específicas do SO (por exemplo, <a href="https://www.nongnu.org/libunwind/">libunwind</a> no Linux ou <a href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">tratamento estruturado de exceção</a> no Windows), então não queremos usá-lo para nosso sistema operacional.</p>
+<h3 id="desativando-o-unwinding"><a class="zola-anchor" href="#desativando-o-unwinding" aria-label="Anchor link for: desativando-o-unwinding">🔗</a>Desativando o Unwinding</h3>
+<p>Existem outros casos de uso também para os quais unwinding é indesejável, então Rust fornece uma opção para <a href="https://github.com/rust-lang/rust/pull/32900">abortar no panic</a> em vez disso. Isso desativa a geração de informações de símbolo de desenrolar e reduz consideravelmente o tamanho do binário. Há múltiplos locais onde podemos desativar o unwinding. A forma mais fácil é adicionar as seguintes linhas ao nosso <code>Cargo.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">profile.dev</span><span>]
+</span><span style="color:#569cd6;">panic </span><span>= </span><span style="color:#d69d85;">&quot;abort&quot;
+</span><span>
+</span><span>[</span><span style="color:#808080;">profile.release</span><span>]
+</span><span style="color:#569cd6;">panic </span><span>= </span><span style="color:#d69d85;">&quot;abort&quot;
+</span></code></pre>
+<p>Isso define a estratégia de panic para <code>abort</code> tanto para o perfil <code>dev</code> (usado para <code>cargo build</code>) quanto para o perfil <code>release</code> (usado para <code>cargo build --release</code>). Agora o item de linguagem <code>eh_personality</code> não deve mais ser necessário.</p>
+<p>Agora corrigimos ambos os erros acima. No entanto, se tentarmos compilar agora, outro erro ocorre:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build
+</span><span>error: requires `start` lang_item
+</span></code></pre>
+<p>Está faltando o item de linguagem <code>start</code> no nosso programa, que define o ponto de entrada.</p>
+<h2 id="o-atributo-start"><a class="zola-anchor" href="#o-atributo-start" aria-label="Anchor link for: o-atributo-start">🔗</a>O Atributo <code>start</code></h2>
+<p>Alguém pode pensar que a função <code>main</code> é a primeira função chamada quando você executa um programa. No entanto, a maioria das linguagens tem um <a href="https://en.wikipedia.org/wiki/Runtime_system">sistema de runtime</a>, que é responsável por coisas como coleta de lixo (por exemplo, em Java) ou threads de software (por exemplo, goroutines em Go). Este runtime precisa ser chamado antes de <code>main</code>, já que ele precisa se inicializar a si mesmo.</p>
+<p>Em um binário Rust típico que vincula a biblioteca padrão, a execução começa em uma biblioteca de runtime C chamada <code>crt0</code> (“C runtime zero”), que configura o ambiente para uma aplicação C. Isso inclui criar um stack e colocar os argumentos nos registradores certos. O runtime C então invoca o <a href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">ponto de entrada do runtime Rust</a>, que é marcado pelo item de linguagem <code>start</code>. Rust tem apenas um runtime muito mínimo, que cuida de algumas poucas coisas como configurar guardas de estouro do stack ou imprimir um backtrace ao fazer panic. O runtime então finalmente chama a função <code>main</code>.</p>
+<p>Nosso executável independente não tem acesso ao runtime Rust e ao <code>crt0</code>, então precisamos definir nosso próprio ponto de entrada. Implementar o item de linguagem <code>start</code> não ajudaria, já que ainda exigiria <code>crt0</code>. Em vez disso, precisamos sobrescrever diretamente o ponto de entrada <code>crt0</code>.</p>
+<h3 id="sobrescrevendo-o-ponto-de-entrada-entry-point"><a class="zola-anchor" href="#sobrescrevendo-o-ponto-de-entrada-entry-point" aria-label="Anchor link for: sobrescrevendo-o-ponto-de-entrada-entry-point">🔗</a>Sobrescrevendo o Ponto de Entrada (Entry Point)</h3>
+<p>Para dizer ao compilador Rust que não queremos usar a cadeia normal de ponto de entrada, adicionamos o atributo <code>#![no_main]</code>.</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#![no_std]
+</span><span>#![no_main]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span style="color:#608b4e;">/// Esta função é chamada em caso de pânico.
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Você pode notar que removemos a função <code>main</code>. A razão é que um <code>main</code> não faz sentido sem um runtime subjacente que o chame. Em vez disso, estamos agora sobrescrevendo o ponto de entrada do sistema operacional com nossa própria função <code>_start</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Ao usar o atributo <code>#[unsafe(no_mangle)]</code>, desativamos <a href="https://en.wikipedia.org/wiki/Name_mangling">mangling de nomes</a> para garantir que o compilador Rust realmente produza uma função com o nome <code>_start</code>. Sem o atributo, o compilador geraria algum símbolo criptografado como <code>_ZN3blog_os4_start7hb173fedf945531caE</code> para dar a cada função um nome único. O atributo é necessário porque precisamos dizer o nome da função do ponto de entrada ao linker no próximo passo.</p>
+<p>Também temos que marcar a função como <code>extern "C"</code> para dizer ao compilador que ele deve usar a <a href="https://en.wikipedia.org/wiki/Calling_convention">convenção de chamada C</a> para esta função (em vez da convenção de chamada Rust não especificada). A razão de nomear a função <code>_start</code> é que este é o nome do ponto de entrada padrão para a maioria dos sistemas.</p>
+<p>O tipo de retorno <code>!</code> significa que a função é divergente, ou seja, não é permitida retornar nunca. Isso é necessário porque o ponto de entrada não é chamado por nenhuma função, mas invocado diretamente pelo sistema operacional ou bootloader. Então em vez de retornar, o ponto de entrada deve por exemplo invocar a <a href="https://en.wikipedia.org/wiki/Exit_(system_call)">chamada de sistema <code>exit</code></a> do sistema operacional. No nosso caso, desligar a máquina poderia ser uma ação razoável, já que não há nada mais a fazer se um binário independente retorna. Por enquanto, cumprimos o requisito fazendo um loop infinito.</p>
+<p>Quando executamos <code>cargo build</code> agora, recebemos um feio erro de <em>linker</em>.</p>
+<h2 id="erros-do-linker"><a class="zola-anchor" href="#erros-do-linker" aria-label="Anchor link for: erros-do-linker">🔗</a>Erros do Linker</h2>
+<p>O linker é um programa que combina o código gerado em um executável. Como o formato executável difere entre Linux, Windows e macOS, cada sistema tem seu próprio linker que lança um erro diferente. A causa fundamental dos erros é a mesma: a configuração padrão do linker assume que nosso programa depende do runtime C, o que não é o caso.</p>
+<p>Para resolver os erros, precisamos dizer ao linker que ele não deve incluir o runtime C. Podemos fazer isso passando um certo conjunto de argumentos ao linker ou compilando para um alvo bare metal.</p>
+<h3 id="compilando-para-um-alvo-bare-metal"><a class="zola-anchor" href="#compilando-para-um-alvo-bare-metal" aria-label="Anchor link for: compilando-para-um-alvo-bare-metal">🔗</a>Compilando para um Alvo Bare Metal</h3>
+<p>Por padrão, Rust tenta construir um executável que seja capaz de executar no seu ambiente de sistema atual. Por exemplo, se você estiver usando Windows em <code>x86_64</code>, Rust tenta construir um executável <code>.exe</code> Windows que usa instruções <code>x86_64</code>. Este ambiente é chamado seu sistema “host”.</p>
+<p>Para descrever ambientes diferentes, Rust usa uma string chamada <a href="https://clang.llvm.org/docs/CrossCompilation.html#target-triple"><em>target triple</em></a>. Você pode ver o target triple do seu sistema host executando <code>rustc --version --verbose</code>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>rustc 1.91.0 (f8297e351 2025-10-28)
+</span><span>binary: rustc
+</span><span>commit-hash: f8297e351a40c1439a467bbbb6879088047f50b3
+</span><span>commit-date: 2025-10-28
+</span><span>host: x86_64-unknown-linux-gnu
+</span><span>release: 1.91.0
+</span><span>LLVM version: 21.1.2
+</span></code></pre>
+<p>A saída acima é de um sistema Linux <code>x86_64</code>. Vemos que o triple <code>host</code> é <code>x86_64-unknown-linux-gnu</code>, que inclui a arquitetura de CPU (<code>x86_64</code>), o vendor (<code>unknown</code>), o sistema operacional (<code>linux</code>), e a <a href="https://en.wikipedia.org/wiki/Application_binary_interface">ABI</a> (<code>gnu</code>).</p>
+<p>Ao compilar para nosso triple host, o compilador Rust e o linker assumem que há um sistema operacional subjacente como Linux ou Windows que usa o runtime C por padrão, o que causa os erros do linker. Então, para evitar os erros do linker, podemos compilar para um ambiente diferente sem nenhum sistema operacional subjacente.</p>
+<p>Um exemplo de tal ambiente bare metal é o target triple <code>thumbv7em-none-eabihf</code>, que descreve um sistema <a href="https://en.wikipedia.org/wiki/Embedded_system">embarcado</a> <a href="https://en.wikipedia.org/wiki/ARM_architecture">ARM</a>. Os detalhes não são importantes, tudo o que importa é que o target triple não tem nenhum sistema operacional subjacente, o que é indicado pelo <code>none</code> no target triple. Para ser capaz de compilar para este alvo, precisamos adicioná-lo em rustup:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>rustup target add thumbv7em-none-eabihf
+</span></code></pre>
+<p>Isso baixa uma cópia da biblioteca padrão std (e core) para o sistema. Agora podemos compilar nosso executável independente para este alvo:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo build --target thumbv7em-none-eabihf
+</span></code></pre>
+<p>Ao passar um argumento <code>--target</code>, nós fazemos uma compilação <a href="https://en.wikipedia.org/wiki/Cross_compiler">cross compile</a> nosso executável para um sistema alvo bare metal. Como o sistema alvo não tem sistema operacional, o linker não tenta vincular o runtime C e nossa compilação é bem-sucedida sem nenhum erro de linker.</p>
+<p>Esta é a abordagem que usaremos para construir nosso kernel de SO. Em vez de <code>thumbv7em-none-eabihf</code>, usaremos um <a href="https://doc.rust-lang.org/rustc/targets/custom.html">alvo customizado</a> que descreve um ambiente bare metal <code>x86_64</code>. Os detalhes serão explicados no próximo post.</p>
+<h3 id="argumentos-do-linker"><a class="zola-anchor" href="#argumentos-do-linker" aria-label="Anchor link for: argumentos-do-linker">🔗</a>Argumentos do Linker</h3>
+<p>Em vez de compilar para um sistema bare metal, também é possível resolver os erros do linker passando um certo conjunto de argumentos ao linker. Esta não é a abordagem que usaremos para nosso kernel, portanto esta seção é opcional e fornecida apenas para completude. Clique em <em>“Argumentos do Linker”</em> abaixo para mostrar o conteúdo opcional.</p>
+<details>
+<summary>Argumentos do Linker</summary>
+<p>Nesta seção discutimos os erros do linker que ocorrem no Linux, Windows e macOS, e explicamos como resolvê-los passando argumentos adicionais ao linker. Note que o formato executável e o linker diferem entre sistemas operacionais, então que um conjunto diferente de argumentos é necessário para cada sistema.</p>
+<h4 id="linux"><a class="zola-anchor" href="#linux" aria-label="Anchor link for: linux">🔗</a>Linux</h4>
+<p>No Linux, o seguinte erro de linker ocorre (encurtado):</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `cc` failed: exit code: 1
+</span><span>  |
+</span><span>  = note: &quot;cc&quot; […]
+</span><span>  = note: /usr/lib/gcc/../x86_64-linux-gnu/Scrt1.o: In function `_start&#39;:
+</span><span>          (.text+0x12): undefined reference to `__libc_csu_fini&#39;
+</span><span>          /usr/lib/gcc/../x86_64-linux-gnu/Scrt1.o: In function `_start&#39;:
+</span><span>          (.text+0x19): undefined reference to `__libc_csu_init&#39;
+</span><span>          /usr/lib/gcc/../x86_64-linux-gnu/Scrt1.o: In function `_start&#39;:
+</span><span>          (.text+0x25): undefined reference to `__libc_start_main&#39;
+</span><span>          collect2: error: ld returned 1 exit status
+</span></code></pre>
+<p>O problema é que o linker inclui a rotina de inicialização do runtime C por padrão, que também é chamada <code>_start</code>. Ela requer alguns símbolos da biblioteca padrão C <code>libc</code> que não incluímos devido ao atributo <code>no_std</code>, portanto o linker não consegue resolver estas referências. Para resolver isso, podemos dizer ao linker que ele não deve vincular a rotina de inicialização C passando a flag <code>-nostartfiles</code>.</p>
+<p>Uma forma de passar atributos de linker via cargo é o comando <code>cargo rustc</code>. O comando se comporta exatamente como <code>cargo build</code>, mas permite passar opções para <code>rustc</code>, o compilador Rust subjacente. <code>rustc</code> tem a flag <code>-C link-arg</code>, que passa um argumento ao linker. Combinados, nosso novo comando de compilação se parece com isso:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-arg=-nostartfiles
+</span></code></pre>
+<p>Agora nossa crate compilada como um executável independente no Linux!</p>
+<p>Não precisávamos especificar o nome da nossa função de ponto de entrada explicitamente, já que o linker procura por uma função com o nome <code>_start</code> por padrão.</p>
+<h4 id="windows"><a class="zola-anchor" href="#windows" aria-label="Anchor link for: windows">🔗</a>Windows</h4>
+<p>No Windows, um erro de linker diferente ocorre (encurtado):</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `link.exe` failed: exit code: 1561
+</span><span>  |
+</span><span>  = note: &quot;C:\\Program Files (x86)\\…\\link.exe&quot; […]
+</span><span>  = note: LINK : fatal error LNK1561: entry point must be defined
+</span></code></pre>
+<p>O erro “entry point must be defined” (ponto de entrada deve ser definido) significa que o linker não consegue encontrar o ponto de entrada. No Windows, o nome do ponto de entrada padrão <a href="https://docs.microsoft.com/en-us/cpp/build/reference/entry-entry-point-symbol">depende do subsistema usado</a>. Para o subsistema <code>CONSOLE</code>, o linker procura por uma função nomeada <code>mainCRTStartup</code> e para o subsistema <code>WINDOWS</code>, ele procura por uma função nomeada <code>WinMainCRTStartup</code>. Para sobrescrever o padrão e dizer ao linker para procurar por nossa função <code>_start</code> em vez disso, podemos passar um argumento <code>/ENTRY</code> ao linker:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-arg=/ENTRY:_start
+</span></code></pre>
+<p>Do formato de argumento diferente, vemos claramente que o linker Windows é um programa completamente diferente do linker Linux.</p>
+<p>Agora um erro de linker diferente ocorre:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `link.exe` failed: exit code: 1221
+</span><span>  |
+</span><span>  = note: &quot;C:\\Program Files (x86)\\…\\link.exe&quot; […]
+</span><span>  = note: LINK : fatal error LNK1221: a subsystem can&#39;t be inferred and must be
+</span><span>          defined
+</span></code></pre>
+<p>Este erro ocorre porque os executáveis Windows podem usar [subsistemas] diferentes<a href="https://docs.microsoft.com/en-us/cpp/build/reference/entry-entry-point-symbol">windows-subsystems</a>. Para programas normais, eles são inferidos dependendo do nome do ponto de entrada: Se o ponto de entrada é nomeado <code>main</code>, o subsistema <code>CONSOLE</code> é usado, e se o ponto de entrada é nomeado <code>WinMain</code>, o subsistema <code>WINDOWS</code> é usado. Como nossa função <code>_start</code> tem um nome diferente, precisamos especificar o subsistema explicitamente:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-args=&quot;/ENTRY:_start /SUBSYSTEM:console&quot;
+</span></code></pre>
+<p>Usamos o subsistema <code>CONSOLE</code> aqui, mas o subsistema <code>WINDOWS</code> funcionaria também. Em vez de passar <code>-C link-arg</code> múltiplas vezes, usamos <code>-C link-args</code> que leva uma lista de argumentos separados por espaço.</p>
+<p>Com este comando, nosso executável deve compilar com sucesso no Windows.</p>
+<h4 id="macos"><a class="zola-anchor" href="#macos" aria-label="Anchor link for: macos">🔗</a>macOS</h4>
+<p>No macOS, o seguinte erro de linker ocorre (encurtado):</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `cc` failed: exit code: 1
+</span><span>  |
+</span><span>  = note: &quot;cc&quot; […]
+</span><span>  = note: ld: entry point (_main) undefined. for architecture x86_64
+</span><span>          clang: error: linker command failed with exit code 1 […]
+</span></code></pre>
+<p>Esta mensagem de erro nos diz que o linker não consegue encontrar uma função de ponto de entrada com o nome padrão <code>main</code> (por alguma razão, todas as funções são prefixadas com um <code>_</code> no macOS). Para definir o ponto de entrada para nossa função <code>_start</code>, passamos o argumento de linker <code>-e</code>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-args=&quot;-e __start&quot;
+</span></code></pre>
+<p>A flag <code>-e</code> especifica o nome da função de ponto de entrada. Como todas as funções têm um <code>_</code> adicional prefixado no macOS, precisamos definir o ponto de entrada para <code>__start</code> em vez de <code>_start</code>.</p>
+<p>Agora o seguinte erro de linker ocorre:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `cc` failed: exit code: 1
+</span><span>  |
+</span><span>  = note: &quot;cc&quot; […]
+</span><span>  = note: ld: dynamic main executables must link with libSystem.dylib
+</span><span>          for architecture x86_64
+</span><span>          clang: error: linker command failed with exit code 1 […]
+</span></code></pre>
+<p>macOS <a href="https://developer.apple.com/library/archive/qa/qa1118/_index.html">não oferece suporte oficial a binários vinculados estaticamente</a> e requer que programas vinculem a biblioteca <code>libSystem</code> por padrão. Para sobrescrever isto e vincular um binário estático, passamos a flag <code>-static</code> ao linker:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-args=&quot;-e __start -static&quot;
+</span></code></pre>
+<p>Isso ainda não é suficiente, pois um terceiro erro de linker ocorre:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: linking with `cc` failed: exit code: 1
+</span><span>  |
+</span><span>  = note: &quot;cc&quot; […]
+</span><span>  = note: ld: library not found for -lcrt0.o
+</span><span>          clang: error: linker command failed with exit code 1 […]
+</span></code></pre>
+<p>Este erro ocorre porque programas no macOS vinculam a <code>crt0</code> (“C runtime zero”) por padrão. Isto é similar ao erro que tivemos no Linux e também pode ser resolvido adicionando o argumento de linker <code>-nostartfiles</code>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo rustc -- -C link-args=&quot;-e __start -static -nostartfiles&quot;
+</span></code></pre>
+<p>Agora nosso programa deve compilar com sucesso no macOS.</p>
+<h4 id="unificando-os-comandos-de-compilacao"><a class="zola-anchor" href="#unificando-os-comandos-de-compilacao" aria-label="Anchor link for: unificando-os-comandos-de-compilacao">🔗</a>Unificando os Comandos de Compilação</h4>
+<p>Agora temos diferentes comandos de compilação dependendo da plataforma host, o que não é o ideal. Para evitar isto, podemos criar um arquivo nomeado <code>.cargo/config.toml</code> que contém os argumentos específicos de plataforma:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in .cargo/config.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;linux&quot;)&#39;</span><span>]
+</span><span style="color:#569cd6;">rustflags </span><span>= [</span><span style="color:#d69d85;">&quot;-C&quot;</span><span>, </span><span style="color:#d69d85;">&quot;link-arg=-nostartfiles&quot;</span><span>]
+</span><span>
+</span><span>[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;windows&quot;)&#39;</span><span>]
+</span><span style="color:#569cd6;">rustflags </span><span>= [</span><span style="color:#d69d85;">&quot;-C&quot;</span><span>, </span><span style="color:#d69d85;">&quot;link-args=/ENTRY:_start /SUBSYSTEM:console&quot;</span><span>]
+</span><span>
+</span><span>[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;macos&quot;)&#39;</span><span>]
+</span><span style="color:#569cd6;">rustflags </span><span>= [</span><span style="color:#d69d85;">&quot;-C&quot;</span><span>, </span><span style="color:#d69d85;">&quot;link-args=-e __start -static -nostartfiles&quot;</span><span>]
+</span></code></pre>
+<p>A key <code>rustflags</code> contém argumentos que são automaticamente adicionados a cada invocação de <code>rustc</code>. Para mais informações sobre o arquivo <code>.cargo/config.toml</code>, veja a <a href="https://doc.rust-lang.org/cargo/reference/config.html">documentação oficial</a>.</p>
+<p>Agora nosso programa deve ser compilável em todas as três plataformas com um simples <code>cargo build</code>.</p>
+<h4 id="voce-deveria-fazer-isto"><a class="zola-anchor" href="#voce-deveria-fazer-isto" aria-label="Anchor link for: voce-deveria-fazer-isto">🔗</a>Você Deveria Fazer Isto?</h4>
+<p>Enquanto é possível construir um executável independente para Linux, Windows e macOS, provavelmente não é uma boa ideia. A razão é que nosso executável ainda espera por várias coisas, por exemplo que uma pilha seja inicializada quando a função <code>_start</code> é chamada. Sem o runtime C, alguns desses requisitos podem não ser atendidos, o que pode causar nosso programa falhar, por exemplo através de um segmentation fault.</p>
+<p>Se você quiser criar um binário mínimo que execute em cima de um sistema operacional existente, incluindo <code>libc</code> e definindo o atributo <code>#[start]</code> conforme descrito <a href="https://doc.rust-lang.org/1.16.0/book/no-stdlib.html">aqui</a> é provavelmente uma melhor ideia.</p>
+</details>
+<h2 id="resumo"><a class="zola-anchor" href="#resumo" aria-label="Anchor link for: resumo">🔗</a>Resumo</h2>
+<p>Um binário Rust independente mínimo se parece com isto:</p>
+<p><code>src/main.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#![no_std] </span><span style="color:#608b4e;">// Não vincule a biblioteca padrão do Rust
+</span><span>#![no_main] </span><span style="color:#608b4e;">// desativar todos os pontos de entrada no nível Rust
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span>#[unsafe(no_mangle)] </span><span style="color:#608b4e;">// não altere (mangle) o nome desta função
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// essa função é o ponto de entrada, já que o vinculador procura uma função
+</span><span>    </span><span style="color:#608b4e;">// denominado `_start` por padrão
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// Esta função é chamada em caso de pânico.
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p><code>Cargo.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">package</span><span>]
+</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;crate_name&quot;
+</span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;0.1.0&quot;
+</span><span style="color:#569cd6;">authors </span><span>= [</span><span style="color:#d69d85;">&quot;Author Name &lt;author@example.com&gt;&quot;</span><span>]
+</span><span>
+</span><span style="color:#608b4e;"># o perfil usado para `cargo build`
+</span><span>[</span><span style="color:#808080;">profile.dev</span><span>]
+</span><span style="color:#569cd6;">panic </span><span>= </span><span style="color:#d69d85;">&quot;abort&quot; </span><span style="color:#608b4e;"># desativar o unwinding do stack em caso de pânico
+</span><span>
+</span><span style="color:#608b4e;"># o perfil usado para `cargo build --release`
+</span><span>[</span><span style="color:#808080;">profile.release</span><span>]
+</span><span style="color:#569cd6;">panic </span><span>= </span><span style="color:#d69d85;">&quot;abort&quot; </span><span style="color:#608b4e;"># desativar o unwinding do stack em caso de pânico
+</span></code></pre>
+<p>Para construir este binário, precisamos compilar para um alvo bare metal como <code>thumbv7em-none-eabihf</code>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo build --target thumbv7em-none-eabihf
+</span></code></pre>
+<p>Alternativamente, podemos compilá-lo para o sistema host passando argumentos adicionais de linker:</p>
+<pre data-lang="bash" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-bash "><code class="language-bash" data-lang="bash"><span style="color:#608b4e;"># Linux
+</span><span>cargo rustc</span><span style="color:#569cd6;"> --</span><span> -C link-arg=-nostartfiles
+</span><span style="color:#608b4e;"># Windows
+</span><span>cargo rustc</span><span style="color:#569cd6;"> --</span><span> -C link-args=</span><span style="color:#d69d85;">&quot;/ENTRY:_start /SUBSYSTEM:console&quot;
+</span><span style="color:#608b4e;"># macOS
+</span><span>cargo rustc</span><span style="color:#569cd6;"> --</span><span> -C link-args=</span><span style="color:#d69d85;">&quot;-e __start -static -nostartfiles&quot;
+</span></code></pre>
+<p>Note que isto é apenas um exemplo mínimo de um binário Rust independente. Este binário espera por várias coisas, por exemplo, que um stack seja inicializado quando a função <code>_start</code> é chamada. <strong>Portanto para qualquer uso real de tal binário, mais passos são necessários</strong>.</p>
+<h2 id="deixando-rust-analyzer-feliz"><a class="zola-anchor" href="#deixando-rust-analyzer-feliz" aria-label="Anchor link for: deixando-rust-analyzer-feliz">🔗</a>Deixando <code>rust-analyzer</code> Feliz</h2>
+<p>O projeto <a href="https://rust-analyzer.github.io/"><code>rust-analyzer</code></a> é uma ótima forma de obter autocompletar e suporte “ir para definição” (e muitos outros recursos) para código Rust no seu editor.
+Funciona muito bem para projetos <code>#![no_std]</code> também, então recomendo usá-lo para desenvolvimento de kernel!</p>
+<p>Se você estiver usando a funcionalidade <a href="https://rust-analyzer.github.io/book/configuration.html#checkOnSave"><code>checkOnSave</code></a> de <code>rust-analyzer</code> (habilitada por padrão), ela pode relatar um erro para a função panic do nosso kernel:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>found duplicate lang item `panic_impl`
+</span></code></pre>
+<p>A razão para este erro é que <code>rust-analyzer</code> invoca <code>cargo check --all-targets</code> por padrão, que também tenta construir o binário em modo <a href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html">teste</a> e <a href="https://doc.rust-lang.org/rustc/tests/index.html#benchmarks">benchmark</a>.</p>
+<div class="note">
+<h3 id="os-dois-significados-de-target"><a class="zola-anchor" href="#os-dois-significados-de-target" aria-label="Anchor link for: os-dois-significados-de-target">🔗</a>Os dois significados de “target”</h3>
+<p>A flag <code>--all-targets</code> é completamente não relacionada ao argumento <code>--target</code>.
+Há dois significados diferentes do termo “target” no <code>cargo</code>:</p>
+<ul>
+<li>A flag <code>--target</code> especifica o <a href="https://doc.rust-lang.org/rustc/targets/index.html"><em>alvo de compilação</em></a> que deve ser passado ao compilador <code>rustc</code>. Isso deve ser definido como o <a href="https://clang.llvm.org/docs/CrossCompilation.html#target-triple">target triple</a> da máquina que deve executar nosso código.</li>
+<li>A flag <code>--all-targets</code> referencia o <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html">_alvo do package</a> do Cargo. Pacotes Cargo podem ser uma biblioteca e binário ao mesmo tempo, então você pode especificar de qual forma você gostaria de construir sua crate. Além disso, Cargo também tem alvos de package para <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#examples">exemplos</a>, <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#tests">testes</a>, e <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#benchmarks">benchmarks</a>. Esses alvos de pacote podem coexistir, então você pode construir/verificar a mesma crate por exemplo em modo biblioteca ou modo teste.</li>
+</ul>
+</div>
+<p>Por padrão, <code>cargo check</code> apenas constrói o <em>biblioteca</em> e os alvos de pacote <em>binário</em>.
+No entanto, <code>rust-analyzer</code> escolhe verificar todos os alvos de pacote por padrão quando <a href="https://rust-analyzer.github.io/book/configuration.html#checkOnSave"><code>checkOnSave</code></a> é habilitado.
+Esta é a razão pela qual <code>rust-analyzer</code> relata o erro de <code>lang item</code> acima que não vemos em <code>cargo check</code>.
+Se executarmos <code>cargo check --all-targets</code>, vemos o erro também:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0152]: found duplicate lang item `panic_impl`
+</span><span>  --&gt; src/main.rs:13:1
+</span><span>   |
+</span><span>13 | / fn panic(_info: &amp;PanicInfo) -&gt; ! {
+</span><span>14 | |     loop {}
+</span><span>15 | | }
+</span><span>   | |_^
+</span><span>   |
+</span><span>   = note: the lang item is first defined in crate `std` (which `test` depends on)
+</span><span>   = note: first definition in `std` loaded from /home/[...]/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-8df6be531efb3fd0.rlib
+</span><span>   = note: second definition in the local crate (`blog_os`)
+</span></code></pre>
+<p>A primeira <code>note</code> nos diz que o item de linguagem panic já está definido na crate <code>std</code>, que é uma dependência da crate <code>test</code>.
+A crate <code>test</code> é automaticamente incluída ao construir uma crate em <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#tests">modo teste</a>.
+Isso não faz sentido para nosso kernel <code>#![no_std]</code> já que não há forma de suportar a biblioteca padrão em bare metal.
+Então este erro não é relevante para nosso projeto e podemos seguramente ignorá-lo.</p>
+<p>A forma apropriada de evitar este erro é especificar em nosso <code>Cargo.toml</code> que nosso binário não suporta construção em modos <code>test</code> e <code>bench</code>.
+Podemos fazer isso adicionando uma seção <code>[[bin]]</code> em nosso <code>Cargo.toml</code> para <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#configuring-a-target">configurar a construção</a> do nosso binário:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># no Cargo.toml
+</span><span>
+</span><span>[[</span><span style="color:#808080;">bin</span><span>]]
+</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;blog_os&quot;
+</span><span style="color:#569cd6;">test </span><span>= </span><span style="color:#569cd6;">false
+</span><span style="color:#569cd6;">bench </span><span>= </span><span style="color:#569cd6;">false
+</span></code></pre>
+<p>Os colchetes duplos ao redor de <code>bin</code> não é um erro, isto é como o formato TOML define chaves que podem aparecer múltiplas vezes.
+Como uma crate pode ter múltiplos binários, a seção <code>[[bin]]</code> pode aparecer múltiplas vezes em <code>Cargo.toml</code> também.
+Esta é também a razão para o campo <code>name</code> obrigatório, que precisa corresponder ao nome do binário (para que <code>cargo</code> saiba quais configurações devem ser aplicadas a qual binário).</p>
+<p>Ao definir os campos <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#the-test-field"><code>test</code></a> e <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#the-bench-field"><code>bench</code> </a> para <code>false</code>, instruímos <code>cargo</code> a não construir nosso binário em modo teste ou benchmark.
+Agora <code>cargo check --all-targets</code> não deve lançar mais erros, e a implementação de <code>checkOnSave</code> de <code>rust-analyzer</code> também deve estar feliz.</p>
+<h2 id="o-que-vem-a-seguir"><a class="zola-anchor" href="#o-que-vem-a-seguir" aria-label="Anchor link for: o-que-vem-a-seguir">🔗</a>O que vem a seguir?</h2>
+<p>O <a href="https://os.phil-opp.com/minimal-rust-kernel/">próximo post</a> explica os passos necessários para transformar nosso binário independente em um kernel mínimo do sistema operacional. Isso inclui criar um alvo customizado, combinar nosso executável com um bootloader, e aprender como imprimir algo na tela.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Apoie-me</h2>
+<p>Criar e manter este blog e as bibliotecas associadas dá muito trabalho, mas eu realmente gosto de fazê-lo. Ao me apoiar, você me permite investir mais tempo em novo conteúdo, novos recursos e manutenção contínua. A melhor forma de me apoiar é <a href="https://github.com/sponsors/phil-opp"><em>me patrocinar no GitHub</em></a>. Obrigado!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+        
+            <a class="next" href="/pt-BR/minimal-rust-kernel/">Um Kernel Rust Mínimo &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comentários</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Teve algum problema, quer deixar um feedback ou discutir mais ideias? Fique à vontade para deixar um comentário aqui! Por favor, use o inglês e siga o <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conduta</a> do Rust. Este tópico de comentários está diretamente vinculado a uma <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22A%20Freestanding%20Rust%20Binary%20%28pt-BR%29%22%20in%3Atitle"><em>discussão no GitHub</em></a>, então você também pode comentar lá se preferir.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="A Freestanding Rust Binary (pt-BR)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="pt-BR"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22A%20Freestanding%20Rust%20Binary%20%28pt-BR%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Por favor, deixe seus comentários em inglês se possível.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/freestanding-rust-binary/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ar" class=""><a href="https://os.phil-opp.com/ar/freestanding-rust-binary/">
+                        Arabic
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/freestanding-rust-binary/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/freestanding-rust-binary/">
+                        Persian
+                    </a></li><li data-lang-switch-to="fr" class=""><a href="https://os.phil-opp.com/fr/freestanding-rust-binary/">
+                        French
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/freestanding-rust-binary/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/freestanding-rust-binary/">
+                        Korean
+                    </a></li><li data-lang-switch-to="ru" class=""><a href="https://os.phil-opp.com/ru/freestanding-rust-binary/">
+                        Russian
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/freestanding-rust-binary/">
+                        Chinese (simplified)
+                    </a></li><li data-lang-switch-to="zh-TW" class=""><a href="https://os.phil-opp.com/zh-TW/freestanding-rust-binary/">
+                        Chinese (traditional)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

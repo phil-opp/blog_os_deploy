@@ -1,0 +1,803 @@
+<!doctype html>
+
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Nesta postagem, configuramos o controlador de interrupção programável para encaminhar corretamente interrupções de hardware para a CPU. Para manipular…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/pt-BR/hardware-interrupts/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Interrupções de Hardware | Escrevendo um OS em Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Escrevendo um OS em Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/pt-BR" title="All Posts">« Todos os Posts</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Tabela de Conteúdos</h2>
+    <ol>
+        <li>
+            <a href="#visao-geral">Visão Geral</a>
+            
+        </li><li>
+            <a href="#o-8259-pic">O 8259 PIC</a>
+            <ol>
+                <li>
+                    <a href="#implementacao">Implementação</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#habilitando-interrupcoes">Habilitando Interrupções</a>
+            
+        </li><li>
+            <a href="#manipulando-interrupcoes-de-timer">Manipulando Interrupções de Timer</a>
+            <ol>
+                <li>
+                    <a href="#end-of-interrupt">End of Interrupt</a>
+                </li><li>
+                    <a href="#configurando-o-timer">Configurando o Timer</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#deadlocks">Deadlocks</a>
+            <ol>
+                <li>
+                    <a href="#provocando-um-deadlock">Provocando um Deadlock</a>
+                </li><li>
+                    <a href="#corrigindo-o-deadlock">Corrigindo o Deadlock</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#corrigindo-uma-race-condition">Corrigindo uma Race Condition</a>
+            
+        </li><li>
+            <a href="#a-instrucao-hlt">A Instrução hlt</a>
+            
+        </li><li>
+            <a href="#entrada-de-teclado">Entrada de Teclado</a>
+            <ol>
+                <li>
+                    <a href="#lendo-os-scancodes">Lendo os Scancodes</a>
+                </li><li>
+                    <a href="#interpretando-os-scancodes">Interpretando os Scancodes</a>
+                </li><li>
+                    <a href="#configurando-o-teclado">Configurando o Teclado</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#resumo">Resumo</a>
+            
+        </li><li>
+            <a href="#o-que-vem-a-seguir">O Que Vem a Seguir?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Comentários</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Interrupções de Hardware</h1>
+    <time datetime="2018-10-22" class="post-date">
+        Oct 22, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Conteúdo Traduzido:</b>
+            Esta é uma tradução comunitária do post <strong><a href="https://os.phil-opp.com/hardware-interrupts/">Hardware Interrupts</a></strong>. Pode estar incompleta, desatualizada ou conter erros. Por favor, reporte qualquer problema!
+            </p>
+            <p>
+                Traduzido por <a href="https://github.com/richarddalves">@richarddalves</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Nesta postagem, configuramos o controlador de interrupção programável para encaminhar corretamente interrupções de hardware para a CPU. Para manipular essas interrupções, adicionamos novas entradas à nossa tabela de descritores de interrupção, assim como fizemos para nossos manipuladores de exceção. Aprenderemos como obter interrupções periódicas de timer e como obter entrada do teclado.</p>
+<span id="continue-reading"></span>
+<p>Este blog é desenvolvido abertamente no <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Se você tiver algum problema ou dúvida, abra um issue lá. Você também pode deixar comentários <a href="https://os.phil-opp.com/pt-BR/hardware-interrupts/#comments">na parte inferior</a>. O código-fonte completo desta publicação pode ser encontrado na branch <a href="https://github.com/phil-opp/blog_os/tree/post-07"><code>post-07</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Tabela de Conteúdos</b></summary>
+        <ul>
+            <li>
+                <a href="#visao-geral">Visão Geral</a>
+                
+            </li><li>
+                <a href="#o-8259-pic">O 8259 PIC</a>
+                <ul>
+                    <li>
+                        <a href="#implementacao">Implementação</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#habilitando-interrupcoes">Habilitando Interrupções</a>
+                
+            </li><li>
+                <a href="#manipulando-interrupcoes-de-timer">Manipulando Interrupções de Timer</a>
+                <ul>
+                    <li>
+                        <a href="#end-of-interrupt">End of Interrupt</a>
+                    </li><li>
+                        <a href="#configurando-o-timer">Configurando o Timer</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#deadlocks">Deadlocks</a>
+                <ul>
+                    <li>
+                        <a href="#provocando-um-deadlock">Provocando um Deadlock</a>
+                    </li><li>
+                        <a href="#corrigindo-o-deadlock">Corrigindo o Deadlock</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#corrigindo-uma-race-condition">Corrigindo uma Race Condition</a>
+                
+            </li><li>
+                <a href="#a-instrucao-hlt">A Instrução hlt</a>
+                
+            </li><li>
+                <a href="#entrada-de-teclado">Entrada de Teclado</a>
+                <ul>
+                    <li>
+                        <a href="#lendo-os-scancodes">Lendo os Scancodes</a>
+                    </li><li>
+                        <a href="#interpretando-os-scancodes">Interpretando os Scancodes</a>
+                    </li><li>
+                        <a href="#configurando-o-teclado">Configurando o Teclado</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#resumo">Resumo</a>
+                
+            </li><li>
+                <a href="#o-que-vem-a-seguir">O Que Vem a Seguir?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Comentários</a></li>
+        </ul>
+    </details>
+
+<h2 id="visao-geral"><a class="zola-anchor" href="#visao-geral" aria-label="Anchor link for: visao-geral">🔗</a>Visão Geral</h2>
+<p>Interrupções fornecem uma forma de notificar a CPU de dispositivos de hardware conectados. Então, em vez de deixar o kernel verificar periodicamente o teclado por novos caracteres (um processo chamado <a href="https://en.wikipedia.org/wiki/Polling_(computer_science)"><em>polling</em></a>), o teclado pode notificar o kernel de cada pressionamento de tecla. Isso é muito mais eficiente porque o kernel só precisa agir quando algo aconteceu. Também permite tempos de reação mais rápidos, já que o kernel pode reagir imediatamente e não apenas na próxima verificação.</p>
+<p>Conectar todos os dispositivos de hardware diretamente à CPU não é possível. Em vez disso, um <em>controlador de interrupção</em> separado agrega as interrupções de todos os dispositivos e então notifica a CPU:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>                                    ____________             _____
+</span><span>               Timer ------------&gt; |            |           |     |
+</span><span>               Teclado ----------&gt; | Controlador|---------&gt; | CPU |
+</span><span>               Outro Hardware ---&gt; | de         |           |_____|
+</span><span>               Etc. -------------&gt; | Interrupção|
+</span><span>                                   |____________|
+</span><span>
+</span></code></pre>
+<p>A maioria dos controladores de interrupção são programáveis, o que significa que suportam diferentes níveis de prioridade para interrupções. Por exemplo, isso permite dar às interrupções de timer uma prioridade mais alta que as interrupções de teclado para garantir cronometragem precisa.</p>
+<p>Ao contrário de exceções, interrupções de hardware ocorrem <em>assincronamente</em>. Isso significa que são completamente independentes do código executado e podem ocorrer a qualquer momento. Assim, temos repentinamente uma forma de concorrência em nosso kernel com todos os potenciais bugs relacionados à concorrência. O modelo estrito de ownership de Rust nos ajuda aqui porque proíbe estado global mutável. No entanto, deadlocks ainda são possíveis, como veremos mais tarde nesta postagem.</p>
+<h2 id="o-8259-pic"><a class="zola-anchor" href="#o-8259-pic" aria-label="Anchor link for: o-8259-pic">🔗</a>O 8259 PIC</h2>
+<p>O <a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> é um controlador de interrupção programável (PIC) introduzido em 1976. Ele foi há muito tempo substituído pelo mais novo <a href="https://en.wikipedia.org/wiki/Intel_APIC_Architecture">APIC</a>, mas sua interface ainda é suportada em sistemas atuais por razões de compatibilidade retroativa. O 8259 PIC é significativamente mais fácil de configurar que o APIC, então o usaremos para nos introduzir a interrupções antes de mudarmos para o APIC em uma postagem posterior.</p>
+<p>O 8259 tem oito linhas de interrupção e várias linhas para se comunicar com a CPU. Os sistemas típicos daquela época eram equipados com duas instâncias do 8259 PIC, um PIC primário e um secundário, conectado a uma das linhas de interrupção do primário:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>                     ____________                          ____________
+</span><span>Real Time Clock --&gt; |            |   Timer -------------&gt; |            |
+</span><span>ACPI -------------&gt; |            |   Teclado-----------&gt; |            |      _____
+</span><span>Disponível -------&gt; | Controlador|----------------------&gt; | Controlador|     |     |
+</span><span>Disponível -------&gt; | de         |   Porta Serial 2 ----&gt; | de         |---&gt; | CPU |
+</span><span>Mouse ------------&gt; | Interrupção|   Porta Serial 1 ----&gt; | Interrupção|     |_____|
+</span><span>Co-Processador ---&gt; | Secundário |   Porta Paralela 2/3 &gt; | Primário   |
+</span><span>ATA Primário -----&gt; |            |   Disquete ---------&gt; |            |
+</span><span>ATA Secundário ---&gt; |____________|   Porta Paralela 1---&gt; |____________|
+</span><span>
+</span></code></pre>
+<p>Este gráfico mostra a atribuição típica de linhas de interrupção. Vemos que a maioria das 15 linhas têm um mapeamento fixo, por exemplo, a linha 4 do PIC secundário é atribuída ao mouse.</p>
+<p>Cada controlador pode ser configurado através de duas <a href="https://os.phil-opp.com/testing/#i-o-ports">portas I/O</a>, uma porta “comando” e uma porta “dados”. Para o controlador primário, essas portas são <code>0x20</code> (comando) e <code>0x21</code> (dados). Para o controlador secundário, elas são <code>0xa0</code> (comando) e <code>0xa1</code> (dados). Para mais informações sobre como os PICs podem ser configurados, veja o <a href="https://wiki.osdev.org/8259_PIC">artigo em osdev.org</a>.</p>
+<h3 id="implementacao"><a class="zola-anchor" href="#implementacao" aria-label="Anchor link for: implementacao">🔗</a>Implementação</h3>
+<p>A configuração padrão dos PICs não é utilizável porque envia números de vetor de interrupção no intervalo de 0–15 para a CPU. Esses números já estão ocupados por exceções de CPU. Por exemplo, o número 8 corresponde a um double fault. Para corrigir esse problema de sobreposição, precisamos remapear as interrupções PIC para números diferentes. O intervalo real não importa desde que não se sobreponha às exceções, mas tipicamente o intervalo de 32–47 é escolhido, porque esses são os primeiros números livres após os 32 slots de exceção.</p>
+<p>A configuração acontece escrevendo valores especiais nas portas de comando e dados dos PICs. Felizmente, já existe uma crate chamada <a href="https://docs.rs/pic8259/0.10.1/pic8259/"><code>pic8259</code></a>, então não precisamos escrever a sequência de inicialização nós mesmos. No entanto, se você estiver interessado em como funciona, confira <a href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">seu código-fonte</a>. Ele é bastante pequeno e bem documentado.</p>
+<p>Para adicionar a crate como dependência, adicionamos o seguinte ao nosso projeto:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># em Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">pic8259 </span><span>= </span><span style="color:#d69d85;">&quot;0.10.1&quot;
+</span></code></pre>
+<p>A principal abstração fornecida pela crate é a struct <a href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a> que representa o layout primário/secundário de PIC que vimos acima. Ela é projetada para ser usada da seguinte forma:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>pic8259::ChainedPics;
+</span><span style="color:#569cd6;">use</span><span> spin;
+</span><span>
+</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#b5cea8;">32</span><span>;
+</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span>: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#b4cea8;">PIC_1_OFFSET </span><span>+ </span><span style="color:#b5cea8;">8</span><span>;
+</span><span>
+</span><span style="color:#569cd6;">pub static </span><span style="color:#b4cea8;">PICS</span><span>: spin::Mutex&lt;ChainedPics&gt; =
+</span><span>    spin::Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{ ChainedPics::new(</span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>, </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span>) });
+</span></code></pre>
+<p>Como notado acima, estamos definindo os offsets para os PICs no intervalo 32–47. Ao envolver a struct <code>ChainedPics</code> em um <code>Mutex</code>, obtemos acesso mutável seguro (através do <a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html#method.lock">método <code>lock</code></a>), que precisamos no próximo passo. A função <code>ChainedPics::new</code> é unsafe porque offsets errados poderiam causar comportamento indefinido.</p>
+<p>Agora podemos inicializar o 8259 PIC em nossa função <code>init</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    gdt::init();
+</span><span>    interrupts::init_idt();
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span>.lock().initialize() }; </span><span style="color:#608b4e;">// novo
+</span><span>}
+</span></code></pre>
+<p>Usamos a função <a href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> para realizar a inicialização do PIC. Como a função <code>ChainedPics::new</code>, esta função também é unsafe porque pode causar comportamento indefinido se o PIC estiver mal configurado.</p>
+<p>Se tudo correr bem, devemos continuar a ver a mensagem “Não crashou!” ao executar <code>cargo run</code>.</p>
+<h2 id="habilitando-interrupcoes"><a class="zola-anchor" href="#habilitando-interrupcoes" aria-label="Anchor link for: habilitando-interrupcoes">🔗</a>Habilitando Interrupções</h2>
+<p>Até agora, nada aconteceu porque as interrupções ainda estão desativadas na configuração da CPU. Isso significa que a CPU não escuta o controlador de interrupção de forma alguma, então nenhuma interrupção pode chegar à CPU. Vamos mudar isso:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    gdt::init();
+</span><span>    interrupts::init_idt();
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span>.lock().initialize() };
+</span><span>    x86_64::instructions::interrupts::enable();     </span><span style="color:#608b4e;">// novo
+</span><span>}
+</span></code></pre>
+<p>A função <code>interrupts::enable</code> da crate <code>x86_64</code> executa a instrução especial <code>sti</code> (“set interrupts”) para habilitar interrupções externas. Quando tentamos <code>cargo run</code> agora, vemos que ocorre um double fault:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/hardware-interrupts/qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEÇÃO: DOUBLE FAULT because of hardware timer" /></p>
+<p>A razão para este double fault é que o timer de hardware (o <a href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a>, para ser exato) é habilitado por padrão, então começamos a receber interrupções de timer assim que habilitamos interrupções. Como ainda não definimos uma função manipuladora para ele, nosso manipulador de double fault é invocado.</p>
+<h2 id="manipulando-interrupcoes-de-timer"><a class="zola-anchor" href="#manipulando-interrupcoes-de-timer" aria-label="Anchor link for: manipulando-interrupcoes-de-timer">🔗</a>Manipulando Interrupções de Timer</h2>
+<p>Como vemos do gráfico <a href="https://os.phil-opp.com/pt-BR/hardware-interrupts/#o-8259-pic">acima</a>, o timer usa a linha 0 do PIC primário. Isso significa que ele chega à CPU como interrupção 32 (0 + offset 32). Em vez de codificar rigidamente o índice 32, o armazenamos em um enum <code>InterruptIndex</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/interrupts.rs
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy)]
+</span><span>#[repr(u8)]
+</span><span style="color:#569cd6;">pub enum </span><span>InterruptIndex {
+</span><span>    Timer = </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>InterruptIndex {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>as_u8(self) -&gt; </span><span style="color:#569cd6;">u8 </span><span>{
+</span><span>        self </span><span style="color:#569cd6;">as u8
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>as_usize(self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>        </span><span style="color:#569cd6;">usize</span><span>::from(self.as_u8())
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>O enum é um <a href="https://doc.rust-lang.org/reference/items/enumerations.html#custom-discriminant-values-for-fieldless-enumerations">enum similar a C</a> para que possamos especificar diretamente o índice para cada variante. O atributo <code>repr(u8)</code> especifica que cada variante é representada como um <code>u8</code>. Adicionaremos mais variantes para outras interrupções no futuro.</p>
+<p>Agora podemos adicionar uma função manipuladora para a interrupção de timer:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use crate</span><span>::print;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        […]
+</span><span>        idt[InterruptIndex::Timer.as_usize()]
+</span><span>            .set_handler_fn(timer_interrupt_handler); </span><span style="color:#608b4e;">// novo
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>timer_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;.&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Nosso <code>timer_interrupt_handler</code> tem a mesma assinatura que nossos manipuladores de exceção, porque a CPU reage identicamente a exceções e interrupções externas (a única diferença é que algumas exceções empurram um código de erro). A struct <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> implementa a trait <a href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a>, então podemos acessar entradas individuais através da sintaxe de indexação de array.</p>
+<p>Em nosso manipulador de interrupção de timer, imprimimos um ponto na tela. Como a interrupção de timer acontece periodicamente, esperaríamos ver um ponto aparecendo a cada tick do timer. No entanto, quando o executamos, vemos que apenas um único ponto é impresso:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/hardware-interrupts/qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
+<h3 id="end-of-interrupt"><a class="zola-anchor" href="#end-of-interrupt" aria-label="Anchor link for: end-of-interrupt">🔗</a>End of Interrupt</h3>
+<p>A razão é que o PIC espera um sinal explícito de “end of interrupt” (EOI) do nosso manipulador de interrupção. Este sinal diz ao controlador que a interrupção foi processada e que o sistema está pronto para receber a próxima interrupção. Então o PIC pensa que ainda estamos ocupados processando a primeira interrupção de timer e espera pacientemente pelo sinal EOI antes de enviar a próxima.</p>
+<p>Para enviar o EOI, usamos nossa struct <code>PICS</code> estática novamente:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>timer_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;.&quot;</span><span>);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>O <code>notify_end_of_interrupt</code> descobre se o PIC primário ou secundário enviou a interrupção e então usa as portas <code>command</code> e <code>data</code> para enviar um sinal EOI aos respectivos controladores. Se o PIC secundário enviou a interrupção, ambos os PICs precisam ser notificados porque o PIC secundário está conectado a uma linha de entrada do PIC primário.</p>
+<p>Precisamos ter cuidado para usar o número de vetor de interrupção correto, caso contrário poderíamos acidentalmente deletar uma importante interrupção não enviada ou fazer nosso sistema travar. Esta é a razão pela qual a função é unsafe.</p>
+<p>Quando agora executamos <code>cargo run</code> vemos pontos aparecendo periodicamente na tela:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
+<h3 id="configurando-o-timer"><a class="zola-anchor" href="#configurando-o-timer" aria-label="Anchor link for: configurando-o-timer">🔗</a>Configurando o Timer</h3>
+<p>O timer de hardware que usamos é chamado de <em>Programmable Interval Timer</em>, ou PIT, resumidamente. Como o nome diz, é possível configurar o intervalo entre duas interrupções. Não entraremos em detalhes aqui porque mudaremos em breve para o <a href="https://wiki.osdev.org/APIC_timer">APIC timer</a>, mas a wiki do OSDev tem um artigo extenso sobre <a href="https://wiki.osdev.org/Programmable_Interval_Timer">configurando o PIT</a>.</p>
+<h2 id="deadlocks"><a class="zola-anchor" href="#deadlocks" aria-label="Anchor link for: deadlocks">🔗</a>Deadlocks</h2>
+<p>Agora temos uma forma de concorrência em nosso kernel: As interrupções de timer ocorrem assincronamente, então podem interromper nossa função <code>_start</code> a qualquer momento. Felizmente, o sistema de ownership de Rust previne muitos tipos de bugs relacionados à concorrência em tempo de compilação. Uma exceção notável são deadlocks. Deadlocks ocorrem se uma thread tenta adquirir um lock que nunca se tornará livre. Assim, a thread trava indefinidamente.</p>
+<p>Já podemos provocar um deadlock em nosso kernel. Lembre-se, nossa macro <code>println</code> chama a função <code>vga_buffer::_print</code>, que <a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">trava um <code>WRITER</code> global</a> usando um spinlock:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/vga_buffer.rs
+</span><span>
+</span><span>[…]
+</span><span>
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
+</span><span>}
+</span></code></pre>
+<p>Ela trava o <code>WRITER</code>, chama <code>write_fmt</code> nele, e implicitamente o destrava no final da função. Agora imagine que uma interrupção ocorre enquanto o <code>WRITER</code> está travado e o manipulador de interrupção tenta imprimir algo também:</p>
+<table><thead><tr><th>Passo de Tempo</th><th>_start</th><th>interrupt_handler</th></tr></thead><tbody>
+<tr><td>0</td><td>chama <code>println!</code></td><td> </td></tr>
+<tr><td>1</td><td><code>print</code> trava <code>WRITER</code></td><td> </td></tr>
+<tr><td>2</td><td></td><td><strong>interrupção ocorre</strong>, manipulador começa a executar</td></tr>
+<tr><td>3</td><td></td><td>chama <code>println!</code></td></tr>
+<tr><td>4</td><td></td><td><code>print</code> tenta travar <code>WRITER</code> (já travado)</td></tr>
+<tr><td>5</td><td></td><td><code>print</code> tenta travar <code>WRITER</code> (já travado)</td></tr>
+<tr><td>…</td><td></td><td>…</td></tr>
+<tr><td><em>nunca</em></td><td><em>destravar <code>WRITER</code></em></td><td></td></tr>
+</tbody></table>
+<p>O <code>WRITER</code> está travado, então o manipulador de interrupção espera até que se torne livre. Mas isso nunca acontece, porque a função <code>_start</code> só continua a executar após o manipulador de interrupção retornar. Assim, o sistema inteiro trava.</p>
+<h3 id="provocando-um-deadlock"><a class="zola-anchor" href="#provocando-um-deadlock" aria-label="Anchor link for: provocando-um-deadlock">🔗</a>Provocando um Deadlock</h3>
+<p>Podemos facilmente provocar tal deadlock em nosso kernel imprimindo algo no loop no final de nossa função <code>_start</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/main.rs
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    […]
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>        </span><span style="color:#569cd6;">use </span><span>blog_os::print;
+</span><span>        print!(</span><span style="color:#d69d85;">&quot;-&quot;</span><span>);        </span><span style="color:#608b4e;">// novo
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Quando o executamos no QEMU, obtemos uma saída da forma:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/hardware-interrupts/./qemu-deadlock.png" alt="QEMU output with many rows of hyphens and no dots" /></p>
+<p>Vemos que apenas um número limitado de hífens são impressos até que a primeira interrupção de timer ocorre. Então o sistema trava porque o manipulador de interrupção de timer entra em deadlock quando tenta imprimir um ponto. Esta é a razão pela qual não vemos pontos na saída acima.</p>
+<p>O número real de hífens varia entre execuções porque a interrupção de timer ocorre assincronamente. Este não-determinismo é o que torna bugs relacionados à concorrência tão difíceis de depurar.</p>
+<h3 id="corrigindo-o-deadlock"><a class="zola-anchor" href="#corrigindo-o-deadlock" aria-label="Anchor link for: corrigindo-o-deadlock">🔗</a>Corrigindo o Deadlock</h3>
+<p>Para evitar este deadlock, podemos desativar interrupções enquanto o <code>Mutex</code> está travado:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/vga_buffer.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Imprime a string formatada dada no buffer de texto VGA
+</span><span style="color:#608b4e;">/// através da instância global `WRITER`.
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;   </span><span style="color:#608b4e;">// novo
+</span><span>
+</span><span>    interrupts::without_interrupts(|| {     </span><span style="color:#608b4e;">// novo
+</span><span>        </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
+</span><span>    });
+</span><span>}
+</span></code></pre>
+<p>A função <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> recebe um <a href="https://doc.rust-lang.org/book/ch13-01-closures.html">closure</a> e o executa em um ambiente livre de interrupções. Usamos isso para garantir que nenhuma interrupção pode ocorrer enquanto o <code>Mutex</code> está travado. Quando executamos nosso kernel agora, vemos que ele continua executando sem travar. (Ainda não notamos nenhum ponto, mas isso é porque eles estão rolando rápido demais. Tente diminuir a velocidade da impressão, por exemplo, colocando um <code>for _ in 0..10000 {}</code> dentro do loop.)</p>
+<p>Podemos aplicar a mesma mudança à nossa função de impressão serial para garantir que nenhum deadlock ocorra com ela também:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/serial.rs
+</span><span>
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: ::core::fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;       </span><span style="color:#608b4e;">// novo
+</span><span>
+</span><span>    interrupts::without_interrupts(|| {         </span><span style="color:#608b4e;">// novo
+</span><span>        </span><span style="color:#b4cea8;">SERIAL1
+</span><span>            .lock()
+</span><span>            .write_fmt(args)
+</span><span>            .expect(</span><span style="color:#d69d85;">&quot;Impressão para serial falhou&quot;</span><span>);
+</span><span>    });
+</span><span>}
+</span></code></pre>
+<p>Note que desativar interrupções não deve ser uma solução geral. O problema é que isso aumenta a latência de interrupção no pior caso, isto é, o tempo até o sistema reagir a uma interrupção. Portanto, interrupções devem ser desativadas apenas por um tempo muito curto.</p>
+<h2 id="corrigindo-uma-race-condition"><a class="zola-anchor" href="#corrigindo-uma-race-condition" aria-label="Anchor link for: corrigindo-uma-race-condition">🔗</a>Corrigindo uma Race Condition</h2>
+<p>Se você executar <code>cargo test</code>, pode ver o teste <code>test_println_output</code> falhar:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --lib
+</span><span>[…]
+</span><span>Running 4 tests
+</span><span>test_breakpoint_exception...[ok]
+</span><span>test_println... [ok]
+</span><span>test_println_many... [ok]
+</span><span>test_println_output... [failed]
+</span><span>
+</span><span>Error: panicked at &#39;assertion failed: `(left == right)`
+</span><span>  left: `&#39;.&#39;`,
+</span><span> right: `&#39;S&#39;`&#39;, src/vga_buffer.rs:205:9
+</span></code></pre>
+<p>A razão é uma <em>race condition</em> entre o teste e nosso manipulador de timer. Lembre-se, o teste se parece com isto:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/vga_buffer.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Uma string de teste que cabe em uma única linha&quot;</span><span>;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s);
+</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> screen_char = </span><span style="color:#b4cea8;">WRITER</span><span>.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
+</span><span>        assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>O teste imprime uma string no buffer VGA e então verifica a saída iterando manualmente pelo array <code>buffer_chars</code>. A race condition ocorre porque o manipulador de interrupção de timer pode executar entre o <code>println</code> e a leitura dos caracteres de tela. Note que isso não é uma <em>data race</em> perigosa, que Rust previne completamente em tempo de compilação. Veja o <a href="https://doc.rust-lang.org/nomicon/races.html"><em>Rustonomicon</em></a> para detalhes.</p>
+<p>Para corrigir isso, precisamos manter o <code>WRITER</code> travado pela duração completa do teste, para que o manipulador de timer não possa escrever um <code>.</code> na tela no meio. O teste corrigido se parece com isto:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/vga_buffer.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Uma string de teste que cabe em uma única linha&quot;</span><span>;
+</span><span>    interrupts::without_interrupts(|| {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> writer = </span><span style="color:#b4cea8;">WRITER</span><span>.lock();
+</span><span>        writeln!(writer, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s).expect(</span><span style="color:#d69d85;">&quot;writeln falhou&quot;</span><span>);
+</span><span>        </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
+</span><span>            </span><span style="color:#569cd6;">let</span><span> screen_char = writer.buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
+</span><span>            assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
+</span><span>        }
+</span><span>    });
+</span><span>}
+</span></code></pre>
+<p>Realizamos as seguintes mudanças:</p>
+<ul>
+<li>Mantemos o writer travado pelo teste completo usando o método <code>lock()</code> explicitamente. Em vez de <code>println</code>, usamos a macro <a href="https://doc.rust-lang.org/core/macro.writeln.html"><code>writeln</code></a> que permite imprimir em um writer já travado.</li>
+<li>Para evitar outro deadlock, desativamos interrupções pela duração do teste. Caso contrário, o teste poderia ser interrompido enquanto o writer ainda está travado.</li>
+<li>Como o manipulador de interrupção de timer ainda pode executar antes do teste, imprimimos uma nova linha adicional <code>\n</code> antes de imprimir a string <code>s</code>. Desta forma, evitamos falha do teste quando o manipulador de timer já imprimiu alguns caracteres <code>.</code> na linha atual.</li>
+</ul>
+<p>Com as mudanças acima, <code>cargo test</code> agora tem sucesso deterministicamente novamente.</p>
+<p>Esta foi uma race condition muito inofensiva que causou apenas uma falha de teste. Como você pode imaginar, outras race conditions podem ser muito mais difíceis de depurar devido à sua natureza não-determinística. Felizmente, Rust nos previne de data races, que são a classe mais séria de race conditions, já que podem causar todo tipo de comportamento indefinido, incluindo crashes de sistema e corrupções silenciosas de memória.</p>
+<h2 id="a-instrucao-hlt"><a class="zola-anchor" href="#a-instrucao-hlt" aria-label="Anchor link for: a-instrucao-hlt">🔗</a>A Instrução <code>hlt</code></h2>
+<p>Até agora, usamos uma simples instrução de loop vazio no final de nossas funções <code>_start</code> e <code>panic</code>. Isso faz a CPU girar infinitamente, e assim funciona como esperado. Mas também é muito ineficiente, porque a CPU continua executando a velocidade máxima mesmo que não haja trabalho a fazer. Você pode ver este problema em seu gerenciador de tarefas quando executa seu kernel: O processo QEMU precisa de perto de 100% de CPU o tempo todo.</p>
+<p>O que realmente queremos fazer é parar a CPU até a próxima interrupção chegar. Isso permite que a CPU entre em um estado de sono no qual consome muito menos energia. A <a href="https://en.wikipedia.org/wiki/HLT_(x86_instruction)">instrução <code>hlt</code></a> faz exatamente isso. Vamos usar esta instrução para criar um loop infinito eficiente em energia:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>hlt_loop() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>        x86_64::instructions::hlt();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>A função <code>instructions::hlt</code> é apenas um <a href="https://github.com/rust-osdev/x86_64/blob/5e8e218381c5205f5777cb50da3ecac5d7e3b1ab/src/instructions/mod.rs#L16-L22">wrapper fino</a> em torno da instrução assembly. Ela é segura porque não há forma de comprometer a segurança de memória.</p>
+<p>Agora podemos usar este <code>hlt_loop</code> em vez dos loops infinitos em nossas funções <code>_start</code> e <code>panic</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/main.rs
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    […]
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Não crashou!&quot;</span><span>);
+</span><span>    blog_os::hlt_loop();            </span><span style="color:#608b4e;">// novo
+</span><span>}
+</span><span>
+</span><span>
+</span><span>#[cfg(not(test))]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    blog_os::hlt_loop();            </span><span style="color:#608b4e;">// novo
+</span><span>}
+</span><span>
+</span></code></pre>
+<p>Vamos atualizar nosso <code>lib.rs</code> também:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/lib.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Ponto de entrada para `cargo test`
+</span><span>#[cfg(test)]
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    init();
+</span><span>    test_main();
+</span><span>    hlt_loop();         </span><span style="color:#608b4e;">// novo
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>test_panic_handler(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    exit_qemu(QemuExitCode::Failed);
+</span><span>    hlt_loop();         </span><span style="color:#608b4e;">// novo
+</span><span>}
+</span></code></pre>
+<p>Quando executamos nosso kernel agora no QEMU, vemos um uso de CPU muito menor.</p>
+<h2 id="entrada-de-teclado"><a class="zola-anchor" href="#entrada-de-teclado" aria-label="Anchor link for: entrada-de-teclado">🔗</a>Entrada de Teclado</h2>
+<p>Agora que somos capazes de manipular interrupções de dispositivos externos, finalmente podemos adicionar suporte para entrada de teclado. Isso nos permitirá interagir com nosso kernel pela primeira vez.</p>
+<aside class="post_aside">
+<p>Note que apenas descrevemos como manipular teclados <a href="https://en.wikipedia.org/wiki/PS/2_port">PS/2</a> aqui, não teclados USB. No entanto, a placa-mãe emula teclados USB como dispositivos PS/2 para suportar software mais antigo, então podemos seguramente ignorar teclados USB até termos suporte USB em nosso kernel.</p>
+</aside>
+<p>Como o timer de hardware, o controlador de teclado já está habilitado por padrão. Então quando você pressiona uma tecla, o controlador de teclado envia uma interrupção para o PIC, que a encaminha para a CPU. A CPU procura por uma função manipuladora na IDT, mas a entrada correspondente está vazia. Portanto, ocorre um double fault.</p>
+<p>Então vamos adicionar uma função manipuladora para a interrupção de teclado. É bem similar a como definimos o manipulador para a interrupção de timer; apenas usa um número de interrupção diferente:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/interrupts.rs
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy)]
+</span><span>#[repr(u8)]
+</span><span style="color:#569cd6;">pub enum </span><span>InterruptIndex {
+</span><span>    Timer = </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>,
+</span><span>    Keyboard, </span><span style="color:#608b4e;">// novo
+</span><span>}
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        […]
+</span><span>        </span><span style="color:#608b4e;">// novo
+</span><span>        idt[InterruptIndex::Keyboard.as_usize()]
+</span><span>            .set_handler_fn(keyboard_interrupt_handler);
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;k&quot;</span><span>);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Como vemos do gráfico <a href="https://os.phil-opp.com/pt-BR/hardware-interrupts/#o-8259-pic">acima</a>, o teclado usa a linha 1 do PIC primário. Isso significa que ele chega à CPU como interrupção 33 (1 + offset 32). Adicionamos este índice como uma nova variante <code>Keyboard</code> ao enum <code>InterruptIndex</code>. Não precisamos especificar o valor explicitamente, já que ele assume o valor anterior mais um por padrão, que também é 33. No manipulador de interrupção, imprimimos um <code>k</code> e enviamos o sinal end of interrupt para o controlador de interrupção.</p>
+<p>Agora vemos que um <code>k</code> aparece na tela quando pressionamos uma tecla. No entanto, isso só funciona para a primeira tecla que pressionamos. Mesmo se continuarmos a pressionar teclas, nenhum <code>k</code> adicional aparece na tela. Isso ocorre porque o controlador de teclado não enviará outra interrupção até lermos o chamado <em>scancode</em> da tecla pressionada.</p>
+<h3 id="lendo-os-scancodes"><a class="zola-anchor" href="#lendo-os-scancodes" aria-label="Anchor link for: lendo-os-scancodes">🔗</a>Lendo os Scancodes</h3>
+<p>Para descobrir <em>qual</em> tecla foi pressionada, precisamos consultar o controlador de teclado. Fazemos isso lendo da porta de dados do controlador PS/2, que é a <a href="https://os.phil-opp.com/testing/#i-o-ports">porta I/O</a> com o número <code>0x60</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
+</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, scancode);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Usamos o tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> da crate <code>x86_64</code> para ler um byte da porta de dados do teclado. Este byte é chamado de <a href="https://en.wikipedia.org/wiki/Scancode"><em>scancode</em></a> e representa o pressionamento/liberação de tecla. Ainda não fazemos nada com o scancode, apenas o imprimimos na tela:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/hardware-interrupts/qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
+<p>A imagem acima me mostra digitando lentamente “123”. Vemos que teclas adjacentes têm scancodes adjacentes e que pressionar uma tecla causa um scancode diferente de liberá-la. Mas como traduzimos exatamente os scancodes para as ações reais de tecla?</p>
+<h3 id="interpretando-os-scancodes"><a class="zola-anchor" href="#interpretando-os-scancodes" aria-label="Anchor link for: interpretando-os-scancodes">🔗</a>Interpretando os Scancodes</h3>
+<p>Existem três padrões diferentes para o mapeamento entre scancodes e teclas, os chamados <em>conjuntos de scancode</em>. Todos os três remontam aos teclados de computadores IBM antigos: o <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a>, o <a href="https://en.wikipedia.org/wiki/IBM_3270_PC">IBM 3270 PC</a>, e o <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer/AT">IBM AT</a>. Felizmente, computadores posteriores não continuaram a tendência de definir novos conjuntos de scancode, mas em vez disso emularam os conjuntos existentes e os estenderam. Hoje, a maioria dos teclados pode ser configurada para emular qualquer um dos três conjuntos.</p>
+<p>Por padrão, teclados PS/2 emulam o conjunto de scancode 1 (“XT”). Neste conjunto, os 7 bits inferiores de um byte de scancode definem a tecla, e o bit mais significativo define se é um pressionamento (“0”) ou uma liberação (“1”). Teclas que não estavam presentes no <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a> original, como a tecla enter no teclado numérico, geram dois scancodes em sucessão: um byte de escape <code>0xe0</code> e então um byte representando a tecla. Para uma lista de todos os scancodes do conjunto 1 e suas teclas correspondentes, confira a <a href="https://wiki.osdev.org/Keyboard#Scan_Code_Set_1">Wiki OSDev</a>.</p>
+<p>Para traduzir os scancodes para teclas, podemos usar uma instrução <code>match</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
+</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// novo
+</span><span>    </span><span style="color:#569cd6;">let</span><span> key = </span><span style="color:#569cd6;">match</span><span> scancode {
+</span><span>        </span><span style="color:#b5cea8;">0x02 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;1&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x03 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;2&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x04 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;3&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x05 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;4&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x06 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;5&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x07 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;6&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x08 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;7&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x09 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;8&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x0a </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;9&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x0b </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;0&#39;</span><span>),
+</span><span>        </span><span style="color:#569cd6;">_ =&gt; </span><span>None,
+</span><span>    };
+</span><span>    </span><span style="color:#569cd6;">if let </span><span>Some(key) = key {
+</span><span>        print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, key);
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>O código acima traduz pressionamentos das teclas numéricas 0-9 e ignora todas as outras teclas. Ele usa uma instrução <a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a> para atribuir um caractere ou <code>None</code> a cada scancode. Então usa <a href="https://doc.rust-lang.org/book/ch18-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a> para desestruturar o <code>key</code> opcional. Ao usar o mesmo nome de variável <code>key</code> no padrão, <a href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">sombreamos</a> a declaração anterior, que é um padrão comum para desestruturar tipos <code>Option</code> em Rust.</p>
+<p>Agora podemos escrever números:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/hardware-interrupts/qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
+<p>Traduzir as outras teclas funciona da mesma forma. Felizmente, existe uma crate chamada <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/"><code>pc-keyboard</code></a> para traduzir scancodes dos conjuntos de scancode 1 e 2, então não precisamos implementar isso nós mesmos. Para usar a crate, a adicionamos ao nosso <code>Cargo.toml</code> e a importamos em nosso <code>lib.rs</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># em Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">pc-keyboard </span><span>= </span><span style="color:#d69d85;">&quot;0.7.0&quot;
+</span></code></pre>
+<p>Agora podemos usar esta crate para reescrever nosso <code>keyboard_interrupt_handler</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// em/src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
+</span><span>    </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    lazy_static! {
+</span><span>        </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
+</span><span>            Mutex::new(Keyboard::new(ScancodeSet1::new(),
+</span><span>                layouts::Us104Key, HandleControl::Ignore)
+</span><span>            );
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> keyboard = </span><span style="color:#b4cea8;">KEYBOARD</span><span>.lock();
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
+</span><span>    </span><span style="color:#569cd6;">if let </span><span>Ok(Some(key_event)) = keyboard.add_byte(scancode) {
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Some(key) = keyboard.process_keyevent(key_event) {
+</span><span>            </span><span style="color:#569cd6;">match</span><span> key {
+</span><span>                DecodedKey::Unicode(character) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, character),
+</span><span>                DecodedKey::RawKey(key) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, key),
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Usamos a macro <code>lazy_static</code> para criar um objeto <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> estático protegido por um Mutex. Inicializamos o <code>Keyboard</code> com um layout de teclado americano e o conjunto de scancode 1. O parâmetro <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> permite mapear <code>ctrl+[a-z]</code> aos caracteres Unicode <code>U+0001</code> através de <code>U+001A</code>. Não queremos fazer isso, então usamos a opção <code>Ignore</code> para manipular o <code>ctrl</code> como teclas normais.</p>
+<p>Em cada interrupção, travamos o Mutex, lemos o scancode do controlador de teclado, e o passamos para o método <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a>, que traduz o scancode em um <code>Option&lt;KeyEvent&gt;</code>. O <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> contém a tecla que causou o evento e se foi um evento de pressionamento ou liberação.</p>
+<p>Para interpretar este evento de tecla, o passamos para o método <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a>, que traduz o evento de tecla em um caractere, se possível. Por exemplo, ele traduz um evento de pressionamento da tecla <code>A</code> em um caractere <code>a</code> minúsculo ou um caractere <code>A</code> maiúsculo, dependendo se a tecla shift foi pressionada.</p>
+<p>Com este manipulador de interrupção modificado, agora podemos escrever texto:</p>
+<p><img src="https://os.phil-opp.com/pt-BR/hardware-interrupts/qemu-typing.gif" alt="Typing “Hello World” in QEMU" /></p>
+<h3 id="configurando-o-teclado"><a class="zola-anchor" href="#configurando-o-teclado" aria-label="Anchor link for: configurando-o-teclado">🔗</a>Configurando o Teclado</h3>
+<p>É possível configurar alguns aspectos de um teclado PS/2, por exemplo, qual conjunto de scancode ele deve usar. Não cobriremos isso aqui porque esta postagem já está longa o suficiente, mas a Wiki do OSDev tem uma visão geral dos possíveis <a href="https://wiki.osdev.org/PS/2_Keyboard#Commands">comandos de configuração</a>.</p>
+<h2 id="resumo"><a class="zola-anchor" href="#resumo" aria-label="Anchor link for: resumo">🔗</a>Resumo</h2>
+<p>Esta postagem explicou como habilitar e manipular interrupções externas. Aprendemos sobre o 8259 PIC e seu layout primário/secundário, o remapeamento dos números de interrupção, e o sinal “end of interrupt”. Implementamos manipuladores para o timer de hardware e o teclado e aprendemos sobre a instrução <code>hlt</code>, que para a CPU até a próxima interrupção.</p>
+<p>Agora somos capazes de interagir com nosso kernel e temos alguns blocos fundamentais para criar um pequeno shell ou jogos simples.</p>
+<h2 id="o-que-vem-a-seguir"><a class="zola-anchor" href="#o-que-vem-a-seguir" aria-label="Anchor link for: o-que-vem-a-seguir">🔗</a>O Que Vem a Seguir?</h2>
+<p>Interrupções de timer são essenciais para um sistema operacional porque fornecem uma forma de interromper periodicamente o processo em execução e deixar o kernel retomar o controle. O kernel pode então mudar para um processo diferente e criar a ilusão de múltiplos processos executando em paralelo.</p>
+<p>Mas antes de podermos criar processos ou threads, precisamos de uma forma de alocar memória para eles. As próximas postagens explorarão gerenciamento de memória para fornecer este bloco fundamental.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Apoie-me</h2>
+<p>Criar e manter este blog e as bibliotecas associadas dá muito trabalho, mas eu realmente gosto de fazê-lo. Ao me apoiar, você me permite investir mais tempo em novo conteúdo, novos recursos e manutenção contínua. A melhor forma de me apoiar é <a href="https://github.com/sponsors/phil-opp"><em>me patrocinar no GitHub</em></a>. Obrigado!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/pt-BR/double-fault-exceptions/">&laquo; Double Faults</a>
+        
+        
+            <a class="next" href="/pt-BR/paging-introduction/">Introdução à Paginação &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Comentários</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Teve algum problema, quer deixar um feedback ou discutir mais ideias? Fique à vontade para deixar um comentário aqui! Por favor, use o inglês e siga o <a href="https://www.rust-lang.org/policies/code-of-conduct">código de conduta</a> do Rust. Este tópico de comentários está diretamente vinculado a uma <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Hardware%20Interrupts%20%28pt-BR%29%22%20in%3Atitle"><em>discussão no GitHub</em></a>, então você também pode comentar lá se preferir.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Hardware Interrupts (pt-BR)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="pt-BR"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Hardware%20Interrupts%20%28pt-BR%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Por favor, deixe seus comentários em inglês se possível.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/hardware-interrupts/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/hardware-interrupts/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/hardware-interrupts/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/hardware-interrupts/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/hardware-interrupts/">
+                        Korean
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/hardware-interrupts/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>
