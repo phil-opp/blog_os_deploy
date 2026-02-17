@@ -1,0 +1,1133 @@
+<!doctype html>
+
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="В этом посте объясняется, как реализовать heap-аллокатор с нуля. Здесь представлены и обсуждаются различные конструкции, а именно bump-аллокатор, link…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/ru/allocator-designs/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Архитектуры Аллокаторов | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/ru" title="All Posts">« Все посты</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>Содержание</h2>
+    <ol>
+        <li>
+            <a href="#vvedenie">Введение</a>
+            <ol>
+                <li>
+                    <a href="#design-goals">Design Goals</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#bump-allocator">Bump Allocator</a>
+            <ol>
+                <li>
+                    <a href="#ideia">Идея</a>
+                </li><li>
+                    <a href="#realizatsiia">Реализация</a>
+                </li><li>
+                    <a href="#realizatsiia-globalalloc">Реализация GlobalAlloc</a>
+                </li><li>
+                    <a href="#ispol-zuem-eto">Используем Это</a>
+                </li><li>
+                    <a href="#obsuzhdenie">Обсуждение</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#linked-list-allocator">Linked List Allocator</a>
+            <ol>
+                <li>
+                    <a href="#realizatsiia-1">Реализация</a>
+                </li><li>
+                    <a href="#ispol-zuem-eto-1">Используем Это</a>
+                </li><li>
+                    <a href="#obsuzhdenie-1">Обсуждение</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#fixed-size-block-allocator">Fixed-Size Block Allocator</a>
+            <ol>
+                <li>
+                    <a href="#vvedenie-1">Введение</a>
+                </li><li>
+                    <a href="#realizatsiia-2">Реализация</a>
+                </li><li>
+                    <a href="#ispol-zuem-eto-2">Используем Это</a>
+                </li><li>
+                    <a href="#obsuzhdenie-2">Обсуждение</a>
+                </li><li>
+                    <a href="#variatsii">Вариации</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#itogi">Итоги</a>
+            
+        </li><li>
+            <a href="#chto-dalee">Что Далее?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Комментарии</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Архитектуры Аллокаторов</h1>
+    <time datetime="2020-01-20" class="post-date">
+        Jan 20, 2020
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Переведенное содержание:</b>
+            Это перевод сообщества поста <strong><a href="https://os.phil-opp.com/allocator-designs/">Allocator Designs</a></strong>. Он может быть неполным, устаревшим или содержать ошибки. Пожалуйста, сообщайте о любых проблемах!
+            </p>
+            <p>
+                Перевод сделан <a href="https://github.com/TakiMoysha">@TakiMoysha</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>В этом посте объясняется, как реализовать heap-аллокатор с нуля. Здесь представлены и обсуждаются различные конструкции, а именно bump-аллокатор, linked list и fixed-sized. Для каждой из трех конструкций мы создадим базовую реализацию, которую можно использовать для ядра нашей системы.</p>
+<span id="continue-reading"></span>
+<p>Этот блог открыто разрабатывается на <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Если у вас есть какие-либо проблемы или вопросы, пожалуйста, создайте issue. Вы также можете оставлять комментарии <a href="https://os.phil-opp.com/ru/allocator-designs/#comments">внизу страницы</a>. Полный исходный код для этого поста можно найти в ветке <a href="https://github.com/phil-opp/blog_os/tree/post-11"><code>post-11</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>Содержание</b></summary>
+        <ul>
+            <li>
+                <a href="#vvedenie">Введение</a>
+                <ul>
+                    <li>
+                        <a href="#design-goals">Design Goals</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#bump-allocator">Bump Allocator</a>
+                <ul>
+                    <li>
+                        <a href="#ideia">Идея</a>
+                    </li><li>
+                        <a href="#realizatsiia">Реализация</a>
+                    </li><li>
+                        <a href="#realizatsiia-globalalloc">Реализация GlobalAlloc</a>
+                    </li><li>
+                        <a href="#ispol-zuem-eto">Используем Это</a>
+                    </li><li>
+                        <a href="#obsuzhdenie">Обсуждение</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#linked-list-allocator">Linked List Allocator</a>
+                <ul>
+                    <li>
+                        <a href="#realizatsiia-1">Реализация</a>
+                    </li><li>
+                        <a href="#ispol-zuem-eto-1">Используем Это</a>
+                    </li><li>
+                        <a href="#obsuzhdenie-1">Обсуждение</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#fixed-size-block-allocator">Fixed-Size Block Allocator</a>
+                <ul>
+                    <li>
+                        <a href="#vvedenie-1">Введение</a>
+                    </li><li>
+                        <a href="#realizatsiia-2">Реализация</a>
+                    </li><li>
+                        <a href="#ispol-zuem-eto-2">Используем Это</a>
+                    </li><li>
+                        <a href="#obsuzhdenie-2">Обсуждение</a>
+                    </li><li>
+                        <a href="#variatsii">Вариации</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#itogi">Итоги</a>
+                
+            </li><li>
+                <a href="#chto-dalee">Что Далее?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Комментарии</a></li>
+        </ul>
+    </details>
+
+<h2 id="vvedenie"><a class="zola-anchor" href="#vvedenie" aria-label="Anchor link for: vvedenie">🔗</a>Введение</h2>
+<p>В <a href="https://os.phil-opp.com/heap-allocation/">предыдущем посте</a> мы добавили в наше ядро базовую поддержку аллокаций памяти в куче. Для этого мы <a href="https://os.phil-opp.com/heap-allocation/#creating-a-kernel-heap">создали новый регион памяти</a> в таблице страниц и <a href="https://os.phil-opp.com/heap-allocation/#using-an-allocator-crate">использовали крейт <code>linked_list_allocator</code></a> для управления этой памятью. Хотя теперь у нас есть рабочая кучу, мы оставили большую часть работы крейту аллокатора, не пытаясь понять, как он работает.</p>
+<p>В этом посте мы покажем, как создать собственный аллокатор для кучи с нуля, вместо того чтобы полагаться на существующий крейт-аллокатор. Мы обсудим различные конструкции аллокаторов, включая упрощенный <em>bump allocator</em> и базовый <em>fixed-size block allocator</em>, и воспользуемся этими знаниями для реализации аллокатора с улучшенной производительностью (по сравнению с крейтом <code>linked_list_allocator</code>).</p>
+<h3 id="design-goals"><a class="zola-anchor" href="#design-goals" aria-label="Anchor link for: design-goals">🔗</a>Design Goals</h3>
+<p>Ответственность аллокатора - управление доступной памятью в куче. Он должен возвращать неиспользуемую память при вызовах <code>alloc</code> и отслеживать память, освобожденную с помощью <code>dealloc</code>, чтобы ее можно было использовать повторно. Самое главное, он никогда не должен выделять память, которая уже где-то используется, поскольку это приведет к неопределенному поведению (undefined behavior).</p>
+<p>Помимо корректности, существует множество второстепенных целей проектирования. Например, аллокатор должен эффективно использовать доступную память и поддерживать низкий уровень <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)"><em>фрагментации</em></a>. Кроме того, он должен хорошо работать в приложениях с распараллеливанием задач и масштабироваться до любого количества ядер. Для максимальной производительности он может даже оптимизировать структуру памяти (memory layout) с учетом кэшей ЦП, чтобы улучшить <a href="https://www.geeksforgeeks.org/locality-of-reference-and-cache-operation-in-cache-memory/">локальность кэша</a> и избежать <a href="https://mechanical-sympathy.blogspot.de/2011/07/false-sharing.html">false sharing</a>.</p>
+<!-- TODO: TERM: memory layout - структура памяти -->
+<blockquote>
+<p>примечание: memory layout в русском встречается как “структура памяти”, но устоявшегося термина нету, обычно пишут memory layout если это важно для контекста. Под этим понимается размер, выравнивание, начало и конец участка памяти. Описывает то, как аллокатор выделяет память.</p>
+</blockquote>
+<p>Эти требования могут сделать хорошие аллокаторы очень сложными. Например, <a href="http://jemalloc.net/">jemalloc</a> имеет более 30 000 строк кода. Такая сложность часто нежелательна в коде ядра, где одна ошибка может привести к серьезным уязвимостям безопасности. К счастью, паттерны аллокации памяти в ядра часто гораздо проще по сравнению с userspace кодом, поэтому относительно простых аллокаторов часто достаточно.</p>
+<!-- !TODO: design = архитектура -->
+<p>Ниже мы представляем три возможных архитектуры аллокатора для ядра и объясняем их преимущества и недостатки.</p>
+<h2 id="bump-allocator"><a class="zola-anchor" href="#bump-allocator" aria-label="Anchor link for: bump-allocator">🔗</a>Bump Allocator</h2>
+<p>Самая простая конструкция аллокатора - это <em>bump allocator</em> (также известный как <em>stack allocator</em>). Он выделяет память линейно и отслеживает только количество выделенных байтов и количество аллокаций. Он полезен только в очень конкретных случаях, поскольку имеет серьезное ограничение: он может освободить только всю память за раз.</p>
+<h3 id="ideia"><a class="zola-anchor" href="#ideia" aria-label="Anchor link for: ideia">🔗</a>Идея</h3>
+<p>Идея bump-аллокатора заключается в линейном выделении памяти через увеличение (<em>“bumping”</em>) переменной <code>next</code>, которая указывает на начало неиспользуемой памяти. В начале <code>next</code> указывает на начало кучи. При каждом выделении <code>next</code> увеличивается на размер аллокации, так что она всегда указывает на границу между использованной и неиспользованной памятью:</p>
+<p><img src="https://os.phil-opp.com/ru/allocator-designs/bump-allocation.svg" alt="Область памяти в куче в три момента времени: 1: В начале кучи существует одна аллокация; указатель next указывает на его конец. 2: Вторая аллокация была добавлена сразу после первой; указатель next указывает на конец второй аллокации. 3: Третья аллокация бал добавлена сразу после второго; указатель next указывает на конец третьей аллокации." /></p>
+<p>Указатель <code>next</code> движется только в одном направлении и поэтому никогда не выделяет одну и ту же область памяти дважды. Когда он достигает конца кучи, больше нельзя выделить память, что приводит к ошибке нехватки памяти при следующем выделении.</p>
+<p>Bump-аллокатор часто реализуется с помощью счетчика аллокаций, который увеличивается на 1 при каждом вызове <code>alloc</code> и уменьшается на 1 при каждом вызове <code>dealloc</code>. Когда счетчик аллокаций достигает нуля, это означает, что все выделения в куче были освобождены. В этом случае указатель <code>next</code> может быть сброшен на начальный адрес кучи, так что вся память кучи снова становится доступной для аллокации.</p>
+<h3 id="realizatsiia"><a class="zola-anchor" href="#realizatsiia" aria-label="Anchor link for: realizatsiia">🔗</a>Реализация</h3>
+<p>Мы начинаем реализацию с объявления нового подмодуля <code>allocator::bump</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>bump;
+</span></code></pre>
+<p>Содержимое подмодуля находится в новом файле <code>src/allocator/bump.rs</code>, который мы создаем с содержанием:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/bump.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>BumpAllocator {
+</span><span>    heap_start: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    heap_end: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    next: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    allocations: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>BumpAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// создаем новый, пустой bump-аллокатор.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        BumpAllocator {
+</span><span>            heap_start: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            heap_end: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            next: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            allocations: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Инициализирует bump-аллокатор с заданными границами кучи.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Этот метод небезопасен, поскольку вызывающая сторона должна убедиться, что заданный
+</span><span>    </span><span style="color:#608b4e;">/// диапазон памяти не используется. Кроме того, этот метод должен вызываться только один раз.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        self.heap_start = heap_start;
+</span><span>        self.heap_end = heap_start + heap_size;
+</span><span>        self.next = heap_start;
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Поля <code>heap_start</code> и <code>heap_end</code> отслеживают нижнюю и верхнюю границы области памяти кучи. Вызывающая сторона должна убедиться, что эти адреса действительны, иначе аллокатор вернет недействительную память. По этой причине функция <code>init</code> должна быть помечена как <code>unsafe</code>.</p>
+<p>Цель поля <code>next</code> - всегда указывать на первый неиспользуемый байт в куче, т.е. на начальный адрес следующей аллокации. В функции <code>init</code> оно устанавливается в значение <code>heap_start</code>, поскольку в начале вся куча не используется. При каждом выделении это поле увеличивается на размер аллокации (<em>«bumped»</em>), чтобы гарантировать, что мы не вернем одну и ту же область памяти дважды.</p>
+<p>Поле <code>allocations</code> - это простой счетчик активных аллокаций, цель которого - сбросить аллокатор после освобождения последней выделения. Оно инициализируется со значением 0.</p>
+<p>Мы решили создать отдельную функцию <code>init</code> вместо того, чтобы выполнять инициализацию непосредственно в <code>new</code>, чтобы интерфейс оставался идентичным аллокатору, предоставляемому крейтом <code>linked_list_allocator</code>. Благодаря этому, аллокаторы можно переключать без дополнительных изменений кода.</p>
+<h3 id="realizatsiia-globalalloc"><a class="zola-anchor" href="#realizatsiia-globalalloc" aria-label="Anchor link for: realizatsiia-globalalloc">🔗</a>Реализация <code>GlobalAlloc</code></h3>
+<p>Как <a href="https://os.phil-opp.com/heap-allocation/#the-allocator-interface">объяснялось в предыдущем посте</a>, все аллокаторы кучи должны реализовывать трейт <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>, который определен следующим образом:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub unsafe trait </span><span>GlobalAlloc {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8</span><span>;
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc_zeroed(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>realloc(
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self,
+</span><span>        ptr: </span><span style="color:#569cd6;">*mut u8</span><span>,
+</span><span>        layout: Layout,
+</span><span>        new_size: </span><span style="color:#569cd6;">usize
+</span><span>    ) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
+</span><span>}
+</span></code></pre>
+<p>Необходимы только методы <code>alloc</code> и <code>dealloc</code>; другие два обладают реализацией по умолчанию и могут быть опущены.</p>
+<h4 id="pervaia-popytka-realizatsii"><a class="zola-anchor" href="#pervaia-popytka-realizatsii" aria-label="Anchor link for: pervaia-popytka-realizatsii">🔗</a>Первая попытка реализации</h4>
+<p>Попробуем реализовать метод <code>alloc</code> для нашего <code>BumpAllocator</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/bump.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>BumpAllocator {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// TODO: проверка выравнивания и границ
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = self.next;
+</span><span>        self.next = alloc_start + layout.size();
+</span><span>        self.allocations += </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>        alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Сперва мы используем поле <code>next</code> в качестве начального адреса для нашей аллокации. Затем мы обновляем его, чтобы оно указывало на конечный адрес выделения, который является следующим неиспользуемым адресом в куче. Перед тем, как вернуть начальный адрес аллокации в виде указателя <code>*mut u8</code>, мы увеличиваем счетчик <code>allocations</code> на 1.</p>
+<p>Обратите внимание, что мы не выполняем никаких проверок границ или корректировок выравнивания, поэтому эта реализация еще не является безопасной. Это не имеет большого значения, поскольку в любом случае она не компилируется из-за  ошибки:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0594]: cannot assign to `self.next` which is behind a `&amp;` reference
+</span><span>  --&gt; src/allocator/bump.rs:29:9
+</span><span>   |
+</span><span>29 |         self.next = alloc_start + layout.size();
+</span><span>   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `self` is a `&amp;` reference, so the data it refers to cannot be written
+</span></code></pre>
+<p>(Та же ошибка будет возникать для строки <code>self.allocations += 1</code>. Мы опустили это здесь для краткости.)</p>
+<p>Ошибка возникает т.к. методы <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.alloc"><code>alloc</code></a> и <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> трейта <code>GlobalAlloc</code> работают только с неизменяемой ссылкой <code>&amp;self</code>, поэтому обновление полей <code>next</code> и <code>allocations</code> невозможно. Это создает проблему, поскольку обновление <code>next</code> при каждой аллокации является основным принципом работы bump-аллокатора.</p>
+<h4 id="globalalloc-and-mutability"><a class="zola-anchor" href="#globalalloc-and-mutability" aria-label="Anchor link for: globalalloc-and-mutability">🔗</a><code>GlobalAlloc</code> и Мутабельность</h4>
+<p>Прежде чем рассматривать возможное решение этой проблемы мутаблельности, давайте попробуем понять, почему методы трейта <code>GlobalAlloc</code> определены с аргументами <code>&amp;self</code>: как мы видели <a href="https://os.phil-opp.com/heap-allocation/#the-global-allocator-attribute">в предыдущем посте</a>, глобальный аллокатор кучи определяется добавлением атрибута <code>#[global_allocator]</code> к <code>static</code>, который реализует трейт <code>GlobalAlloc</code>. Статические переменные в Rust иммутабельны, поэтому нет возможности вызвать метод, принимающий <code>&amp;mut self</code>, на статическом аллокаторе. По этой причине все методы <code>GlobalAlloc</code> принимают только неизменяемую ссылку <code>&amp;self</code>.</p>
+<p>К счастью, есть способ получить ссылку <code>&amp;mut self</code> из ссылки <code>&amp;self</code>: мы можем использовать синхронизированную <a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html">внутреннюю изменяемость</a>, обернув аллокатор в спинлок <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html"><code>spin::Mutex</code></a>. Этот тип предоставляет метод <code>lock</code>, который выполняет <a href="https://en.wikipedia.org/wiki/Mutual_exclusion">взаимное исключение (мьютекс)</a> и, таким образом, безопасно превращает ссылку <code>&amp;self</code> в ссылку <code>&amp;mut self</code>. Мы уже несколько раз использовали тип оболочки в нашем ядре, например, для <a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">текстового буфера VGA</a>.</p>
+<h4 id="obertka-tipa-locked"><a class="zola-anchor" href="#obertka-tipa-locked" aria-label="Anchor link for: obertka-tipa-locked">🔗</a>Обертка Типа <code>Locked</code></h4>
+<p>С помощью обертки <code>spin::Mutex</code> мы может реализовать трейт <code>GlobalAlloc</code> для нашего bump-аллокатора. Фокус в том, что реализация трейта не для <code>BumpAllocator</code>, а для обернутого типа <code>spin::Mutex::&lt;BumpAllocator&gt;</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>spin::Mutex&lt;BumpAllocator&gt; {…}
+</span></code></pre>
+<p>К сожалению, это все еще не работает, т.к. компилятор Rust не разрешает реализации трейта для типов определенных в других крейтов:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0117]: only traits defined in the current crate can be implemented for arbitrary types
+</span><span>  --&gt; src/allocator/bump.rs:28:1
+</span><span>   |
+</span><span>28 | unsafe impl GlobalAlloc for spin::Mutex&lt;BumpAllocator&gt; {
+</span><span>   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^--------------------------
+</span><span>   | |                           |
+</span><span>   | |                           `spin::mutex::Mutex` is not defined in the current crate
+</span><span>   | impl doesn&#39;t use only types from inside the current crate
+</span><span>   |
+</span><span>   = note: define and implement a trait or new type instead
+</span></code></pre>
+<p>Что бы поправить это, мы должны создать нашу собственную обертку вокруг <code>spin::Mutex</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Обертка вокруг spin::Mutex для доступа к реализации.
+</span><span style="color:#569cd6;">pub struct </span><span>Locked&lt;A&gt; {
+</span><span>    inner: spin::Mutex&lt;A&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;A&gt; Locked&lt;A&gt; {
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new(inner: A) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        Locked {
+</span><span>            inner: spin::Mutex::new(inner),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>lock(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; spin::MutexGuard&lt;A&gt; {
+</span><span>        self.inner.lock()
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Этот тип является общей оберткой для <code>spin::Mutex&lt;A&gt;</code>. Он не налагает никаких ограничений на тип <code>A</code>, поэтому его можно использовать для обертки всех типов, а не только аллокаторов. Он предоставляет простую функцию-конструктор <code>new</code>, которая оборачивает заданное значение. Для удобства он также предоставляет функцию <code>lock</code>, которая вызывает <code>lock</code> на обёрнутом <code>Mutex</code>. Поскольку тип <code>Locked</code> достаточно общий, чтобы быть полезным и для других реализаций аллокаторов, мы поместили его в родительский модуль <code>allocator</code>.</p>
+<h4 id="realizatsiia-dlia-locked-bumpallocator"><a class="zola-anchor" href="#realizatsiia-dlia-locked-bumpallocator" aria-label="Anchor link for: realizatsiia-dlia-locked-bumpallocator">🔗</a>Реализация для <code>Locked&lt;BumpAllocator&gt;</code></h4>
+<p>Тип <code>Locked</code> определен в нашем собственном крейте (в отличие от <code>spin::Mutex</code>), поэтому мы можем использовать его для реализации <code>GlobalAlloc</code> для нашего bump-аллокатора. Полная реализация выглядит следующим образом:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/bump.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::{align_up, Locked};
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;BumpAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> bump = self.lock(); </span><span style="color:#608b4e;">// получаем мутабельную ссылку
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = align_up(bump.next, layout.align());
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_end = </span><span style="color:#569cd6;">match</span><span> alloc_start.checked_add(layout.size()) {
+</span><span>            Some(end) </span><span style="color:#569cd6;">=&gt;</span><span> end,
+</span><span>            None </span><span style="color:#569cd6;">=&gt; return </span><span>ptr::null_mut(),
+</span><span>        };
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if</span><span> alloc_end &gt; bump.heap_end {
+</span><span>            ptr::null_mut() </span><span style="color:#608b4e;">// out of memory
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            bump.next = alloc_end;
+</span><span>            bump.allocations += </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>            alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> bump = self.lock(); </span><span style="color:#608b4e;">// получаем мутабельную ссылку
+</span><span>
+</span><span>        bump.allocations -= </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>        </span><span style="color:#569cd6;">if</span><span> bump.allocations == </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>            bump.next = bump.heap_start;
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Первым шагом как для <code>alloc</code>, так и для <code>dealloc</code> является вызов метода <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> через поле <code>inner</code>, чтобы получить мутабельную ссылку на тип аллокатора. Экземпляр остается заблокированным до конца метода, это нужно чтобы не было состояния гонки (race condition) в многопоточном контексте (скоро мы добавим поддержку многопоточности).</p>
+<p>По сравнению с предыдущим прототипом, реализация <code>alloc</code> теперь учитывает требования к выравниванию и проверяет границы, чтобы гарантировать, что аллокации остаются в пределах области кучи. Первый шаг - округлить адрес <code>next</code> до значения выравнивания, указанного аргументом <code>Layout</code>. Код функции <code>align_up</code> будет показан чуть позже. Затем мы добавляем запрошенный размер аллокации к <code>alloc_start</code>, чтобы получить конечный адрес блока. Чтобы предотвратить переполнение integer при больших аллокациях, мы используем метод <a href="https://doc.rust-lang.org/std/primitive.usize.html#method.checked_add"><code>checked_add</code></a>. Если происходит переполнение или если результирующий конечный адрес блока больше конечного адреса кучи, мы возвращаем нулевой указатель, указывающий на нехватку памяти. В противном случае мы обновляем адрес <code>next</code> и увеличиваем счетчик <code>allocations</code> на 1, как и раньше. Наконец, мы возвращаем адрес <code>alloc_start</code>, преобразованный в указатель <code>*mut u8</code>.</p>
+<p>Функция <code>dealloc</code> игнорирует заданные аргументы указателя и <code>Layout</code>. Вместо этого она просто уменьшает счетчик <code>allocations</code>. Если счетчик снова достигает значения <code>0</code>, это означает, что все выделенные области памяти были снова освобождены. В этом случае она сбрасывает адрес <code>next</code> в адрес <code>heap_start</code>, чтобы снова сделать доступной всю память кучи.</p>
+<h4 id="vyravnivanie-adresa"><a class="zola-anchor" href="#vyravnivanie-adresa" aria-label="Anchor link for: vyravnivanie-adresa">🔗</a>Выравнивание Адреса</h4>
+<p>Функция <code>align_up</code> достаточно универсальна, чтобы мы могли поместить ее в родительский модуль <code>allocator</code>. Базовая реализация выглядит следующим образом:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
+</span><span>
+</span><span style="color:#608b4e;">/// выравнивание addr по align до верхнего значения
+</span><span style="color:#569cd6;">fn </span><span>align_up(addr: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> remainder = addr % align;
+</span><span>    </span><span style="color:#569cd6;">if</span><span> remainder == </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>        addr </span><span style="color:#608b4e;">// addr уже выровнен
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        addr - remainder + align
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Функция сначала вычисляет <a href="https://en.wikipedia.org/wiki/Euclidean_division">остаток (переменная remainder)</a> от деления <code>addr</code> на <code>align</code>. Если remainder равен 0, то адрес уже выровнен по заданному выравнивания (переменная align). В противном случае мы выравниваем адрес, вычитая remainder (чтобы новый remainder стал равен 0), а затем прибавляя значение align (чтобы адрес не стал меньше исходного).</p>
+<p>Заметьте, это не самый эффективный способ реализации этой функции. Гораздо более быстрая реализация выглядит так:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">/// выравнивание addr по align до верхнего значения.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// требуется что бы `align` был кратен 2.
+</span><span style="color:#569cd6;">fn </span><span>align_up(addr: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>    (addr + align - </span><span style="color:#b5cea8;">1</span><span>) </span><span style="color:#569cd6;">&amp; !</span><span>(align - </span><span style="color:#b5cea8;">1</span><span>)
+</span><span>}
+</span></code></pre>
+<p>Этот метод требует, чтобы <code>align</code> было степенью двойки, что можно гарантировать с помощью трейта <code>GlobalAlloc</code> (и его параметра <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>). Это позволяет создать <a href="https://en.wikipedia.org/wiki/Mask_(computing)">bitmask</a> для выравнивания адреса очень эффективным способом. Чтобы понять, как это работает, давайте пройдемся по нему шаг за шагом, начиная с правой стороны:</p>
+<ul>
+<li>Поскольку <code>align</code> является степенью двойки, его <a href="https://en.wikipedia.org/wiki/Binary_number#Representation">двоичное представление</a> имеет только один установленный бит (например, <code>0b000100000</code>). Это означает, что <code>align - 1</code> имеет все нижние биты установленными (например, <code>0b00011111</code>).</li>
+<li>Создавая <a href="https://en.wikipedia.org/wiki/Bitwise_operation#NOT">битовое <code>NOT</code></a> с помощью оператора <code>!</code>, мы получаем число, в котором установлены все биты, кроме битов, меньших, чем <code>align</code> (например, <code>0b…111111111100000</code>).</li>
+<li>Выполняя <a href="https://en.wikipedia.org/wiki/Bitwise_operation#AND">битовое <code>AND</code></a> над адресом и <code>!(align - 1)</code>, мы выравниваем адрес <em>вниз</em>. Это работает путем очистки всех битов, которые ниже <code>align</code>.</li>
+<li>Поскольку мы хотим выровнять вверх, а не вниз, мы увеличиваем <code>addr</code> на <code>align - 1</code> перед выполнением битового <code>AND</code>. Таким образом, уже выровненные адреса остаются прежними, а невыровненные адреса округляются до следующей границы выравнивания.</li>
+</ul>
+<p>Какой вариант выбрать, решать вам. Оба дают одинаковый результат, только используют разные методы.</p>
+<h3 id="ispol-zuem-eto"><a class="zola-anchor" href="#ispol-zuem-eto" aria-label="Anchor link for: ispol-zuem-eto">🔗</a>Используем Это</h3>
+<p>Чтобы использовать bump-аллокатор вместо крейта <code>linked_list_allocator</code>, нам нужно обновить статическую переменную <code>ALLOCATOR</code> в файле <code>allocator.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>bump::BumpAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;BumpAllocator&gt; = Locked::new(BumpAllocator::new());
+</span></code></pre>
+<p>Здесь важно, что мы объявили <code>BumpAllocator::new</code> и <code>Locked::new</code> как <a href="https://doc.rust-lang.org/reference/items/functions.html#const-functions"><code>const</code> функции</a>. Если бы они были обычными функциями, произошла бы ошибка компиляции, поскольку выражение инициализации <code>static</code> должно быть вычислимым во время компиляции.</p>
+<p>Нам не нужно изменять вызов <code>ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE)</code> в нашей функции <code>init_heap</code>, т.к. bump-аллокатор предоставляет тот же интерфейс, что и аллокатор, из <code>linked_list_allocator</code>.</p>
+<p>Теперь наше ядро использует наш bump-аллокатор! Все должно работать как и раньше, включая <a href="https://os.phil-opp.com/heap-allocation/#adding-a-test">тесты heap_allocation</a>, которые мы создали в предыдущем посте:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>[…]
+</span><span>Running 3 tests
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span></code></pre>
+<h3 id="obsuzhdenie"><a class="zola-anchor" href="#obsuzhdenie" aria-label="Anchor link for: obsuzhdenie">🔗</a>Обсуждение</h3>
+<p>Большим преимуществом bump-аллокатора является ее высокая скорость. По сравнению с другими архитектурами аллокаторов (см. ниже), которые должны активно искать подходящий блок памяти и выполнять различные задачи учета в <code>alloc</code> и <code>dealloc</code>, bump-аллокатор <a href="https://fitzgeraldnick.com/2019/11/01/always-bump-downwards.html">может быть оптимизирован</a> до нескольких ассемблерных инструкций. Это делает bump-аллокаторы полезными для оптимизации производительности аллокации, например, при создании <a href="https://hacks.mozilla.org/2019/03/fast-bump-allocated-virtual-doms-with-rust-and-wasm/">виртуальной библиотеки DOM</a>.</p>
+<p>Хотя bump-аллокатор редко используется в качестве глобального аллокатора, принцип bump-аллокации часто применяется в форме <a href="https://mgravell.github.io/Pipelines.Sockets.Unofficial/docs/arenas.html">арены аллокаций</a>, которая в основном объединяет отдельные аллокации в пакеты для повышения производительности. Пример аллокатора арены для Rust есть в крейте <a href="https://docs.rs/toolshed/0.8.1/toolshed/index.html"><code>toolshed</code></a>.</p>
+<h4 id="nedostatki-bump-allokatora"><a class="zola-anchor" href="#nedostatki-bump-allokatora" aria-label="Anchor link for: nedostatki-bump-allokatora">🔗</a>Недостатки Bump-Аллокатора</h4>
+<p>Основное ограничение bump-аллокатора это то, что он можено использовать освобожденную память только после того, как все будет освобождено. То есть одной долговечной аллокации достаточно, чтобы заблокировать повторное использование памяти. Мы можем увидеть это добавив вариацию теста <code>many_boxes</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>many_boxes_long_lived() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> long_lived = Box::new(</span><span style="color:#b5cea8;">1</span><span>); </span><span style="color:#608b4e;">// new
+</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">HEAP_SIZE </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let</span><span> x = Box::new(i);
+</span><span>        assert_eq!(*x, i);
+</span><span>    }
+</span><span>    assert_eq!(*long_lived, </span><span style="color:#b5cea8;">1</span><span>); </span><span style="color:#608b4e;">// new
+</span><span>}
+</span></code></pre>
+<p>Как и тест <code>many_boxes</code>, этот тест создает большое количество аллокаций и если не переиспользовать освобожденную память, то это приведет к ошибке out-of-memory. Кроме того, тест создает <code>long_lived</code> аллокацию, которая существует в течение всей работы цикла.</p>
+<p>Когда мы запускаем наш новый тест, мы видим, что он действительно завершается с ошибкой:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>Running 4 tests
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [failed]
+</span><span>
+</span><span>Error: panicked at &#39;allocation error: Layout { size_: 8, align_: 8 }&#39;, src/lib.rs:86:5
+</span></code></pre>
+<p>Давайте подробно разберём, почему это происходит. Во-первых, аллокация <code>long_lived</code> создаётся в начале кучи, тем самым увеличивая счётчик <code>allocations</code> на 1. На каждой итерации цикла создаётся короткоживущее выделения, которые сразу же освобождаеются до начала следующей итерации. Это означает, что счётчик <code>allocations</code> временно возрастает до 2 в начале итерации и возвращается к 1 в её конце. Проблема в том, что bump-аллокатор может повторно использовать память только тогда, когда <em>все</em> аллокации освобождены, то есть когда счётчик allocations достигает 0. Поскольку это не происходит до окончания цикла, каждая итерация выделяет новый участок памяти, что в итоге приводит к ошибке нехватки памяти после нескольких итераций.</p>
+<h4 id="ispravliaem-test"><a class="zola-anchor" href="#ispravliaem-test" aria-label="Anchor link for: ispravliaem-test">🔗</a>Исправляем Тест?</h4>
+<p>Есть два возможных трюка, которые мы могли бы использовать что бы поправить наш bump-аллокатор:</p>
+<ul>
+<li>Мы могли бы обновить <code>dealloc</code>, чтобы проверить, было ли освобожденная аллокация последней, возвращенной <code>alloc</code>, путем сравнения его конечного адреса с указателем <code>next</code>. В случае, если они равны, мы можем безопасно сбросить <code>next</code> обратно к начальному адресу освобожденной аллокации. Таким образом, каждая итерация цикла будет переиспользовать один и тот же блок памяти.</li>
+<li>Мы могли бы добавить метод <code>alloc_back</code>, который выделяет память с <em>конца</em> кучи, используя дополнительное поле <code>next_back</code>. Затем мы могли бы вручную применять этот метод ко всем всех долгоживущим аллокациям, тем самым разделяя кратковременные и долговечные аллокации в куче. Заметьте, что такое разделение работает только в том случае, если заранее известно, как долго будет существовать каждая аллокация. Еще один недостаток этого подхода в том, что, что ручное управление аллокациями является трудоемким и потенциально небезопасным.</li>
+</ul>
+<p>Хотя оба этих подхода позволяют пройти тест, они не являются универсальным решением, поскольку способны переиспользовать память лишь в очень конкретных случаях. Встаёт вопрос: существует ли общее решение, которое позволяет переиспользовать всю освобождённую память?</p>
+<h4 id="pereispol-zovanie-osvobozhdennoi-pamiati"><a class="zola-anchor" href="#pereispol-zovanie-osvobozhdennoi-pamiati" aria-label="Anchor link for: pereispol-zovanie-osvobozhdennoi-pamiati">🔗</a>Переиспользование Освобожденной Памяти?</h4>
+<p>Как мы узнали в <a href="https://os.phil-opp.com/heap-allocation/#dynamic-memory">предыдущей статье</a>, аллокации могут существовать произвольно долго и освобождаться в произвольном порядке. Это означает, что нам необходимо отслеживать потенциально неограниченное количество непрерывных и несвязанных участков неиспользуемой памяти, как показано в следующем примере:</p>
+<p><img src="https://os.phil-opp.com/ru/allocator-designs/allocation-fragmentation.svg" alt="" /></p>
+<p>На графике показано состояние кучи в динамике. В начале вся куча неиспользуется, и указатель <code>next</code> равен <code>heap_start</code> (линия 1). Затем происходит первая аллокация (линия 2). На линии 3 мы освобождаем первый блок и аллоцируем второй. На линии 4 добавляется ещё множество блоков, половина из которых короткоживущие и уже освобождаются на линии 5, где одновременно выделяется ещё один новый блок.</p>
+<p>Линия 5 демонстрирует фундаментальную проблему: у нас есть пять неиспользуемых областей памяти разного размера, но указатель <code>next</code> может указывать только на начало последней из них. Хотя в данном примере мы могли бы хранить начальные адреса и размеры остальных неиспользуемых регионов в массиве размером 4, это не является универсальным решением, поскольку мы легко можем создать пример с 8, 16 или 1000 неиспользуемыми областями памяти.</p>
+<p>Обычно, когда у нас есть потенциально неограниченное количество элементов, мы используем коллекцию, аллоцированную в куче. Однако в нашем случае это невозможно, т.к  heap-аллокатор не может зависеть от самого себя (это привело бы к бесконечной рекурсии или взаимоблокировке, она же deadlock). Поэтому нам нужно найти другое решение.</p>
+<h2 id="linked-list-allocator"><a class="zola-anchor" href="#linked-list-allocator" aria-label="Anchor link for: linked-list-allocator">🔗</a>Linked List Allocator</h2>
+<p>Одна из распространенных техник для отслеживания свободных областей памяти при реализации аллокаторов - это использование этих самых областей как хранилища. Мы используем факт, что регионы все еще маппяться в виртуальную память и храняться на физическом фрейме, но хранящаяся информация больше не требуется. Записывая информацию об освобожденном регионе прямо в саму область, мы может отслеживать неограниченное кол-во свободных регионов без необходимости дополнительной памяти.</p>
+<p>Наиболее частый подход к реализации - создание связанного списка (linked list) в освобожденной памяти, где каждый узел представляет собой свободную область памяти:</p>
+<p><img src="https://os.phil-opp.com/ru/allocator-designs/linked-list-allocation.svg" alt="" /></p>
+<p>Каждый узел списка содержит два поля: размер свободного региона и указатель на следующий свободный регион памяти. При таком подходе нам достаточно хранить лишь указатель на первый свободный регион (называемый <code>head</code>), чтобы отслеживать все свободные области, независимо от их количиства. Получившаяся структура данных часто называется <a href="https://en.wikipedia.org/wiki/Free_list">cписок свободной памяти</a></p>
+<p>Как вы, вероятно, уже догадались по названию, именно этот метод используется крейтом <code>linked_list_allocator</code>. Аллокаторы, применяющие этот подход, также часто называются <em>pool-аллокаторы</em> (pool allocators)</p>
+<h3 id="realizatsiia-1"><a class="zola-anchor" href="#realizatsiia-1" aria-label="Anchor link for: realizatsiia-1">🔗</a>Реализация</h3>
+<p>Далее мы создадим свой собственный простой тип <code>LinkedListAllocator</code>, который использует вышеупомянутый подход для отслеживания освобожденных областей памяти. Эта часть поста не является обязательной для будущих постов, поэтому вы можете пропустить детали реализации, если хотите.</p>
+<h4 id="the-allocator-type"><a class="zola-anchor" href="#the-allocator-type" aria-label="Anchor link for: the-allocator-type">🔗</a>Тип Аллокатора</h4>
+<p>Начнем с создания приватной структуры <code>ListNode</code> в новом подмодуле <code>allocator::linked_list</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>linked_list;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>ListNode {
+</span><span>    size: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    next: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;,
+</span><span>}
+</span></code></pre>
+<p>Как показано на рисунке, узел списка имеет поле <code>size</code> и опциональный указатель на следующий узел как тип <code>Option&lt;&amp;'static mut ListNode&gt;</code>. Тип <code>&amp;'static mut</code> семантически описывает <a href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html">владеемый</a> объект за указателем. По сути, это <a href="https://doc.rust-lang.org/alloc/boxed/index.html"><code>Box</code></a> без деструктора, который освобождает объект в конце области видимости.</p>
+<p>Мы реализуем следующий метод для <code>ListNode</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>ListNode {
+</span><span>    </span><span style="color:#569cd6;">const fn </span><span>new(size: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        ListNode { size, next: None }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>start_addr(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>        self </span><span style="color:#569cd6;">as *const Self as usize
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>end_addr(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>        self.start_addr() + self.size
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<!-- !TODO: static linked list allocator = статический односвязный аллокатор -->
+<p>Тип имеет простую функцию-конструктор с именем <code>new</code> и методы для вычисления начального и конечного адресов представленной области. Мы делаем функцию <code>new</code> <a href="https://doc.rust-lang.org/reference/items/functions.html#const-functions">const function</a>, которая понадобится позже при создании статического односвязного аллокатора.</p>
+<p>Используя структуру <code>ListNode</code> в качестве строительного блока, мы можем создать структуру <code>LinkedListAllocator</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>LinkedListAllocator {
+</span><span>    head: ListNode,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// создаем пустой LinkedListAllocator.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>            head: ListNode::new(</span><span style="color:#b5cea8;">0</span><span>),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Инициализируем аллокатор с границами кучи.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Эта ф-ция unsafe т.к. вызывающий должен гарантировать ,что полученные
+</span><span>    </span><span style="color:#608b4e;">/// границы кучи будет корректны и куча не используется.
+</span><span>    </span><span style="color:#608b4e;">/// Этот метод должен вызываться один раз
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            self.add_free_region(heap_start, heap_size);
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Добавляет полученную память к концу списка.
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>add_free_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, addr: </span><span style="color:#569cd6;">usize</span><span>, size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Структура содержит узел <code>head</code>, указывающий на первый регион кучи. Нас интересует только значение указателя <code>next</code>, поэтому в функции <code>ListNode::new</code> мы устанавливаем <code>size</code> в 0. То, что <code>head</code> является экземпляром <code>ListNode</code>, а не просто <code>&amp;'static mut ListNode</code>, обладает плюсом в том, что реализация метода <code>alloc</code> станет проще.</p>
+<p>Как и в случае с bump-аллокатором, функция <code>new</code> не инициализирует аллокатор с границами кучи. Помимо сохранения совместимости API, причина в том, что процедура инициализации требует записи узла в память кучи, что возможно только во время выполнения. Однако функция <code>new</code> должна быть [константой](<code>const</code> function), то есть, что бы ее можно было вычислить на этапе компиляции, т.к она будет использоваться для инициализации статической переменной <code>ALLOCATOR</code>. По этой причине мы снова предоставляем отдельный, не-константный метод <code>init</code>.</p>
+<p>Метод <code>init</code> использует метод <code>add_free_region</code>, реализация которого будет показана через мгновение. Пока что мы используем макрос <a href="https://doc.rust-lang.org/core/macro.todo.html"><code>todo!</code></a>, он укажет что реализация еще не готова и при достижении будет вызывать панику.</p>
+<h4 id="metod-add-free-region"><a class="zola-anchor" href="#metod-add-free-region" aria-label="Anchor link for: metod-add-free-region">🔗</a>Метод <code>add_free_region</code></h4>
+<p>Метод <code>add_free_region</code> обеспечивает основную операцию <em>push</em> в связанном списке. В настоящее время мы вызываем этот метод только из <code>init</code>, но он также будет важным методом для нашей реализации <code>dealloc</code>. Помните, что метод <code>dealloc</code> вызывается, при освобождении выделенной области памяти. Чтобы отслеживать этот освобожденный участок, мы хотим добавить его в связанный список.</p>
+<p>Рассмотрим реализацию метода <code>add_free_region</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::align_up;
+</span><span style="color:#569cd6;">use </span><span>core::mem;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Добавить полученную область памяти к концу списка.
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>add_free_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, addr: </span><span style="color:#569cd6;">usize</span><span>, size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#608b4e;">// проверим, что освобожденная область может хранить ListNode
+</span><span>        assert_eq!(align_up(addr, mem::align_of::&lt;ListNode&gt;()), addr);
+</span><span>        assert!(size &gt;= mem::size_of::&lt;ListNode&gt;());
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// создадим новый узел и добавим его к началу списка
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> node = ListNode::new(size);
+</span><span>        node.next = self.head.next.take();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> node_ptr = addr </span><span style="color:#569cd6;">as *mut</span><span> ListNode;
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            node_ptr.write(node);
+</span><span>            self.head.next = Some(</span><span style="color:#569cd6;">&amp;mut </span><span>*node_ptr)
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Метод принимает в качестве аргумента адрес и размер области памяти и добавляет ее в начало списка. Сначала он проверяет, что данная область имеет необходимый размер и выравнена для хранения <code>ListNode</code>. Затем он создает узел и вставляет его в список, выполняя следующие шаги:</p>
+<p><img src="https://os.phil-opp.com/ru/allocator-designs/linked-list-allocator-push.svg" alt="" /></p>
+<p>Шаг 0 показывает состояние кучи перед вызовом <code>add_free_region</code>. На шаге 1 метод вызывается с областью памяти, помеченной на рисунке как <code>freed</code>. После начальных проверок метод создает новый <code>node</code> в своем стеке с размером освобожденной области. Затем он использует метод <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a>, чтобы установить указатель <code>next</code> на текущий указатель <code>head</code>, тем самым сбрасывая указатель <code>head</code> в <code>None</code>.</p>
+<p>На шаге 2 метод записывает вновь созданный <code>node</code> в начало освобожденной области памяти с помощью метода <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write"><code>write</code></a>. Затем он указатель <code>head</code> указывает на новый улез. Результирующая структура указателей выглядит немного хаотично, т.к. освобожденная область всегда вставляется в начало списка, но если мы проследим за указателями, то увидим, что каждая свободная область по-прежнему доступна из указателя <code>head</code>.</p>
+<h4 id="metod-find-region"><a class="zola-anchor" href="#metod-find-region" aria-label="Anchor link for: metod-find-region">🔗</a>Метод <code>find_region</code></h4>
+<p>Вторая основная операция над связанным списком - поиск записи и ее удаление из списка. Это важная операция, необходимая для реализации метода <code>alloc</code>. Мы реализуем эту операцию в виде метода <code>find_region</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Смотрим свободную область заданного размера и выравнивания и
+</span><span>    </span><span style="color:#608b4e;">/// удаляем ее из списка.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Возвращаем кортеж из списка и начального адреса аллокации.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>find_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, size: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>)
+</span><span>        -&gt; Option&lt;(</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode, </span><span style="color:#569cd6;">usize</span><span>)&gt;
+</span><span>    {
+</span><span>        </span><span style="color:#608b4e;">// ссылка на текущий узел, обновляемая при каждой итерации
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> current = </span><span style="color:#569cd6;">&amp;mut </span><span>self.head;
+</span><span>        </span><span style="color:#608b4e;">// поиск достаточно большого участка памяти в связанном списке
+</span><span>        </span><span style="color:#569cd6;">while let </span><span>Some(</span><span style="color:#569cd6;">ref mut</span><span> region) = current.next {
+</span><span>            </span><span style="color:#569cd6;">if let </span><span>Ok(alloc_start) = </span><span style="color:#569cd6;">Self</span><span>::alloc_from_region(</span><span style="color:#569cd6;">&amp;</span><span>region, size, align) {
+</span><span>                </span><span style="color:#608b4e;">// область подходит для аллокации -&gt; удалить узел из списка
+</span><span>                </span><span style="color:#569cd6;">let</span><span> next = region.next.take();
+</span><span>                </span><span style="color:#569cd6;">let</span><span> ret = Some((current.next.take().unwrap(), alloc_start));
+</span><span>                current.next = next;
+</span><span>                </span><span style="color:#569cd6;">return</span><span> ret;
+</span><span>            } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>                </span><span style="color:#608b4e;">// облать не подходит -&gt;  перейти к следущей
+</span><span>                current = current.next.as_mut().unwrap();
+</span><span>            }
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// подходящей области не найдено
+</span><span>        None
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>В этом методе используется переменная <code>current</code> и цикл [<code>while let</code>] для итерации по элементам списка. В начале <code>current</code> устанавливается в (фиктивный) узел <code>head</code>. При каждой итерации он обновляется до поля <code>next</code> текущего узла (в блоке <code>else</code>). Если область подходит для выделения с заданным размером и выравниванием, она удаляется из списка и возвращается вместе с адресом <code>alloc_start</code>.</p>
+<p>Когда указатель <code>current.next</code> становится <code>None</code>, цикл заканчивается. Это означает, что мы прошли весь список, но не нашли подходящей области для аллокации. В этом случае мы возвращаем <code>None</code>. Подходит ли область, проверяет функция <code>alloc_from_region</code>, реализация которой будет показана чуть позже.</p>
+<p>Давайте более подробно рассмотрим, как подходящая область удаляется из списка:</p>
+<p><img src="https://os.phil-opp.com/ru/allocator-designs/linked-list-allocator-remove-region.svg" alt="" /></p>
+<p>Шаг 0 показывает ситуацию до каких-либо корректировок указателей. Области <code>region</code> и <code>current</code>, а также указатели <code>region.next</code> и <code>current.next</code> отмечены на графике. На шаге 1 оба указателя <code>region.next</code> и <code>current.next</code> сбрасываются в <code>None</code> используя <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a>. Исходные указатели хранятся в локальных переменных с именами <code>next</code> и <code>ret</code>.</p>
+<p>На шаге 2 указатель <code>current.next</code> устанавливается на локальный указатель <code>next</code>, который является исходным указателем <code>region.next</code>. В результате <code>current</code> теперь напрямую указывает на область после <code>region</code>, так что <code>region</code> больше не является элементом связанного списка. Затем функция возвращает указатель на <code>region</code>, хранящийся в локальной переменной <code>ret</code>.</p>
+<h5 id="funktsiia-alloc-from-region"><a class="zola-anchor" href="#funktsiia-alloc-from-region" aria-label="Anchor link for: funktsiia-alloc-from-region">🔗</a>Функция <code>alloc_from_region</code></h5>
+<p>Функция <code>alloc_from_region</code> возвращает значение, указывающее, подходит ли область для выделения памяти заданного размера и выравнивания. Она определена следующим образом:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// попытка использовать регион для выделения памяти заданного размера и выравнивания.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// В случае успеха возвращает начальный адрес выделенной памяти.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>alloc_from_region(region: </span><span style="color:#569cd6;">&amp;</span><span>ListNode, size: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>)
+</span><span>        -&gt; Result&lt;</span><span style="color:#569cd6;">usize</span><span>, ()&gt;
+</span><span>    {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = align_up(region.start_addr(), align);
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_end = alloc_start.checked_add(size).ok_or(())</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if</span><span> alloc_end &gt; region.end_addr() {
+</span><span>            </span><span style="color:#608b4e;">// region too small
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Err(());
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">let</span><span> excess_size = region.end_addr() - alloc_end;
+</span><span>        </span><span style="color:#569cd6;">if</span><span> excess_size &gt; </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">&amp;&amp;</span><span> excess_size &lt; mem::size_of::&lt;ListNode&gt;() {
+</span><span>            </span><span style="color:#608b4e;">// остальная часть области слишком маленькая чтобы хранить listNode
+</span><span>            </span><span style="color:#608b4e;">// это необходимо, т.к. аллокация делит область на использованную и свободную
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Err(());
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// область подходит для аллокации
+</span><span>        Ok(alloc_start)
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Сначала функция вычисляет начальный и конечный адрес потенциальной аллокации, используя функцию <code>align_up</code>, описанную выше, и метод <a href="https://doc.rust-lang.org/std/primitive.usize.html#method.checked_add"><code>checked_add</code></a>. Если происходит переполнение или конечный адрес находится за конечным адресом области, аллокация не помещается в области, и мы возвращаем ошибку.</p>
+<p>После этого функция выполняет менее очевидную проверку. Эта проверка необходима, поскольку в большинстве случаев выделение не вписывается в подходящую область идеально, так что часть области остается доступной для использования после аллокации. Эта часть области должна хранить свой собственный <code>ListNode</code> после выделения, поэтому она должна быть достаточно большой для этого. Проверка проверяет именно это: либо аллокация вписывается идеально (<code>excess_size == 0</code>), либо избыточный размер достаточно велик для хранения <code>ListNode</code>.</p>
+<h4 id="realizatsiia-globalalloc-1"><a class="zola-anchor" href="#realizatsiia-globalalloc-1" aria-label="Anchor link for: realizatsiia-globalalloc-1">🔗</a>Реализация <code>GlobalAlloc</code></h4>
+<p>С помощью операций, предоставляемых методами <code>add_free_region</code> и <code>find_region</code>, мы можем реализовать трейт <code>GlobalAlloc</code>. Как и в случае с bump-аллокатором, мы не реализуем trait напрямую для <code>LinkedListAllocator</code>, а только для обернутого <code>Locked&lt;LinkedListAllocator&gt;</code>. Обертка [<code>Locked</code>] добавляет внутреннюю мутабельность с помощью спинлока, это позволяет нам изменять сам экземпляр аллокатора, даже если методы <code>alloc</code> и <code>dealloc</code> принимают только ссылки <code>&amp;self</code>.</p>
+<blockquote>
+<p>примечание перевода: спинлок - механизм синхронизации для эксклюзивного доступа к ресурсу, при этом, если не получается захватить доступ к ресурсу код не останавливается, а “крутиться” (spin) в цилке.</p>
+</blockquote>
+<p>Реализация выглядит так:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::Locked;
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;LinkedListAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// скорректируем memory layout
+</span><span>        </span><span style="color:#569cd6;">let </span><span>(size, align) = LinkedListAllocator::size_align(layout);
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Some((region, alloc_start)) = allocator.find_region(size, align) {
+</span><span>            </span><span style="color:#569cd6;">let</span><span> alloc_end = alloc_start.checked_add(size).expect(</span><span style="color:#d69d85;">&quot;overflow&quot;</span><span>);
+</span><span>            </span><span style="color:#569cd6;">let</span><span> excess_size = region.end_addr() - alloc_end;
+</span><span>            </span><span style="color:#569cd6;">if</span><span> excess_size &gt; </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>                </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                    allocator.add_free_region(alloc_end, excess_size);
+</span><span>                }
+</span><span>            }
+</span><span>            alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            ptr::null_mut()
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>        </span><span style="color:#608b4e;">// скорректируем memory layout
+</span><span>        </span><span style="color:#569cd6;">let </span><span>(size, </span><span style="color:#569cd6;">_</span><span>) = LinkedListAllocator::size_align(layout);
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{ self.lock().add_free_region(ptr </span><span style="color:#569cd6;">as usize</span><span>, size) }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Начнём с метода <code>dealloc</code>, поскольку он проще: сначала выполняется корректировка структуры памяти (adjustment memory layout), которую мы объясним чуть позже. Затем вызываем <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> обертке [<code>Locked</code>] что бы получить ссылку на аллокатор - <code>&amp;mut LinkedListAllocator</code>. В завершение вызываем функцию <code>add_free_region</code>, чтобы добавить освобождённую область в список свободной памяти (free list).</p>
+<p>Метод <code>alloc</code> немного сложнее. Он начинается с тех же корректировок структуры и также вызывает <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a>, чтобы получить мутабельную ссылку на аллокатор. Затем он использует метод <code>find_region</code>, чтобы найти подходящую область памяти для аллокации и удалить его из списка. Если поиск возвращает None, неуспешен, метод возвращает <code>null_mut</code>, сигнализируя об ошибке - подходящей области памяти не найдено.</p>
+<p>В случае успеха метод <code>find_region</code> возвращает кортеж из подходящей области (уже удалённого из списка) и начального адреса выделения. Используя <code>alloc_start</code>, размер аллокации и конечный адрес региона, он заново вычисляет конечный адрес области и размер излишка. Если излишек не равен нулю, вызывается <code>add_free_region</code>, чтобы вернуть оставшуюся часть региона обратно в список свободных блоков. Наконец, метод возвращает <code>alloc_start</code>, приведённый к типу <code>*mut u8</code>.</p>
+<h4 id="korrektirovka-struktury-pamiati"><a class="zola-anchor" href="#korrektirovka-struktury-pamiati" aria-label="Anchor link for: korrektirovka-struktury-pamiati">🔗</a>Корректировка Структуры Памяти</h4>
+<p>Так что же это за корректировка структуры памяти (layout adjustment), которые мы делаем в начале как в <code>alloc</code>, так и в <code>dealloc</code>? Они гарантируют, что каждый выделенный блок способен хранить <code>ListNode</code>. Это важно, потому что блок памяти в какой-то момент будет освобожден, и мы хотим записать в него <code>ListNode</code>. Если блок меньше, чем <code>ListNode</code>, или не имеет правильного выравнивания, может произойти неопределенное поведение (undefined behavior).</p>
+<p>Корректировка структуры выполняются функцией <code>size_align</code>, которая определена следующим образом:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Поправить полученный layout так, что бы в выделенная область памяти
+</span><span>    </span><span style="color:#608b4e;">/// также могла хранить `ListNode`.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Возвращает скорректированный размер и выравнивание в виде кортежа (размер, выравнивание).
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>size_align(layout: Layout) -&gt; (</span><span style="color:#569cd6;">usize</span><span>, </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> layout = layout
+</span><span>            .align_to(mem::align_of::&lt;ListNode&gt;())
+</span><span>            .expect(</span><span style="color:#d69d85;">&quot;adjusting alignment failed&quot;</span><span>)
+</span><span>            .pad_to_align();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> size = layout.size().max(mem::size_of::&lt;ListNode&gt;());
+</span><span>        (size, layout.align())
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Сначала функция использует метод <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.align_to"><code>align_to</code></a> на переданном как аргумент <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>, чтобы при необходимости увеличить выравнивание до выравнивания <code>ListNode</code>. Затем используется метод <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.pad_to_align"><code>pad_to_align</code></a>, чтобы округлить размер до кратного выравниванию, чтобы гарантировать, что начальный адрес следующего блока памяти также будет иметь правильное выравнивание для хранения <code>ListNode</code>.
+На втором этапе она использует метод <a href="https://doc.rust-lang.org/std/cmp/trait.Ord.html#method.max"><code>max</code></a>, чтобы обеспечить минимальный размер аллокации <code>mem::size_of::&lt;ListNode&gt;</code>. Таким образом, функция <code>dealloc</code> может безопасно записать <code>ListNode</code> в освобожденный блок памяти.</p>
+<h3 id="ispol-zuem-eto-1"><a class="zola-anchor" href="#ispol-zuem-eto-1" aria-label="Anchor link for: ispol-zuem-eto-1">🔗</a>Используем Это</h3>
+<p>Теперь мы можем обновить статическую переменную <code>ALLOCATOR</code> в модуле <code>allocator</code>, чтобы использовать наш новый <code>LinkedListAllocator</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>linked_list::LinkedListAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;LinkedListAllocator&gt; =
+</span><span>    Locked::new(LinkedListAllocator::new());
+</span></code></pre>
+<p>Поскольку функция <code>init</code> ведет себя одинаково для аллокаторов типа bump и linked list, нам не нужно изменять вызов <code>init</code> в <code>init_heap</code>.</p>
+<p>Когда мы снова запускаем тесты <code>heap_allocation</code>, мы видим, что все тесты проходят успешно, включая тест <code>many_boxes_long_lived</code>, который не прошел с bump-аллокатором:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [ok]
+</span></code></pre>
+<p>Это показывает, что наш linked list аллокатор способен повторно использовать освобожденную память для последующих выделений.</p>
+<h3 id="obsuzhdenie-1"><a class="zola-anchor" href="#obsuzhdenie-1" aria-label="Anchor link for: obsuzhdenie-1">🔗</a>Обсуждение</h3>
+<p>В отличие от bump-аллокатора, аллокатор на основе связанного списка гораздо более подходит в качестве универсального аллокатора, главным образом потому, что он может напрямую повторно использовать освобожденную память. Однако у него есть и некоторые недостатки. Некоторые из них вызваны только нашей базовой реализацией, но есть и фундаментальные минусы самой архитектуры.</p>
+<h4 id="merging-freed-blocks"><a class="zola-anchor" href="#merging-freed-blocks" aria-label="Anchor link for: merging-freed-blocks">🔗</a>Слияние Освобожденных Блоков</h4>
+<p>Основная проблема нашей реализации заключается в том, что она только разбивает кучу на блоки, но никогда не объединяет их обратно. Рассмотрим следующий пример:</p>
+<p><img src="https://os.phil-opp.com/ru/allocator-designs/linked-list-allocator-fragmentation-on-dealloc.svg" alt="" /></p>
+<p>В первой строке на куче создаются три блока. Два из них снова освобождаются на второй строке, а третье - в третьей. Теперь вся куча снова не используется, но по-прежнему разделена на четыре отдельных блока. На этом этапе большое выделение может быть уже невозможно, поскольку ни один из четырех блоков не является достаточно большим. Со временем процесс продолжается, и куча разбивается на все более мелкие блоки. В какой-то момент куча становится настолько фрагментированной, что даже аллокация памяти нормального размера не удается.</p>
+<p>Чтобы решить эту проблему, нам нужно объединить соседние освобожденные блоки. Для приведенного выше примера это будет означать следующее:</p>
+<p><img src="https://os.phil-opp.com/ru/allocator-designs/linked-list-allocator-merge-on-dealloc.svg" alt="" /></p>
+<p>Как и раньше, два из трех блоков освобождаются в строке <code>2</code>. Вместо того, чтобы сохранять кучу фрагментированной, теперь мы выполняем дополнительный шаг в строке <code>2a</code>, чтобы снова объединить два крайних правых блока. В строке <code>3</code> освобождается третья область (как и раньше), в результате чего получается полностью неиспользуемая куча, представленная тремя отдельными блоками. В дополнительном шаге слияния, на строке <code>3a</code>, мы снова объединяем три соседних блока.</p>
+<p>Крейт <code>linked_list_allocator</code> реализует эту стратегию слияния следующий образом: вместо вставки освобожденных блоков в начало связанного списка при вызове <code>deallocate</code>, он всегда поддерживает список отсортированным по начальному адресу. Благодаря этому слияние можно выполнять непосредственно в процессе вызова <code>deallocate</code>, просто проанализировав адреса и размеры двух соседних блоков в списке. Конечно, операция деаллокации в этом случае выполняется медленнее, но это предотвращает фрагментацию кучи, о которой мы говорили выше.</p>
+<h4 id="proizvoditel-nost"><a class="zola-anchor" href="#proizvoditel-nost" aria-label="Anchor link for: proizvoditel-nost">🔗</a>Производительность</h4>
+<p>Как мы уже выяснили, bump-аллокатор чрезвычайно быстр и может быть оптимизирован до нескольких ассемблерных инструкций. В этом отношении аллокатор на основе связанного списка работает значительно хуже. Проблема в том, что запрос на аллокацию может потребовать обхода всего связанного списка, пока не будет найден подходящий блок.</p>
+<p>Поскольку длина списка зависит от количества неиспользуемых блоков памяти, производительность варьируется в зависимости от программы. Программа, которая создаёт лишь несколько блоков, будет демонстрировать относительно высокую производительность аллокаций. Однако для программы, которая сильно фрагментирует кучу множеством мелких блоков, производительность аллокаций окажется крайне низкой - ведь список станет очень длинным и будет в основном состоять из мелких, почти непригодных для повторного использования областей памяти.</p>
+<p>Стоит отметить, что эта проблема производительности не следствие нашей примитивной реализации, а фундаментальное ограничение самого подхода основанного на связанных списках. Поскольку производительность аллокаций имеет критическое значение для кода ядра, в следующем разделе мы рассмотрим третий тип аллокатора, который жертвует эффективностью использования памяти ради значительного повышения производительности.</p>
+<h2 id="fixed-size-block-allocator"><a class="zola-anchor" href="#fixed-size-block-allocator" aria-label="Anchor link for: fixed-size-block-allocator">🔗</a>Fixed-Size Block Allocator</h2>
+<p>Далее, мы рассмотрим архитектуру аллокатора основанного на аллокациях фиксированного размера (fixed-size block allocator) для выполнения запросов на выделение памяти. Таким образом, аллокатор часто возвращает блоки, которые больше, чем необходимо для выделения, что приводит к потере памяти из-за [внутренней фрагментации]. С другой стороны, это значительно сокращает время, необходимое для поиска подходящего блока (по сравнению с аллокатором связанного списка), что приводит к значительному улучшению производительности выделения памяти.</p>
+<h3 id="vvedenie-1"><a class="zola-anchor" href="#vvedenie-1" aria-label="Anchor link for: vvedenie-1">🔗</a>Введение</h3>
+<p>Основная идея <em>аллокатора блоков фиксированного размера</em>: вместо того, что бы выделять ровно столько памяти, сколько запрошено, мы определяем небольшое кол-во размеров блоков и округляем каждый блок до верхнего размера блока. Например, при размерах 16, 64 и 512 байт запрос на 4 байта вернет блок размером 16 байт, выделение 48 байт - блок в 64 байта, а выделение 128 байт - блок размером 512 байт.</p>
+<p>Как и при использовании связанного списка, мы отслеживаем неиспользуемую память, создавая связанный список в неиспользуемой памяти. Однако вместо использования одного списка с разными размерами блоков мы создаем отдельный список для каждого класса размеров. Затем каждый список хранит только блоки одного размера. Например, при размерах блоков 16, 64 и 512 в памяти будет три отдельных связанных списка:</p>
+<p><img src="https://os.phil-opp.com/ru/allocator-designs/fixed-size-block-example.svg" alt="" />.</p>
+<p>Вместо одного указателя <code>head</code> у нас есть три указателя head <code>head_16</code>, <code>head_64</code> и <code>head_512</code>, каждый из которых указывает на первый неиспользуемый блок соответствующего размера. Все узлы в одном списке имеют одинаковый размер. Например, список, начинающийся с указателя <code>head_16</code>, содержит только 16-байтовые блоки. Это означает, что нам больше не нужно хранить размер в каждом узле списка, поскольку он уже указан в имени указателя head.</p>
+<p>Поскольку каждый элемент в списке имеет одинаковый размер, каждый элемент списка одинаково подходит для запроса на выделение памяти. Это означает, что мы можем эффективно аллоцировать память, выполняя следующие шаги:</p>
+<ul>
+<li>Округлить вверх запрошенный размер памяти до размера поддерживаемого блока. Например, когда запрашивается выделение 12 байт, мы выберем размер блока 16 в приведенном выше примере.</li>
+<li>Получить указатель на нужный список, например для блока в 16 байт, нам нужно использовать <code>head_16</code>.</li>
+<li>Удалить первый блок из списка и вернуть его.</li>
+</ul>
+<p>Что примечательно, мы всегда может вернуть первый элемент списка и не обходить весь список. Таким образом, аллокация происходит гораздо быстрее, чем с помощью аллокатора на основе связанного списка.</p>
+<h4 id="blochnye-razmery-i-potrachennaia-pamiat"><a class="zola-anchor" href="#blochnye-razmery-i-potrachennaia-pamiat" aria-label="Anchor link for: blochnye-razmery-i-potrachennaia-pamiat">🔗</a>Блочные Размеры и Потраченная Память</h4>
+<p>В зависимости от размера блоков, мы теряем много памяти из-за округления. Например, для аллокации в 128 байт вернется блок в 512 байт, три четверти выделенной памяти остаются неиспользованными. Определив разумные размеры блоков, можно в некоторой степени ограничить количество потраченной впустую памяти. Например, при использовании степеней числа 2 (4, 8, 16, 32, 64, 128, …) в качестве размеров для блоков мы можем ограничить потерю памяти до половины размера выделения в худшем случае и до четверти размера аллокации в среднем случае.</p>
+<p>Также часто оптимизируют размеры блоков на основе типичных размеров аллокаций в программе. Например, можно дополнительно добавить размер блока 24, чтобы улучшить использование памяти для программ, которым часто нужны блоки в 24 байта. Таким образом, часто можно уменьшить количество неиспользуемой памяти без потери преимущества в производительности.</p>
+<h4 id="deallokatsiia"><a class="zola-anchor" href="#deallokatsiia" aria-label="Anchor link for: deallokatsiia">🔗</a>Деаллокация</h4>
+<p>Подобно аллокации, деаллокация также производительна. Она следует следующим шагам:</p>
+<ul>
+<li>Округление размера освобожденной памяти до размера следующего блока. Это необходимо, поскольку компилятор передает в <code>dealloc</code> только запрошенный размер памяти, а не размер блока, возвращенный <code>alloc</code>. Используя одну и ту же функцию выравнивания размера в <code>alloc</code> и <code>dealloc</code>, мы можем быть уверены, что всегда освобождаем правильный объем памяти.</li>
+<li>Получить указатель на соответствующий head-список.</li>
+<li>Добавить освобожденный блок в начало списка, обновив указатель на начало.</li>
+</ul>
+<p>Что примечательно, для деаллокации также не требуется обход списка. Это означает, что время, необходимое для вызова <code>dealloc</code>, остается неизменным независимо от длины списка.</p>
+<h4 id="fallback-allocator"><a class="zola-anchor" href="#fallback-allocator" aria-label="Anchor link for: fallback-allocator">🔗</a>Fallback Allocator</h4>
+<p>Учитывая, что большие аллокации (&gt;2 KB) встречаются довольно редко, особенно в ядре операционных систем, для таких блоков может иметь смысл иметь другой аллокатор. Например, мы могли бы использовать linked list аллокатор для выделений более 2048 байт, чтобы уменьшить потерю памяти. Поскольку ожидается очень мало блоков такого размера, связанный список останется небольшим, а выделение и освобождение памяти по-прежнему будут достаточно быстрыми.</p>
+<h4 id="creating-new-blocks"><a class="zola-anchor" href="#creating-new-blocks" aria-label="Anchor link for: creating-new-blocks">🔗</a>Создание Новых Блоков</h4>
+<p>Выше мы всегда предполагали, что в списке всегда достаточно блоков определенного размера, чтобы удовлетворить все запросы на аллокацию. Однако в какой-то момент связанный список для данного размера блока становится пустым. В этом случае есть два способа создать новые, свободные блоки определенного размера, чтобы удовлетворить запрос на аллокацию:</p>
+<!-- TODO: term -->
+<ul>
+<li>Выделить новый блок из fallback-аллокатора (если он есть).</li>
+<li>Взяв блок другой размерности и разделить его. Это лучше всего работает, если размеры блоков являются степенями двойки. Например, 32-байтовый блок можно разделить на два 16-байтовых блока.</li>
+</ul>
+<p>Для нашей реализации мы будем выделять новые блоки из fallback-аллокатора, поскольку такая реализация гораздо проще.</p>
+<h3 id="realizatsiia-2"><a class="zola-anchor" href="#realizatsiia-2" aria-label="Anchor link for: realizatsiia-2">🔗</a>Реализация</h3>
+<p>Теперь, когда мы знаем, как работает фиксированный аллокатор, можем приступить к реализации. Мы не будем полагаться на реализацию linked list аллокатора, созданного в предыдущем разделе, поэтому вы можете следовать этой части, даже если пропустили реализацию аллокатора связанного списка.</p>
+<h4 id="list-node"><a class="zola-anchor" href="#list-node" aria-label="Anchor link for: list-node">🔗</a>List Node</h4>
+<p>Начнем с создания типа <code>ListNode</code> в новом модуле <code>allocator::fixed_size_block</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>fixed_size_block;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>ListNode {
+</span><span>    next: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;,
+</span><span>}
+</span></code></pre>
+<p>Этот тип аналогичен типу <code>ListNode</code> нашей <a href="https://os.phil-opp.com/ru/allocator-designs/#the-allocator-type">реализации linked list аллокатора</a>, с той разницей, что у нас нет поля <code>size</code>. Оно не нужно, поскольку каждый блок в списке имеет одинаковый размер при использовании аллокатора блоков фиксированного размера.</p>
+<h4 id="block-sizes"><a class="zola-anchor" href="#block-sizes" aria-label="Anchor link for: block-sizes">🔗</a>Block Sizes</h4>
+<p>Далее мы определяем константу <code>BLOCK_SIZES</code> с размерами блоков, используемыми в нашей реализации:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Размеры блоков, которые будут использоваться.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Каждый размер должен быть степенью числа 2, поскольку они используются и для 
+</span><span style="color:#608b4e;">/// выравнивания блоков (оно всегда должно быть степенью числа 2).
+</span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">usize</span><span>] = </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#b5cea8;">8</span><span>, </span><span style="color:#b5cea8;">16</span><span>, </span><span style="color:#b5cea8;">32</span><span>, </span><span style="color:#b5cea8;">64</span><span>, </span><span style="color:#b5cea8;">128</span><span>, </span><span style="color:#b5cea8;">256</span><span>, </span><span style="color:#b5cea8;">512</span><span>, </span><span style="color:#b5cea8;">1024</span><span>, </span><span style="color:#b5cea8;">2048</span><span>];
+</span></code></pre>
+<p>В качестве размеров блоков мы используем степени числа 2, начиная с 8 и заканчивая 2048. Мы не определяем размеры блоков меньше 8, поскольку каждый блок должен быть способен хранить 64-битный указатель на следующий блок при освобождении. Для выделения памяти размером более 2048 байт мы будем использовать аллокатор связанного списка.</p>
+<p>Чтобы упростить реализацию, мы определяем размер блока как его требуемое выравнивание в памяти. Таким образом, 16-байтовый блок всегда выравнивается по границе 16 байт, а 512-байтовый блок - по границе 512 байт. Поскольку выравнивание всегда должно быть степенью числа 2, это исключает любые другие размеры блоков. Если в будущем нам понадобятся размеры блоков, не являющиеся степенями числа 2, мы все равно сможем адаптировать нашу реализацию для этого (например, определив второй массив <code>BLOCK_ALIGNMENTS</code>).</p>
+<h4 id="tip-allokatora"><a class="zola-anchor" href="#tip-allokatora" aria-label="Anchor link for: tip-allokatora">🔗</a>Тип Аллокатора</h4>
+<p>Используя тип <code>ListNode</code> и срез <code>BLOCK_SIZES</code>, мы теперь можем определить наш тип аллокатора:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>FixedSizeBlockAllocator {
+</span><span>    list_heads: [Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;; BLOCK_SIZES.len()],
+</span><span>    fallback_allocator: linked_list_allocator::Heap,
+</span><span>}
+</span></code></pre>
+<p>Поле <code>list_heads</code> представляет собой массив указателей <code>head</code>, по одному для каждого размера блока. Это реализуется с помощью <code>len()</code> от <code>BLOCK_SIZES</code> в качестве длины массива. В качестве fallback-аллокатора, для объектов превышающих максимальный размер блока, мы используем аллокатор, предоставляемый <code>linked_list_allocator</code>. Мы также могли бы использовать <code>LinkedListAllocator</code>, который мы реализовали сами, но он имеет недостаток, заключающийся в том, что он не <a href="https://os.phil-opp.com/ru/allocator-designs/#merging-freed-blocks">объединяет освобожденные блоки</a>.</p>
+<p>Для построения <code>FixedSizeBlockAllocator</code> мы предоставляем те же функции <code>new</code> и <code>init</code>, которые мы реализовали и для других типов аллокаторов:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>FixedSizeBlockAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Создает пустой FixedSizeBlockAllocator.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">EMPTY</span><span>: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt; = None;
+</span><span>        FixedSizeBlockAllocator {
+</span><span>            list_heads: [</span><span style="color:#b4cea8;">EMPTY</span><span>; </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>.len()],
+</span><span>            fallback_allocator: linked_list_allocator::Heap::empty(),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Инициализирует аллокатор с заданными границами кучи.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// unsafe, т.к. вызывающая сторона должна гарантировать, что заданные
+</span><span>    </span><span style="color:#608b4e;">/// границы кучи действительны и куча не используется. Этот метод должен быть
+</span><span>    </span><span style="color:#608b4e;">/// вызван только один раз.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{ self.fallback_allocator.init(heap_start, heap_size); }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Функция <code>new</code> просто инициализирует массив <code>list_heads</code> пустыми узлами и создает аллокатор связанного списка <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.empty"><code>empty</code></a> в качестве <code>fallback_allocator</code>. Константа <code>EMPTY</code> нужна, чтобы сообщить компилятору Rust, что мы хотим инициализировать массив постоянным значением. Инициализация массива напрямую как <code>[None; BLOCK_SIZES.len()]</code> не работает, потому что тогда компилятор требует, чтобы <code>Option&lt;&amp;'static mut ListNode&gt;</code> реализовывал трейт <code>Copy</code>, чего он не делает. Это текущее ограничение компилятора Rust, которое может исчезнуть в будущем.</p>
+<p>Небезопасная функция <code>init</code> вызывает только функцию <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> из <code>fallback_allocator</code>, не выполняя дополнительной инициализации массива <code>list_heads</code>. Вместо этого мы будем инициализировать списки по мере необходимости при вызовах <code>alloc</code> и <code>dealloc</code>.</p>
+<p>Для удобства мы также создаем приватный метод <code>fallback_alloc</code>, который выполняет аллокацию с помощью <code>fallback_allocator</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::Layout;
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>FixedSizeBlockAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Аллокация через fallback-allocator.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>fallback_alloc(</span><span style="color:#569cd6;">&amp;mut </span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#569cd6;">match </span><span>self.fallback_allocator.allocate_first_fit(layout) {
+</span><span>            Ok(ptr) </span><span style="color:#569cd6;">=&gt;</span><span> ptr.as_ptr(),
+</span><span>            Err(</span><span style="color:#569cd6;">_</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>ptr::null_mut(),
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Тип <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a> из крейта <code>linked_list_allocator</code> не реализует трейт <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> (поскольку это <a href="https://os.phil-opp.com/ru/allocator-designs/#globalalloc-and-mutability">невозможно без блокировки</a>). Вместо этого он предоставляет метод <a href="https://os.phil-opp.com/ru/allocator-designs/#globalalloc-and-mutability"><code>allocate_first_fit</code></a> с немного иным интерфейсом. Вместо возврата <code>*mut u8</code> и использования нулевого указателя для сигнализации об ошибке, он возвращает <code>Result&lt;NonNull&lt;u8&gt;, ()&gt;</code>. Тип <a href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html"><code>NonNull</code></a> - это абстракция для сырого указателя (raw pointer), которая гарантирует, что указатель не может быть нулевым. Преобразуя случай <code>Ok</code> через метод <a href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html#method.as_ptr"><code>NonNull::as_ptr</code></a> и случай <code>Err</code>  в нулевой указатель, мы можем легко преобразовать это обратно в тип <code>*mut u8</code>.</p>
+<h4 id="vychislenie-indeks-spiska"><a class="zola-anchor" href="#vychislenie-indeks-spiska" aria-label="Anchor link for: vychislenie-indeks-spiska">🔗</a>Вычисление Индекс Списка</h4>
+<p>Прежде чем реализовать трейт <code>GlobalAlloc</code>, мы определяем вспомогательную функцию <code>list_index</code>, которая возвращает минимально возможный размер блока для заданного <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Выбирает предпочитаемый размер блоков для полученного структуры памяти
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Возвращает индекс от массива `BLOCK_SIZES`.
+</span><span style="color:#569cd6;">fn </span><span>list_index(layout: </span><span style="color:#569cd6;">&amp;</span><span>Layout) -&gt; Option&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> required_block_size = layout.size().max(layout.align());
+</span><span>    </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>.iter().position(|</span><span style="color:#569cd6;">&amp;</span><span>s| s &gt;= required_block_size)
+</span><span>}
+</span></code></pre>
+<p>Блок должен иметь как минимум размер и выравнивание, требуемые полученным <code>Layout</code>. Поскольку мы определили, что размер блока равен его выравниванию, это означает, что <code>required_block_size</code> является <a href="https://doc.rust-lang.org/core/cmp/trait.Ord.html#method.max">максимальным</a> значением атрибутов <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.size"><code>size()</code></a> и <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.align"><code>align()</code></a>. Чтобы найти следующий по величине блок в срезе <code>BLOCK_SIZES</code>, мы сначала используем метод <a href="https://doc.rust-lang.org/std/primitive.slice.html#method.iter"><code>iter()</code></a>, чтобы получить итератор, а затем метод <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.position"><code>position()</code></a>, чтобы найти индекс первого блока, размер которого не меньше <code>required_block_size</code>.</p>
+<p>Обратите внимание, что мы возвращаем не сам размер блока, а индекс в срезе <code>BLOCK_SIZES</code>. Причина в том, что мы хотим использовать возвращаемый индекс в качестве индекса в массиве <code>list_heads</code>.</p>
+<h4 id="realizatsiia-globalalloc-2"><a class="zola-anchor" href="#realizatsiia-globalalloc-2" aria-label="Anchor link for: realizatsiia-globalalloc-2">🔗</a>Реализация <code>GlobalAlloc</code></h4>
+<p>Последний шаг - реализация трейта <code>GlobalAlloc</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::Locked;
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::GlobalAlloc;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;FixedSizeBlockAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        todo!();
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Как и в случае с другими аллокаторами, мы не реализуем trait <code>GlobalAlloc</code> напрямую для нашего типа аллокатора, а используем <a href="https://os.phil-opp.com/allocator-designs/#a-locked-wrapper-type">обертку <code>Locked</code></a>, чтобы добавить синхронизированную внутреннюю мутабельность. Поскольку реализации <code>alloc</code> и <code>dealloc</code> относительно велики, мы напишем их по очереди ниже.</p>
+<h5 id="alloc"><a class="zola-anchor" href="#alloc" aria-label="Anchor link for: alloc">🔗</a><code>alloc</code></h5>
+<p>Реализация метода <code>alloc</code> выглядит следующим образом:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// `impl` блок в src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>    </span><span style="color:#569cd6;">match </span><span>list_index(</span><span style="color:#569cd6;">&amp;</span><span>layout) {
+</span><span>        Some(index) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">match</span><span> allocator.list_heads[index].take() {
+</span><span>                Some(node) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                    allocator.list_heads[index] = node.next.take();
+</span><span>                    node </span><span style="color:#569cd6;">as *mut</span><span> ListNode </span><span style="color:#569cd6;">as *mut u8
+</span><span>                }
+</span><span>                None </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                    </span><span style="color:#608b4e;">// в списке нет блока =&gt; выделить новый блок
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> block_size = </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index];
+</span><span>                    </span><span style="color:#608b4e;">// работает только тогда, когда размеры блоков являются степенью числа 2
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> block_align = block_size;
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> layout = Layout::from_size_align(block_size, block_align)
+</span><span>                        .unwrap();
+</span><span>                    allocator.fallback_alloc(layout)
+</span><span>                }
+</span><span>            }
+</span><span>        }
+</span><span>        None </span><span style="color:#569cd6;">=&gt;</span><span> allocator.fallback_alloc(layout),
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Давайте разберем это шаг за шагом:</p>
+<p>Сначала мы используем метод <code>Locked::lock</code>, чтобы получить мутабельную ссылку на объект-обертку аллокатора. Затем мы вызываем только что определённую функцию <code>list_index</code>, чтобы вычислить подходящий размер блока для данной компоновки и получить соответствующий индекс в массиве <code>list_heads</code>. Если этот индекс равен <code>None</code>, то ни один размер блока не подходит для выделения памяти, поэтому мы используем <code>fallback_allocator</code> с помощью функции <code>fallback_alloc</code>.</p>
+<p>Если индекс списка равен <code>Some</code>, мы пытаемся удалить первый узел в соответствующем списке, начинающемся с <code>list_heads[index]</code>, с помощью метода <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a>. Если список не пустой, мы входим в ветвь <code>Some(node)</code> оператора <code>match</code>, где устанавливаем указатель head списка на следующий элемент после извлеченного <code>node</code> (снова используя <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>take</code></a>). Наконец, мы возвращаем удаленный указатель <code>node</code> как <code>*mut u8</code>.</p>
+<p>Если заголовок списка равен <code>None</code> (список блоков пуст), нам нужно создать новый блок, как <a href="https://os.phil-opp.com/ru/allocator-designs/#creating-new-blocks">описано выше</a>. Для этого мы сначала получаем текущий размер блока из среза <code>BLOCK_SIZES</code> и используем его как для размера, так и для выравнивания нового блока. Затем мы создаём из него новый <code>Layout</code> и вызываем метод <code>fallback_alloc</code> для аллокации. Причина корректировки структуры памяти и выравнивания в том, что блок будет добавлен в список блоков при освобождении памяти.</p>
+<h4 id="dealloc"><a class="zola-anchor" href="#dealloc" aria-label="Anchor link for: dealloc">🔗</a><code>dealloc</code></h4>
+<p>Реализация метода <code>dealloc</code> выглядит следующим образом:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::{mem, ptr::NonNull};
+</span><span>
+</span><span style="color:#608b4e;">// внутри блока `unsafe impl GlobalAlloc`
+</span><span>
+</span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>    </span><span style="color:#569cd6;">match </span><span>list_index(</span><span style="color:#569cd6;">&amp;</span><span>layout) {
+</span><span>        Some(index) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">let</span><span> new_node = ListNode {
+</span><span>                next: allocator.list_heads[index].take(),
+</span><span>            };
+</span><span>            </span><span style="color:#608b4e;">// Убедитесь, что блок имеет размер и выравнивание, необходимые для хранения узла.
+</span><span>            assert!(mem::size_of::&lt;ListNode&gt;() &lt;= </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index]);
+</span><span>            assert!(mem::align_of::&lt;ListNode&gt;() &lt;= </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index]);
+</span><span>            </span><span style="color:#569cd6;">let</span><span> new_node_ptr = ptr </span><span style="color:#569cd6;">as *mut</span><span> ListNode;
+</span><span>            </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                new_node_ptr.write(new_node);
+</span><span>                allocator.list_heads[index] = Some(</span><span style="color:#569cd6;">&amp;mut </span><span>*new_node_ptr);
+</span><span>            }
+</span><span>        }
+</span><span>        None </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">let</span><span> ptr = NonNull::new(ptr).unwrap();
+</span><span>            </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                allocator.fallback_allocator.deallocate(ptr, layout);
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Как и в <code>alloc</code>, сначала мы используем метод <code>lock</code> чтобы получить мутабельную ссылку на аллокатор, а затем ф-цию <code>list_index</code> для получения списка блоков, соответствующего заданному <code>Layout</code>. Если индекс равен <code>None</code>, значит в <code>BLOCK_SIZES</code> нет подходящего по размеру блока, а это значит, что аллокация памяти была выполнена fallback-аллокатором. Поэтому мы используем его метод <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.deallocate"><code>deallocate</code></a> что бы освободить память обратно. Метод ожидает <code>NonNull</code> вместо <code>*mut u8</code>, поэтому нам необходимо сначала преобразовать указатель. (Вызов <code>unwrap</code> завершается ошибкой только в случае нулевого указателя, что не должно происходить, когда компилятор вызывает <code>dealloc</code>.)</p>
+<p>Если <code>list_index</code> возвращает индекс блока, нам нужно добавить освобожденный блок памяти в список. Для этого мы сначала создаем новый <code>ListNode</code>, указывающий на текущий заголовок списка (снова используя <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a>). Прежде чем записывать новый узел в освобожденный блок памяти, мы проверяем, что текущий размер блока, указанный в <code>index</code>, имеет требуемый размер и выравнивание для хранения <code>ListNode</code>. Затем мы выполняем запись, преобразуя заданный указатель <code>*mut u8</code> в указатель <code>*mut ListNode</code> и вызывая на нем unsafe метод <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write"><code>write</code></a>. Последний шаг - установить указатель head списка, который в данный момент равен <code>None</code>, поскольку мы вызвали <code>take</code>, на наш только что записанный <code>ListNode</code>. Для этого мы преобразуем исходный <code>new_node_ptr</code> в мутабельную ссылку.</p>
+<p>Стоит отметить несколько моментов:</p>
+<ul>
+<li>Мы не различаем блоки, выделенные из списка блоков, и блоки, полученные из fallback-аллокатора. Это означает, что новые блоки, созданные в <code>alloc</code>, добавляются в список блоков в <code>dealloc</code>, тем самым увеличивая количество блоков этого размера.</li>
+<li>Метод <code>alloc</code> - единственное место в нашей реализации, где создаются новые блоки. Это означает, что изначально мы начинаем с пустых списков блоков и заполняем их лениво только при выделении памяти размером с блок.</li>
+<li>Нам не нужны <code>unsafe</code> блоки в <code>alloc</code> и <code>dealloc</code>, даже несмотря на то, что мы выполняем некоторые небезопасные операции. Причина в том, что Rust в настоящее время рассматривает весь набор небезопасных функций как один большой <code>unsafe</code> блок. Поскольку использование явных блоков <code>unsafe</code> имеет то преимущество, что очевидно, какие операции являются небезопасными, а какие нет, существует <a href="https://github.com/rust-lang/rfcs/pull/2585">предложенный RFC</a>, который изменит это поведение.</li>
+</ul>
+<h3 id="ispol-zuem-eto-2"><a class="zola-anchor" href="#ispol-zuem-eto-2" aria-label="Anchor link for: ispol-zuem-eto-2">🔗</a>Используем Это</h3>
+<p>Для использования нашего нового <code>FixedSizeBlockAllocator</code> необходимо обновить статическую переменную <code>ALLOCATOR</code> в модуле <code>allocator</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>fixed_size_block::FixedSizeBlockAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;FixedSizeBlockAllocator&gt; = Locked::new(
+</span><span>    FixedSizeBlockAllocator::new());
+</span></code></pre>
+<p>Поскольку функция <code>init</code> ведет себя одинаково для всех реализованных нами распределителей памяти, нам не нужно изменять вызов <code>init</code> в <code>init_heap</code>.</p>
+<p>Теперь, когда мы снова запустим наши тесты <code>heap_allocation</code>, все тесты должны пройти успешно:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [ok]
+</span></code></pre>
+<p>Наш новый аллокатор, похоже, работает!</p>
+<h3 id="obsuzhdenie-2"><a class="zola-anchor" href="#obsuzhdenie-2" aria-label="Anchor link for: obsuzhdenie-2">🔗</a>Обсуждение</h3>
+<p>Хотя подход с блоками фиксированного размера демонстрирует гораздо лучшую производительность, чем подход со связанным списком, он приводит к потере до половины памяти при использовании степеней двойки в качестве размеров блоков. Целесообразность такого компромисса во многом зависит от типа приложения. Для ядра операционной системы, где производительность имеет решающее значение, подход с блоками фиксированного размера представляется лучшим выбором.</p>
+<p>Что касается реализации, то в нашей текущей версии можно улучшить ряд моментов:</p>
+<ul>
+<li>Вместо того чтобы выделять блоки только лениво, используя fallback-аллокатор, возможно, лучше предварительно заполнять списки, чтобы повысить производительность первоначальных аллокаций.</li>
+<li>Для упрощения реализации мы разрешили только размеры блоков, являющиеся степенями двойки, чтобы мы могли использовать их также в качестве выравнивания блоков. Сохраняя (или вычисляя) выравнивание другим способом, мы могли бы также разрешить произвольные размеры блоков. Таким образом, мы могли бы добавить больше размеров блоков, например, для распространенных размеров выделения памяти, чтобы минимизировать ее потери.</li>
+<li>В настоящее время мы только создаем новые блоки, но никогда их не освобождаем. Это приводит к фрагментации и в конечном итоге может привести к сбою выделения памяти при больших аллокациях. Возможно, имеет смысл ввести максимальную длину списка для каждого размера блока. Когда максимальная длина достигается, последующие выделения освобождаются с помощью fallback-аллокатора, а не добавляются в список.</li>
+<li>Вместо того, чтобы переходить к аллокатору связанного списка, мы могли бы использовать специальный аллокатор для выделения памяти размером более 4 КБ. Идея заключается в использовании <a href="https://os.phil-opp.com/paging-introduction/">страничной организации памяти</a>, которая работает со страницами размером 4 КБ, для маппинга непрерывного блока виртуальной памяти на не непрерывные физические фреймы. Таким образом, фрагментация неиспользуемой памяти больше не будет проблемой для аллокаций больших объемов памяти.</li>
+<li>С таким аллокатором страниц может иметь смысл добавить размеры блоков до 4 КБ и полностью отказаться от аллокатора связанных списков. Основными преимуществами этого будут уменьшение фрагментации и улучшение предсказуемости производительности, т. е. лучшая производительность в худшем случае.</li>
+</ul>
+<p>Важно отметить, что описанные выше улучшения реализации являются лишь рекомендациями. Алокаторы, используемые в ядрах операционных систем, как правило, высоко оптимизированы для конкретной рабочей нагрузки ядра, что возможно только благодаря тщательному профилированию.</p>
+<h3 id="variatsii"><a class="zola-anchor" href="#variatsii" aria-label="Anchor link for: variatsii">🔗</a>Вариации</h3>
+<p>Существует также множество вариаций конструкции фиксированных аллокаторов. Двумя популярными примерами являются аллокатор <em>slab</em> и аллокатор <em>buddy</em>, которые также используются в популярных ядрах, таких как Linux. Ниже мы дадим краткое введение в эти две конструкции.</p>
+<h4 id="slab-allocator"><a class="zola-anchor" href="#slab-allocator" aria-label="Anchor link for: slab-allocator">🔗</a>Slab Allocator</h4>
+<p>Идея <a href="https://en.wikipedia.org/wiki/Slab_allocation">slab-аллокатора</a> в использовании размеров блоков, которые напрямую соответствуют выбранным типам в ядре. Таким образом, выделение памяти для этих типов точно соответствует размеру блока, и память не тратится зря. Иногда даже можно предварительно инициализировать экземпляры типов в неиспользуемых блоках, чтобы еще больше повысить производительность.</p>
+<p>Slab-аллокаторы часто сочетаются с другими аллокаторами. Например, его можно использовать вместе с аллокатором блоков фиксированного размера для дальнейшего разделения выделенного блока с целью сокращения потерь памяти. Его также часто используют для реализации паттерна <a href="https://en.wikipedia.org/wiki/Object_pool_pattern">“объектный пул”</a> поверх одного большого выделения.</p>
+<h4 id="buddy-allocator"><a class="zola-anchor" href="#buddy-allocator" aria-label="Anchor link for: buddy-allocator">🔗</a>Buddy Allocator</h4>
+<p>Вместо использования связанного списка для управления освобожденными блоками, в конструкции <a href="https://en.wikipedia.org/wiki/Buddy_memory_allocation">buddy allocator</a> используется <a href="https://en.wikipedia.org/wiki/Binary_tree">бинарное дерево</a> вместе с размерами блоков, кратными 2. Когда требуется новый блок определенного размера, он разделяет блок большего размера на две половины, создавая тем самым два дочерних узла в дереве. Каждый раз, когда блок снова освобождается, анализируется его соседний блок в дереве. Если соседний блок также свободен, два блока снова объединяются, образуя блок в два раза большего размера.</p>
+<p>Преимущество этого процесса объединения заключается в том, что <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#External_fragmentation">внешняя фрагментация</a> уменьшается, так что небольшие освобожденные блоки могут быть повторно использованы для большого выделения. Кроме того, он не использует резервный аллокатор, поэтому производительность более предсказуема. Самым большим недостатком является то, что возможны только размеры блоков, кратные 2, что может привести к большому количеству потраченной впустую памяти из-за <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">внутренней фрагментации</a>. По этой причине аллокаторы типа buddy часто сочетаются с аллокатором типа slab для дальнейшего разделения выделенного блока на несколько меньших блоков.</p>
+<h2 id="itogi"><a class="zola-anchor" href="#itogi" aria-label="Anchor link for: itogi">🔗</a>Итоги</h2>
+<p>В этой статье был представлен обзор различных конструкций аллокаторов. Мы узнали, как реализовать базовый <a href="https://os.phil-opp.com/allocator-designs/#bump-allocator">bump allocator</a>, который распределяет память линейно, увеличивая один указатель <code>next</code>. Хотя bump-аллокатор работает очень быстро, он может повторно использовать память только после того, как все выделенные блоки будут освобождены. По этой причине он редко используется в качестве глобального аллокатора.</p>
+<p>Затем мы создали <a href="https://os.phil-opp.com/allocator-designs/#linked-list-allocator">linked list-аллокатор</a>, который использует освобожденные блоки памяти для создания связанного списка, так называемого <a href="https://en.wikipedia.org/wiki/Free_list">список свободной памяти</a>. Этот список позволяет хранить произвольное количество освобожденных блоков разного размера. Хотя при этом не происходит потери памяти, этот подход страдает низкой производительностью, поскольку запрос на выделение памяти может потребовать полного прохождения списка. Наша реализация также страдает от <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#External_fragmentation">внешней фрагментации</a>, поскольку не объединяет соседние освобожденные блоки обратно вместе.</p>
+<p>Чтобы устранить проблемы с производительностью, связанные с использованием связанных списков, мы создали <a href="https://os.phil-opp.com/allocator-designs/#fixed-size-block-allocator">аллокатор фиксированных блоков</a>, который заранее определяет фиксированный набор размеров блоков. Для каждого размера блока существует отдельный <a href="https://en.wikipedia.org/wiki/Free_list">список свободной памяти</a>, так что для выделения и освобождения памяти достаточно просто вставить/удалить элемент в начале списка, что делает этот процесс очень быстрым. Поскольку каждое выделение округляется до следующего большего размера блока, часть памяти тратится впустую из-за <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">внутренней фрагментации</a>.</p>
+<p>Существует множество других конструкций аллокаторов с различными компромиссными решениями. <a href="https://os.phil-opp.com/allocator-designs/#slab-allocator">Slab allocation</a> хорошо подходит для оптимизации распределения общих структур фиксированного размера, но применимо не во всех ситуациях. <a href="https://os.phil-opp.com/allocator-designs/#buddy-allocator">Buddy allocation</a> использует двоичное дерево для объединения освобожденных блоков, но тратит большое количество памяти, поскольку поддерживает только размеры блоков, кратные 2. Также важно помнить, что каждая реализация ядра имеет уникальную рабочую нагрузку, поэтому не существует «лучшей» реализации аллокатора, подходящей для всех случаев.</p>
+<h2 id="chto-dalee"><a class="zola-anchor" href="#chto-dalee" aria-label="Anchor link for: chto-dalee">🔗</a>Что Далее?</h2>
+<p>Этим постом мы на данный момент завершаем реализацию управления памятью. Далее мы начнем изучать <a href="https://en.wikipedia.org/wiki/Computer_multitasking"><em>многозадачность</em></a>, начиная с кооперативной многозадачности в форме <a href="https://rust-lang.github.io/async-book/01_getting_started/04_async_await_primer.html"><em>async/await</em></a>. В последующих постах мы затем рассмотрим <a href="https://en.wikipedia.org/wiki/Thread_(computing)"><em>потоки</em></a>, <a href="https://en.wikipedia.org/wiki/Multiprocessing"><em>многопроцессорность</em></a> и <a href="https://en.wikipedia.org/wiki/Process_(computing)"><em>процессы</em></a>.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Support Me</h2>
+<p>Creating and maintaining this blog and the associated libraries is a lot of work, but I really enjoy doing it. By supporting me, you allow me to invest more time in new content, new features, and continuous maintenance. The best way to support me is to <a href="https://github.com/sponsors/phil-opp"><em>sponsor me on GitHub</em></a>. Thank you!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/ru/minimal-rust-kernel/">&laquo; Минимально возможное ядро на Rust</a>
+        
+        
+            <a class="next" href="/ru/async-await/">Async&#x2F;Await &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Комментарии</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Do you have a problem, want to share feedback, or discuss further ideas? Feel free to leave a comment here! Please stick to English and follow Rust's <a href="https://www.rust-lang.org/policies/code-of-conduct">code of conduct</a>. This comment thread directly maps to a <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Allocator%20Designs%20%28ru%29%22%20in%3Atitle"><em>discussion on GitHub</em></a>, so you can also comment there if you prefer.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Allocator Designs (ru)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="ru"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Allocator%20Designs%20%28ru%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Пожалуйста, оставляйте комментарии на английском по возможности.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/allocator-designs/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/allocator-designs/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/allocator-designs/ja/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/allocator-designs/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/allocator-designs/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>
