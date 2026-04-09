@@ -1,0 +1,1126 @@
+<!doctype html>
+
+<html lang="ar">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="يشرح هذا المقال كيفية تنفيذ مخصصات heap من الصفر. يعرض ويناقش تصاميم مختلفة للمخصصات، بما في ذلك bump allocation و linked list allocation و fixed-size…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/ar/allocator-designs/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>تصاميم المخصصات | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/ar" title="All Posts">« كل المقالات</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="right-to-left">
+        <h2>جدول المحتويات</h2>
+    <ol>
+        <li>
+            <a href="#lmqdm">المقدمة</a>
+            <ol>
+                <li>
+                    <a href="#hdf-ltsmym">أهداف التصميم</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#bump-allocator">Bump Allocator</a>
+            <ol>
+                <li>
+                    <a href="#lfkr">الفكرة</a>
+                </li><li>
+                    <a href="#ltnfydh">التنفيذ</a>
+                </li><li>
+                    <a href="#tnfydh-globalalloc">تنفيذ GlobalAlloc</a>
+                </li><li>
+                    <a href="#stkhdmh">استخدامه</a>
+                </li><li>
+                    <a href="#lnqsh">النقاش</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#linked-list-allocator">Linked List Allocator</a>
+            <ol>
+                <li>
+                    <a href="#ltnfydh-1">التنفيذ</a>
+                </li><li>
+                    <a href="#stkhdmh-1">استخدامه</a>
+                </li><li>
+                    <a href="#lnqsh-1">النقاش</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#fixed-size-block-allocator">Fixed-Size Block Allocator</a>
+            <ol>
+                <li>
+                    <a href="#lmqdm-1">المقدمة</a>
+                </li><li>
+                    <a href="#ltnfydh-2">التنفيذ</a>
+                </li><li>
+                    <a href="#stkhdmh-2">استخدامه</a>
+                </li><li>
+                    <a href="#lnqsh-2">النقاش</a>
+                </li><li>
+                    <a href="#lkhtlft">الاختلافات</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#lmlkhs">الملخص</a>
+            
+        </li><li>
+            <a href="#m-ltly">ما التالي؟</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="right-to-left">
+    <h1>تصاميم المخصصات</h1>
+    <time datetime="2020-01-20" class="post-date">
+        Jan 20, 2020
+        
+    </time>
+    </div>
+
+    
+        <div class="warning right-to-left">
+            
+            
+            <p>
+            <b>المحتوى المترجم:</b>
+            هذه ترجمة مجتمعية لمقالة <strong><a href="https://os.phil-opp.com/allocator-designs/">Allocator Designs</a></strong>. قد تكون غير مكتملة أو قديمة أو تحتوي على أخطاء. يرجى الإبلاغ عن أي مشاكل!
+            </p>
+            <p>
+                ترجمة بواسطة <a href="https://github.com/mindfreq">@mindfreq</a>.</p>
+            </div>
+    
+
+    <div class="right-to-left">
+    <p>يشرح هذا المقال كيفية تنفيذ مخصصات heap من الصفر. يعرض ويناقش تصاميم مختلفة للمخصصات، بما في ذلك bump allocation و linked list allocation و fixed-size block allocation. لكل من التصاميم الثلاثة، سننشئ تنفيذًا أساسيًا يمكن استخدامه لنواتنا.</p>
+<span id="continue-reading"></span>
+<p>هذا المدونة مطوّرة بشكل مفتوح على <a href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/allocator-designs/#comments">في الأسفل</a>. يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a href="https://github.com/phil-opp/blog_os/tree/post-11"><code>post-11</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>جدول المحتويات</b></summary>
+        <ul>
+            <li>
+                <a href="#lmqdm">المقدمة</a>
+                <ul>
+                    <li>
+                        <a href="#hdf-ltsmym">أهداف التصميم</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#bump-allocator">Bump Allocator</a>
+                <ul>
+                    <li>
+                        <a href="#lfkr">الفكرة</a>
+                    </li><li>
+                        <a href="#ltnfydh">التنفيذ</a>
+                    </li><li>
+                        <a href="#tnfydh-globalalloc">تنفيذ GlobalAlloc</a>
+                    </li><li>
+                        <a href="#stkhdmh">استخدامه</a>
+                    </li><li>
+                        <a href="#lnqsh">النقاش</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#linked-list-allocator">Linked List Allocator</a>
+                <ul>
+                    <li>
+                        <a href="#ltnfydh-1">التنفيذ</a>
+                    </li><li>
+                        <a href="#stkhdmh-1">استخدامه</a>
+                    </li><li>
+                        <a href="#lnqsh-1">النقاش</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#fixed-size-block-allocator">Fixed-Size Block Allocator</a>
+                <ul>
+                    <li>
+                        <a href="#lmqdm-1">المقدمة</a>
+                    </li><li>
+                        <a href="#ltnfydh-2">التنفيذ</a>
+                    </li><li>
+                        <a href="#stkhdmh-2">استخدامه</a>
+                    </li><li>
+                        <a href="#lnqsh-2">النقاش</a>
+                    </li><li>
+                        <a href="#lkhtlft">الاختلافات</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#lmlkhs">الملخص</a>
+                
+            </li><li>
+                <a href="#m-ltly">ما التالي؟</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+        </ul>
+    </details>
+
+<h2 id="lmqdm"><a class="zola-anchor" href="#lmqdm" aria-label="Anchor link for: lmqdm">🔗</a>المقدمة</h2>
+<p>في <a href="https://os.phil-opp.com/heap-allocation/">المقال السابق</a>، أضفنا دعمًا أساسيًا لتخصيص heap لنواتنا. لتحقيق ذلك، <a href="https://os.phil-opp.com/heap-allocation/#creating-a-kernel-heap">أنشأنا منطقة ذاكرة جديدة</a> في page tables و<a href="https://os.phil-opp.com/heap-allocation/#using-an-allocator-crate">استخدمنا crate <code>linked_list_allocator</code></a> لإدارة تلك الذاكرة. بينما أصبح لدينا heap يعمل، تركنا معظم العمل لـ crate المخصص دون محاولة فهم كيفية عمله.</p>
+<p>في هذا المقال، سنُظهر كيفية إنشاء مخصص heap الخاص بنا من الصفر بدلاً من الاعتماد على crate مخصص موجود. سنناقش تصاميم مختلفة للمخصصات، بما في ذلك <em>bump allocator</em> بسيط و <em>fixed-size block allocator</em> أساسي، وسنستخدم هذه المعرفة لتنفيذ مخصص بأداء محسّن (مقارنة بـ crate <code>linked_list_allocator</code>).</p>
+<h3 id="hdf-ltsmym"><a class="zola-anchor" href="#hdf-ltsmym" aria-label="Anchor link for: hdf-ltsmym">🔗</a>أهداف التصميم</h3>
+<p>مسؤولية المخصص هي إدارة ذاكرة heap المتاحة. يحتاج إلى إرجاع ذاكرة غير مستخدمة عند استدعاءات <code>alloc</code> وتتبع الذاكرة المحرّرة بواسطة <code>dealloc</code> حتى يمكن إعادة استخدامها. والأهم من ذلك، يجب ألا يوزّع أبدًا ذاكرة مستخدمة بالفعل في مكان آخر لأن ذلك سيسبب سلوكًا غير معرّف.</p>
+<p>بجانب الصحة، هناك العديد من أهداف التصميم الثانوية. على سبيل المثال، يجب على المخصص استخدام الذاكرة المتاحة بفعالية وإبقاء <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)"><em>fragmentation</em></a> منخفضًا. علاوة على ذلك، يجب أن يعمل جيدًا للتطبيقات المتزامنة ويتوسع لأي عدد من المعالجات. لأقصى أداء، يمكنه حتى تحسين تخطيط الذاكرة فيما يتعلق بـ CPU caches لتحسين <a href="https://www.geeksforgeeks.org/locality-of-reference-and-cache-operation-in-cache-memory/">cache locality</a> وتجنب <a href="https://mechanical-sympathy.blogspot.de/2011/07/false-sharing.html">false sharing</a>.</p>
+<p>يمكن لهذه المتطلبات أن تجعل المخصصات الجيدة معقدة للغاية. على سبيل المثال، يحتوي <a href="http://jemalloc.net/">jemalloc</a> على أكثر من 30,000 سطر من الكود. غالبًا ما يكون هذا التعقيد غير مرغوب فيه في كود kernel، حيث يمكن أن يؤدي خطأ واحد إلى ثغرات أمنية خطيرة. لحسن الحظ، أنماط التخصيص لكود kernel غالبًا ما تكون أبسط بكثير من كود userspace، بحيث تكفي تصاميم المخصصات البسيطة نسبيًا.</p>
+<p>فيما يلي، نقدم ثلاثة تصاميم ممكنة لمخصصات kernel ونشرح مزاياها وعيوبها.</p>
+<h2 id="bump-allocator"><a class="zola-anchor" href="#bump-allocator" aria-label="Anchor link for: bump-allocator">🔗</a>Bump Allocator</h2>
+<p>أبسط تصميم للمخصص هو <em>bump allocator</em> (يُعرف أيضًا بـ <em>stack allocator</em>). يخصص الذاكرة خطيًا ويتتبع فقط عدد البايتات المخصصة وعدد التخصيصات. يكون مفيدًا فقط في حالات استخدام محددة جدًا لأنه يحتوي على قيد كبير: لا يمكنه freeing كل الذاكرة دفعة واحدة.</p>
+<h3 id="lfkr"><a class="zola-anchor" href="#lfkr" aria-label="Anchor link for: lfkr">🔗</a>الفكرة</h3>
+<p>الفكرة وراء bump allocator هي تخصيص الذاكرة خطيًا بزيادة (<em>“bumping”</em>) متغير <code>next</code>، الذي يشير إلى بداية الذاكرة غير المستخدمة. في البداية، يكون <code>next</code> مساويًا لعنوان بداية heap. في كل تخصيص، يتم زيادة <code>next</code> بحجم التخصيص بحيث يشير دائمًا إلى الحد الفاصل بين الذاكرة المستخدمة وغير المستخدمة:</p>
+<p><img src="https://os.phil-opp.com/ar/allocator-designs/bump-allocation.svg" alt="The heap memory area at three points in time: 1: A single allocation exists at the start of the heap; the next pointer points to its end. 2: A second allocation was added right after the first; the next pointer points to the end of the second allocation. 3: A third allocation was added right after the second one; the next pointer points to the end of the third allocation." /></p>
+<p>يتحرك مؤشر <code>next</code> في اتجاه واحد فقط وبالتالي لا يوزّع نفس منطقة الذاكرة مرتين. عندما يصل إلى نهاية heap، لا يمكن تخصيص المزيد من الذاكرة، مما ينتج عنه خطأ نفاد الذاكرة في التخصيص التالي.</p>
+<p>غالبًا ما يتم تنفيذ bump allocator مع عداد تخصيصات، يتم زيادته بمقدار 1 عند كل استدعاء <code>alloc</code> وإنقاصه بمقدار 1 عند كل استدعاء <code>dealloc</code>. عندما يصل عداد التخصيصات إلى الصفر، فهذا يعني أن جميع التخصيصات على heap قد تم تحريرها. في هذه الحالة، يمكن إعادة تعيين مؤشر <code>next</code> إلى عنوان بداية heap، بحيث تصبح ذاكرة heap بالكامل متاحة للتخصيصات مرة أخرى.</p>
+<h3 id="ltnfydh"><a class="zola-anchor" href="#ltnfydh" aria-label="Anchor link for: ltnfydh">🔗</a>التنفيذ</h3>
+<p>نبدأ تنفيذنا بإعلان submodule جديد <code>allocator::bump</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>bump;
+</span></code></pre>
+<p>محتوى submodule يعيش في ملف جديد <code>src/allocator/bump.rs</code>، الذي ننشئه بالمحتوى التالي:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/bump.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>BumpAllocator {
+</span><span>    heap_start: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    heap_end: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    next: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    allocations: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>BumpAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Creates a new empty bump allocator.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        BumpAllocator {
+</span><span>            heap_start: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            heap_end: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            next: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            allocations: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Initializes the bump allocator with the given heap bounds.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// This method is unsafe because the caller must ensure that the given
+</span><span>    </span><span style="color:#608b4e;">/// memory range is unused. Also, this method must be called only once.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        self.heap_start = heap_start;
+</span><span>        self.heap_end = heap_start + heap_size;
+</span><span>        self.next = heap_start;
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>الحقول <code>heap_start</code> و <code>heap_end</code> تتتبع الحدود الدنيا والعليا لمنطقة ذاكرة heap. يحتاج المتصل إلى التأكد من أن هذه العناوين صالحة، وإلا فسيرجع المخصص ذاكرة غير صالحة. لهذا السبب، الدالة <code>init</code> تحتاج إلى أن تكون <code>unsafe</code> للاستدعاء.</p>
+<p>الغرض من الحقل <code>next</code> هو أن يشير دائمًا إلى أول بايت غير مستخدم من heap، أي عنوان بداية التخصيص التالي. يتم تعيينه إلى <code>heap_start</code> في دالة <code>init</code> لأنه في البداية، الكومة بالكامل غير مستخدمة. في كل تخصيص، سيتم زيادة هذا الحقل بحجم التخصيص (<em>“bumped”</em>) لضمان عدم إرجاع نفس منطقة الذاكرة مرتين.</p>
+<p>الحقل <code>allocations</code> هو عداد بسيط للتخصيصات النشطة بهدف إعادة تعيين المخصص بعد تحرير آخر تخصيص. يتم تهيئته بـ 0.</p>
+<p>اخترنا إنشاء دالة <code>init</code> منفصلة بدلاً من إجراء التهيئة مباشرة في <code>new</code> للحفاظ على الواجهة مطابقة للمخصص المقدم من crate <code>linked_list_allocator</code>. بهذه الطريقة، يمكن تبديل المخصصات دون تغييرات إضافية في الكود.</p>
+<h3 id="tnfydh-globalalloc"><a class="zola-anchor" href="#tnfydh-globalalloc" aria-label="Anchor link for: tnfydh-globalalloc">🔗</a>تنفيذ <code>GlobalAlloc</code></h3>
+<p>كما <a href="https://os.phil-opp.com/heap-allocation/#the-allocator-interface">شرحنا في المقال السابق</a>، جميع مخصصات heap تحتاج إلى تنفيذ trait <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>، الذي يُعرّف هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub unsafe trait </span><span>GlobalAlloc {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8</span><span>;
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc_zeroed(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>realloc(
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self,
+</span><span>        ptr: </span><span style="color:#569cd6;">*mut u8</span><span>,
+</span><span>        layout: Layout,
+</span><span>        new_size: </span><span style="color:#569cd6;">usize
+</span><span>    ) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
+</span><span>}
+</span></code></pre>
+<p>فقط طريقتا <code>alloc</code> و <code>dealloc</code> مطلوبتان؛ الطريقتان الأخرى لهما تنفيذات افتراضية ويمكن إهمالهما.</p>
+<h4 id="mhwl-ltnfydh-l-wl"><a class="zola-anchor" href="#mhwl-ltnfydh-l-wl" aria-label="Anchor link for: mhwl-ltnfydh-l-wl">🔗</a>محاولة التنفيذ الأولى</h4>
+<p>لنحاول تنفيذ طريقة <code>alloc</code> لـ <code>BumpAllocator</code> الخاص بنا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/bump.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>BumpAllocator {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// TODO alignment and bounds check
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = self.next;
+</span><span>        self.next = alloc_start + layout.size();
+</span><span>        self.allocations += </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>        alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>أولاً، نستخدم الحقل <code>next</code> كعنوان بداية لتخصيصنا. ثم نحدّث <code>next</code> ليشير إلى عنوان نهاية التخصيص، وهو أول عنوان غير مستخدم على heap. قبل إرجاع عنوان بداية التخصيص كمؤشر <code>*mut u8</code>، نزيد عداد <code>allocations</code> بمقدار 1.</p>
+<p>لاحظ أننا لا نجرِي أي فحوصات حدود أو تعديلات محاذاة، لذا هذا التنفيذ ليس آمنًا بعد. هذا لا يهم كثيرًا لأنه يفشل في التجميع على أي حال مع الخطأ التالي:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0594]: cannot assign to `self.next` which is behind a `&amp;` reference
+</span><span>  --&gt; src/allocator/bump.rs:29:9
+</span><span>   |
+</span><span>29 |         self.next = alloc_start + layout.size();
+</span><span>   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `self` is a `&amp;` reference, so the data it refers to cannot be written
+</span></code></pre>
+<p>(يحدث نفس الخطأ أيضًا لسطر <code>self.allocations += 1</code>. حذفناه هنا للاختصار.)</p>
+<p>يحدث الخطأ لأن طريقتي <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.alloc"><code>alloc</code></a> و <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> لـ trait <code>GlobalAlloc</code> تعملان فقط على مرجع غير قابل للتعديل <code>&amp;self</code>، لذا تحديث الحقول <code>next</code> و <code>allocations</code> غير ممكن. هذا مشكلة لأن تحديث <code>next</code> في كل تخصيص هو المبدأ الأساسي لـ bump allocator.</p>
+<h4 id="globalalloc-wlqbly-llt-dyl"><a class="zola-anchor" href="#globalalloc-wlqbly-llt-dyl" aria-label="Anchor link for: globalalloc-wlqbly-llt-dyl">🔗</a><code>GlobalAlloc</code> والقابلية للتعديل</h4>
+<p>قبل أن ننظر إلى حل ممكن لمشكلة القابلية للتعديل هذه، دعنا نحاول فهم لماذا طرائق trait <code>GlobalAlloc</code> مُعرّفة بوسائط <code>&amp;self</code>: كما رأينا <a href="https://os.phil-opp.com/heap-allocation/#the-global-allocator-attribute">في المقال السابق</a>، يتم تعريف مخصص heap العالمي بإضافة السمة <code>#[global_allocator]</code> إلى <code>static</code> ينفذ trait <code>GlobalAlloc</code>. المتغيرات الثابتة غير قابلة للتعديل في Rust، لذا لا توجد طريقة لاستدعاء دالة تأخذ <code>&amp;mut self</code> على المخصص الثابت. لهذا السبب، جميع طرائق <code>GlobalAlloc</code> تأخذ فقط مرجع <code>&amp;self</code> غير قابل للتعديل.</p>
+<p>لحسن الحظ، هناك طريقة للحصول على مرجع <code>&amp;mut self</code> من مرجع <code>&amp;self</code>: يمكننا استخدام <a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html">interior mutability</a> متزامن بلف المخصص في <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html"><code>spin::Mutex</code></a> spinlock. هذا النوع يوفر دالة <code>lock</code> تنفذ <a href="https://en.wikipedia.org/wiki/Mutual_exclusion">mutual exclusion</a> وبالتالي تحول بأمان مرجع <code>&amp;self</code> إلى مرجع <code>&amp;mut self</code>. استخدمنا النوع wrapper عدة مرات في kernel الخاص بنا، على سبيل المثال لـ <a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">VGA text buffer</a>.</p>
+<h4 id="nw-locked-wrapper"><a class="zola-anchor" href="#nw-locked-wrapper" aria-label="Anchor link for: nw-locked-wrapper">🔗</a>نوع <code>Locked</code> Wrapper</h4>
+<p>بمساعدة النوع wrapper <code>spin::Mutex</code>، يمكننا تنفيذ trait <code>GlobalAlloc</code> لـ bump allocator الخاص بنا. الحيلة هي تنفيذ trait ليس لـ <code>BumpAllocator</code> مباشرة، بل للنوع الملفوف <code>spin::Mutex&lt;BumpAllocator&gt;</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>spin::Mutex&lt;BumpAllocator&gt; {…}
+</span></code></pre>
+<p>للأسف، هذا لا يزال لا يعمل لأن مترجم Rust لا يسمح بتنفيذات trait لأنواع مُعرّفة في crates أخرى:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0117]: only traits defined in the current crate can be implemented for arbitrary types
+</span><span>  --&gt; src/allocator/bump.rs:28:1
+</span><span>   |
+</span><span>28 | unsafe impl GlobalAlloc for spin::Mutex&lt;BumpAllocator&gt; {
+</span><span>   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^--------------------------
+</span><span>   | |                           |
+</span><span>   | |                           `spin::mutex::Mutex` is not defined in the current crate
+</span><span>   | impl doesn&#39;t use only types from inside the current crate
+</span><span>   |
+</span><span>   = note: define and implement a trait or new type instead
+</span></code></pre>
+<p>لإصلاح هذا، نحتاج إلى إنشاء نوع wrapper خاص بنا حول <code>spin::Mutex</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
+</span><span>
+</span><span style="color:#608b4e;">/// A wrapper around spin::Mutex to permit trait implementations.
+</span><span style="color:#569cd6;">pub struct </span><span>Locked&lt;A&gt; {
+</span><span>    inner: spin::Mutex&lt;A&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;A&gt; Locked&lt;A&gt; {
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new(inner: A) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        Locked {
+</span><span>            inner: spin::Mutex::new(inner),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>lock(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; spin::MutexGuard&lt;A&gt; {
+</span><span>        self.inner.lock()
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>النوع هو wrapper عام حول <code>spin::Mutex&lt;A&gt;</code>. لا يفرض أي قيود على النوع الملفوف <code>A</code>، لذا يمكن استخدامه للف جميع أنواع الأنواع، ليس فقط المخصصات. يوفر دالة بناء بسيطة <code>new</code> تلتف قيمة معينة. للراحة، يوفر أيضًا دالة <code>lock</code> تستدعي <code>lock</code> على <code>Mutex</code> الملفوف. بما أن النوع <code>Locked</code> عام بما يكفي ليكون مفيدًا لتنفيذات مخصصات أخرى أيضًا، نضعه في الوحدة الأب <code>allocator</code>.</p>
+<h4 id="tnfydh-locked-bumpallocator"><a class="zola-anchor" href="#tnfydh-locked-bumpallocator" aria-label="Anchor link for: tnfydh-locked-bumpallocator">🔗</a>تنفيذ <code>Locked&lt;BumpAllocator&gt;</code></h4>
+<p>النوع <code>Locked</code> مُعرّف في crate الخاص بنا (على عكس <code>spin::Mutex</code>)، لذا يمكننا استخدامه لتنفيذ <code>GlobalAlloc</code> لـ bump allocator الخاص بنا. التنفيذ الكامل يبدو هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/bump.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::{align_up, Locked};
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;BumpAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> bump = self.lock(); </span><span style="color:#608b4e;">// get a mutable reference
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = align_up(bump.next, layout.align());
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_end = </span><span style="color:#569cd6;">match</span><span> alloc_start.checked_add(layout.size()) {
+</span><span>            Some(end) </span><span style="color:#569cd6;">=&gt;</span><span> end,
+</span><span>            None </span><span style="color:#569cd6;">=&gt; return </span><span>ptr::null_mut(),
+</span><span>        };
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if</span><span> alloc_end &gt; bump.heap_end {
+</span><span>            ptr::null_mut() </span><span style="color:#608b4e;">// out of memory
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            bump.next = alloc_end;
+</span><span>            bump.allocations += </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>            alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> bump = self.lock(); </span><span style="color:#608b4e;">// get a mutable reference
+</span><span>
+</span><span>        bump.allocations -= </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>        </span><span style="color:#569cd6;">if</span><span> bump.allocations == </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>            bump.next = bump.heap_start;
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>الخطوة الأولى لكل من <code>alloc</code> و <code>dealloc</code> هي استدعاء دالة <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> عبر الحقل <code>inner</code> للحصول على مرجع قابل للتعديل لنوع المخصص الملفوف. يبقى المثقف مقفلاً حتى نهاية الدالة، بحيث لا يمكن أن يحدث data race في سياقات متعددة الخيوط (سنضيف دعم threading قريبًا).</p>
+<p>مقارنة بالنموذج الأولي السابق، تنفيذ <code>alloc</code> يحترم الآن متطلبات المحاذاة ويجري فحص حدود لضمان بقاء التخصيصات داخل منطقة ذاكرة heap. الخطوة الأولى هي تقريب عنوان <code>next</code> لأعلى إلى المحاذاة المحددة بواسطة وسيطة <code>Layout</code>. كود دالة <code>align_up</code> سيُعرض بعد لحظة. ثم نضيف حجم التخصيص المطلوب إلى <code>alloc_start</code> للحصول على عنوان نهاية التخصيص. لمنع overflow الأعداد الصحيحة في التخصيصات الكبيرة، نستخدم دالة <a href="https://doc.rust-lang.org/std/primitive.usize.html#method.checked_add"><code>checked_add</code></a>. إذا حدث overflow أو إذا كان عنوان نهاية التخصيص أكبر من عنوان نهاية heap، نرجع مؤشر null للإشارة إلى حالة نفاد الذاكرة. خلاف ذلك، نحدّث عنوان <code>next</code> ونزيد عداد <code>allocations</code> بمقدار 1 كما كان من قبل. أخيرًا، نرجع عنوان <code>alloc_start</code> المحوّل إلى مؤشر <code>*mut u8</code>.</p>
+<p>دالة <code>dealloc</code> تتجاهل وسيطتي المؤشر و <code>Layout</code> المعطاتين. بدلاً من ذلك، تنقص فقط عداد <code>allocations</code>. إذا وصل العداد إلى <code>0</code> مرة أخرى، فهذا يعني أن جميع التخصيصات تم تحريرها. في هذه الحالة، تعيد تعيين عنوان <code>next</code> إلى عنوان <code>heap_start</code> لجعل ذاكرة heap بالكامل متاحة مرة أخرى.</p>
+<h4 id="mhdh-l-nwn"><a class="zola-anchor" href="#mhdh-l-nwn" aria-label="Anchor link for: mhdh-l-nwn">🔗</a>محاذاة العنوان</h4>
+<p>دالة <code>align_up</code> عامة بما يكفي لوضعها في الوحدة الأب <code>allocator</code>. تنفيذ أساسي يبدو هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Align the given address `addr` upwards to alignment `align`.
+</span><span style="color:#569cd6;">fn </span><span>align_up(addr: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> remainder = addr % align;
+</span><span>    </span><span style="color:#569cd6;">if</span><span> remainder == </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>        addr </span><span style="color:#608b4e;">// addr already aligned
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        addr - remainder + align
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>تحسب الدالة أولاً <a href="https://en.wikipedia.org/wiki/Euclidean_division">remainder</a> قسمة <code>addr</code> على <code>align</code>. إذا كان الباقي <code>0</code>، فإن العنوان محاذاة بالفعل مع المحاذاة المعطاة. خلاف ذلك، نحاذاة العنوان بطرح الباقي (بحيث يصبح الباقي الجديد 0) ثم إضافة المحاذاة (بحيث لا يصبح العنوان أصغر من العنوان الأصلي).</p>
+<p>لاحظ أن هذا ليس الطريقة الأكثر كفاءة لتنفيذ هذه الدالة. تنفيذ أسرع بكثير يبدو هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">/// Align the given address `addr` upwards to alignment `align`.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Requires that `align` is a power of two.
+</span><span style="color:#569cd6;">fn </span><span>align_up(addr: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>    (addr + align - </span><span style="color:#b5cea8;">1</span><span>) </span><span style="color:#569cd6;">&amp; !</span><span>(align - </span><span style="color:#b5cea8;">1</span><span>)
+</span><span>}
+</span></code></pre>
+<p>هذه الطريقة تتطلب أن يكون <code>align</code> قوة للعدد 2، وهو ما يمكن ضمانه باستخدام trait <code>GlobalAlloc</code> (ووسيطته <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>). هذا يجعل من الممكن إنشاء <a href="https://en.wikipedia.org/wiki/Mask_(computing)">bitmask</a> لمحاذاة العنوان بطريقة فعالة جدًا. لفهم كيف تعمل، دعنا نمر بها خطوة بخطوة، بدءًا من الجانب الأيمن:</p>
+<ul>
+<li>بما أن <code>align</code> قوة للعدد 2، فإن <a href="https://en.wikipedia.org/wiki/Binary_number#Representation">binary representation</a> له يحتوي على بت واحد فقط مُعيّن (مثلًا <code>0b000100000</code>). هذا يعني أن <code>align - 1</code> يحتوي على جميع البتات الأدنى مُعيّنة (مثلًا <code>0b00011111</code>).</li>
+<li>بإنشاء <a href="https://en.wikipedia.org/wiki/Bitwise_operation#NOT">bitwise <code>NOT</code></a> عبر المعامل <code>!</code>، نحصل على رقم يحتوي على جميع البتات مُعيّنة ما عدا البتات الأدنى من <code>align</code> (مثلًا <code>0b…111111111100000</code>).</li>
+<li>بإجراء <a href="https://en.wikipedia.org/wiki/Bitwise_operation#AND">bitwise <code>AND</code></a> على عنوان و <code>!(align - 1)</code>، نحاذاة العنوان <em>لأسفل</em>. يعمل هذا بمسح جميع البتات الأدنى من <code>align</code>.</li>
+<li>بما أننا نريد المحاذاة لأعلى بدلاً من لأسفل، نزيد <code>addr</code> بمقدار <code>align - 1</code> قبل إجراء bitwise <code>AND</code>. بهذه الطريقة، العناوين المحاذاة بالفعل تبقى كما هي بينما العناوين غير المحاذاة تُقرّب إلى حدود المحاذاة التالية.</li>
+</ul>
+<p>الخيار لك أي نسخة تختار. كلتاهما تحسبان نفس النتيجة، فقط باستخدام طرق مختلفة.</p>
+<h3 id="stkhdmh"><a class="zola-anchor" href="#stkhdmh" aria-label="Anchor link for: stkhdmh">🔗</a>استخدامه</h3>
+<p>لاستخدام bump allocator بدلاً من crate <code>linked_list_allocator</code>، نحتاج إلى تحديث static <code>ALLOCATOR</code> في <code>allocator.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>bump::BumpAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;BumpAllocator&gt; = Locked::new(BumpAllocator::new());
+</span></code></pre>
+<p>هنا يصبح مهمًا أننا عرّفنا <code>BumpAllocator::new</code> و <code>Locked::new</code> كـ <a href="https://doc.rust-lang.org/reference/items/functions.html#const-functions"><code>const</code> functions</a>. لو كانت دوال عادية، لحدث خطأ تجميع لأن تعبير التهيئة لـ <code>static</code> يجب أن يكون قابلًا للتقييم في وقت التجميع.</p>
+<p>لا نحتاج إلى تغيير استدعاء <code>ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE)</code> في دالة <code>init_heap</code> الخاصة بنا لأن bump allocator يوفر نفس الواجهة كالمخصص المقدم من <code>linked_list_allocator</code>.</p>
+<p>الآن نواتنا تستخدم bump allocator الخاص بنا! كل شيء يجب أن لا يزال يعمل، بما في ذلك <a href="https://os.phil-opp.com/heap-allocation/#adding-a-test">اختبارات <code>heap_allocation</code></a> التي أنشأناها في المقال السابق:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>[…]
+</span><span>Running 3 tests
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span></code></pre>
+<h3 id="lnqsh"><a class="zola-anchor" href="#lnqsh" aria-label="Anchor link for: lnqsh">🔗</a>النقاش</h3>
+<p>الميزة الكبيرة لـ bump allocation هي أنه سريع جدًا. مقارنة بتصاميم المخصصات الأخرى (انظر أدناه) التي تحتاج إلى البحث بنشاط عن كتلة ذاكرة مناسبة وإجراء مهام دفترية متنوعة عند <code>alloc</code> و <code>dealloc</code>، يمكن تحسين bump allocator <a href="https://fitzgeraldnick.com/2019/11/01/always-bump-downwards.html">إلى بضع تعليمات assembly فقط</a>. هذا يجعل bump allocators مفيدة لتحسين أداء التخصيص، على سبيل المثال عند إنشاء <a href="https://hacks.mozilla.org/2019/03/fast-bump-allocated-virtual-doms-with-rust-and-wasm/">virtual DOM library</a>.</p>
+<p>بينما نادرًا ما يُستخدم bump allocator كمخصص عالمي، غالبًا ما يُطبّق مبدأ bump allocation في شكل <a href="https://mgravell.github.io/Pipelines.Sockets.Unofficial/docs/arenas.html">arena allocation</a>، الذي يجمع التخصيصات الفردية معًا لتحسين الأداء. مثال على arena allocator لـ Rust موجود في crate <a href="https://docs.rs/toolshed/0.8.1/toolshed/index.html"><code>toolshed</code></a>.</p>
+<h4 id="yb-bump-allocator"><a class="zola-anchor" href="#yb-bump-allocator" aria-label="Anchor link for: yb-bump-allocator">🔗</a>عيب Bump Allocator</h4>
+<p>القيد الرئيسي لـ bump allocator هو أنه لا يمكنه إعادة استخدام الذاكرة المحررة إلا بعد تحرير جميع التخصيصات. هذا يعني أن تخصيصًا واحدًا طويل العمر يكفي لمنع إعادة استخدام الذاكرة. يمكننا رؤية هذا عندما نضيف نسخة من اختبار <code>many_boxes</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/heap_allocation.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>many_boxes_long_lived() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> long_lived = Box::new(</span><span style="color:#b5cea8;">1</span><span>); </span><span style="color:#608b4e;">// new
+</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">HEAP_SIZE </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let</span><span> x = Box::new(i);
+</span><span>        assert_eq!(*x, i);
+</span><span>    }
+</span><span>    assert_eq!(*long_lived, </span><span style="color:#b5cea8;">1</span><span>); </span><span style="color:#608b4e;">// new
+</span><span>}
+</span></code></pre>
+<p>مثل اختبار <code>many_boxes</code>، هذا الاختبار ينشئ عددًا كبيرًا من التخصيصات لاستثارة فشل نفاد الذاكرة إذا لم يعيد المخصص استخدام الذاكرة المحررة. بالإضافة إلى ذلك، ينشئ الاختبار تخصيص <code>long_lived</code> يعيش طوال تنفيذ الحلقة.</p>
+<p>عندما نحاول تشغيل اختبارنا الجديد، نرى أنه يفشل بالفعل:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>Running 4 tests
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [failed]
+</span><span>
+</span><span>Error: panicked at &#39;allocation error: Layout { size_: 8, align_: 8 }&#39;, src/lib.rs:86:5
+</span></code></pre>
+<p>دعنا نحاول فهم سبب هذا الفشل بالتفصيل: أولاً، يتم إنشاء تخصيص <code>long_lived</code> في بداية heap، مما يزيد عداد <code>allocations</code> بمقدار 1. لكل تكرار من الحلقة، يتم إنشاء تخصيص قصير العمر وتحريره مباشرة قبل التكرار التالي. هذا يعني أن عداد <code>allocations</code> يزداد مؤقتًا إلى 2 في بداية التكرار وينقص إلى 1 في نهايته. المشكلة الآن هي أن bump allocator لا يمكنه إعادة استخدام الذاكرة إلا بعد تحرير <em>جميع</em> التخصيصات، أي عندما ينخفض عداد <code>allocations</code> إلى 0. بما أن هذا لا يحدث قبل نهاية الحلقة، فإن كل تكرار من الحلقة يخصص منطقة ذاكرة جديدة، مما يؤدي إلى خطأ نفاد الذاكرة بعد عدد من التكرارات.</p>
+<h4 id="slh-lkhtbr"><a class="zola-anchor" href="#slh-lkhtbr" aria-label="Anchor link for: slh-lkhtbr">🔗</a>إصلاح الاختبار؟</h4>
+<p>هناك حيلتان محتملتان يمكننا استخدامهما لإصلاح الاختبار لـ bump allocator الخاص بنا:</p>
+<ul>
+<li>يمكننا تحديث <code>dealloc</code> للتحقق مما إذا كان التخصيص المحرّر كان آخر تخصيص تم إرجاعه بواسطة <code>alloc</code> بمقارنة عنوان نهايته مع مؤشر <code>next</code>. إذا كانا متساويين، يمكننا إعادة تعيين <code>next</code> بأمان إلى عنوان بداية التخصيص المحرر. بهذه الطريقة، كل تكرار من الحلقة يعيد استخدام نفس كتلة الذاكرة.</li>
+<li>يمكننا إضافة دالة <code>alloc_back</code> تخصص ذاكرة من <em>نهاية</em> heap باستخدام حقل <code>next_back</code> إضافي. ثم يمكننا استخدام طريقة التخصيص هذه يدويًا لجميع التخصيصات طويلة العمر، وبالتالي فصل التخصيصات قصيرة العمر وطويلة العمر على heap. لاحظ أن هذا الفصل يعمل فقط إذا كان واضحًا مسبقًا كم من الوقت سيعيش كل تخصيص. عيب آخر لهذا النهج هو أن إجراء التخصيصات يدويًا مرهق وقد يكون غير آمن.</li>
+</ul>
+<p>بينما يعمل كلا النهجين لإصلاح الاختبار، فهما ليسا حلًا عامًا لأنهما قادرون فقط على إعادة استخدام الذاكرة في حالات محددة جدًا. السؤال هو: هل هناك حل عام يعيد استخدام <em>جميع</em> الذاكرة المحررة؟</p>
+<h4 id="d-stkhdm-jmy-ldhkr-lmhrr"><a class="zola-anchor" href="#d-stkhdm-jmy-ldhkr-lmhrr" aria-label="Anchor link for: d-stkhdm-jmy-ldhkr-lmhrr">🔗</a>إعادة استخدام جميع الذاكرة المحررة؟</h4>
+<p>كما تعلمنا <a href="https://os.phil-opp.com/heap-allocation/#dynamic-memory">في المقال السابق</a>، التخصيصات يمكن أن تعيش لفترة طويلة عشوائية ويمكن تحريرها بترتيب عشوائي. هذا يعني أننا نحتاج إلى تتبع عدد غير محدود محتمل من مناطق الذاكرة غير المستخدمة وغير المتصلة، كما يوضح المثال التالي:</p>
+<p><img src="https://os.phil-opp.com/ar/allocator-designs/allocation-fragmentation.svg" alt="" /></p>
+<p>الرسم البياني يظهر heap على مدار الوقت. في البداية، كامل heap غير مستخدم، وعنوان <code>next</code> يساوي <code>heap_start</code> (السطر 1). ثم يحدث التخصيص الأول (السطر 2). في السطر 3، يتم تخصيص كتلة ذاكرة ثانية وتحرير التخصيص الأول. يتم إضافة المزيد من التخصيصات في السطر 4. نصفها قصير العمر جدًا ويتم تحريره بالفعل في السطر 5، حيث يتم أيضًا إضافة تخصيص جديد آخر.</p>
+<p>السطر 5 يظهر المشكلة الأساسية: لدينا خمس مناطق ذاكرة غير مستخدمة بأحجام مختلفة، لكن مؤشر <code>next</code> يمكن أن يشير فقط إلى بداية المنطقة الأخيرة. بينما يمكننا تخزين عناوين البداية وأحجام مناطق الذاكرة غير المستخدمة الأخرى في مصفوفة بحجم 4 لهذا المثال، فهذا ليس حلًا عامًا لأنه يمكننا بسهولة إنشاء مثال بـ 8 أو 16 أو 1000 منطقة ذاكرة غير مستخدمة.</p>
+<p>عادةً، عندما يكون لدينا عدد غير محدود محتمل من العناصر، يمكننا فقط استخدام مجموعة heap-allocated. هذا ليس ممكنًا حقًا في حالتنا، لأن مخصص heap لا يمكن أن يعتمد على نفسه (سيسبب recursion لا نهائي أو deadlocks). لذا نحتاج إلى إيجاد حل مختلف.</p>
+<h2 id="linked-list-allocator"><a class="zola-anchor" href="#linked-list-allocator" aria-label="Anchor link for: linked-list-allocator">🔗</a>Linked List Allocator</h2>
+<p>حيلة شائعة لتتبع عدد عشوائي من مناطق الذاكرة الحرة عند تنفيذ المخصصات هي استخدام هذه المناطق نفسها كتخزين احتياطي. هذا يستفيد من حقيقة أن المناطق لا تزال مُعيّنة إلى عنوان افتراضي ومدعومة بإطار فيزيائي، لكن المعلومات المخزنة لم تعد مطلوبة. بتخزين المعلومات حول المنطقة المحررة في المنطقة نفسها، يمكننا تتبع عدد غير محدود من المناطق المحررة دون الحاجة إلى ذاكرة إضافية.</p>
+<p>التنفيذ الأكثر شيوعًا هو بناء single linked list في الذاكرة المحررة، مع كل عقدة تمثل منطقة ذاكرة محررة:</p>
+<p><img src="https://os.phil-opp.com/ar/allocator-designs/linked-list-allocation.svg" alt="" /></p>
+<p>كل عقدة قائمة تحتوي على حقلين: حجم منطقة الذاكرة ومؤشر إلى منطقة الذاكرة غير المستخدمة التالية. بهذا النهج، نحتاج فقط إلى مؤشر إلى أول منطقة غير مستخدمة (تُسمى <code>head</code>) لتتبع جميع المناطق غير المستخدمة، بغض النظر عن عددها. بنية البيانات الناتجة تُسمى غالبًا <a href="https://en.wikipedia.org/wiki/Free_list"><em>free list</em></a>.</p>
+<p>كما قد تخمن من الاسم، هذه هي التقنية التي يستخدمها crate <code>linked_list_allocator</code>. المخصصات التي تستخدم هذه التقنية تُسمى غالبًا <em>pool allocators</em>.</p>
+<h3 id="ltnfydh-1"><a class="zola-anchor" href="#ltnfydh-1" aria-label="Anchor link for: ltnfydh-1">🔗</a>التنفيذ</h3>
+<p>فيما يلي، سننشئ نوع <code>LinkedListAllocator</code> بسيط خاص بنا يستخدم النهج أعلاه لتتبع مناطق الذاكرة المحررة. هذا الجزء من المقال ليس مطلوبًا للمقالات المستقبلية، لذا يمكنك تخطي تفاصيل التنفيذ إذا أردت.</p>
+<h4 id="nw-lmkhss"><a class="zola-anchor" href="#nw-lmkhss" aria-label="Anchor link for: nw-lmkhss">🔗</a>نوع المخصص</h4>
+<p>نبدأ بإنشاء struct <code>ListNode</code> خاص في submodule جديد <code>allocator::linked_list</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>linked_list;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>ListNode {
+</span><span>    size: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    next: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;,
+</span><span>}
+</span></code></pre>
+<p>مثل الرسم البياني، عقدة القائمة تحتوي على حقل <code>size</code> ومؤشر اختياري إلى العقدة التالية، ممثلًا بنوع <code>Option&lt;&amp;'static mut ListNode&gt;</code>. النوع <code>&amp;'static mut</code> يصف دلاليًا كائن <a href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html">owned</a> خلف مؤشر. أساسًا، هو <a href="https://doc.rust-lang.org/alloc/boxed/index.html"><code>Box</code></a> بدون destructor يحرر الكائن في نهاية النطاق.</p>
+<p>ننفذ مجموعة الطرائق التالية لـ <code>ListNode</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>ListNode {
+</span><span>    </span><span style="color:#569cd6;">const fn </span><span>new(size: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        ListNode { size, next: None }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>start_addr(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>        self </span><span style="color:#569cd6;">as *const Self as usize
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>end_addr(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>        self.start_addr() + self.size
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>النوع يحتوي على دالة بناء بسيطة باسم <code>new</code> وطرائق لحساب عناوين البداية والنهاية للمنطقة الممثلة. نجعل دالة <code>new</code> دالة <a href="https://doc.rust-lang.org/reference/items/functions.html#const-functions">const function</a>، وهو ما سيكون مطلوبًا لاحقًا عند بناء مخصص linked list ثابت.</p>
+<p>بـ struct <code>ListNode</code> كوحدة بناء، يمكننا الآن إنشاء struct <code>LinkedListAllocator</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>LinkedListAllocator {
+</span><span>    head: ListNode,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Creates an empty LinkedListAllocator.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>            head: ListNode::new(</span><span style="color:#b5cea8;">0</span><span>),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Initialize the allocator with the given heap bounds.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// This function is unsafe because the caller must guarantee that the given
+</span><span>    </span><span style="color:#608b4e;">/// heap bounds are valid and that the heap is unused. This method must be
+</span><span>    </span><span style="color:#608b4e;">/// called only once.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            self.add_free_region(heap_start, heap_size);
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Adds the given memory region to the front of the list.
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>add_free_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, addr: </span><span style="color:#569cd6;">usize</span><span>, size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>الـ struct يحتوي على عقدة <code>head</code> تشير إلى أول منطقة heap. نحن مهتمون فقط بقيمة مؤشر <code>next</code>، لذا نعيّن <code>size</code> إلى 0 في دالة <code>ListNode::new</code>. جعل <code>head</code> كـ <code>ListNode</code> بدلاً من مجرد <code>&amp;'static mut ListNode</code> له ميزة أن تنفيذ دالة <code>alloc</code> سيكون أبسط.</p>
+<p>مثل bump allocator، دالة <code>new</code> لا تهيئ المخصص بحدود heap. بالإضافة إلى الحفاظ على توافق API، السبب هو أن روتين التهيئة يتطلب كتابة عقدة إلى ذاكرة heap، وهو ما يمكن أن يحدث فقط في وقت التشغيل. دالة <code>new</code>، مع ذلك، تحتاج إلى أن تكون <a href="https://doc.rust-lang.org/reference/items/functions.html#const-functions"><code>const</code> function</a> التي يمكن تقييمها في وقت التجميع لأنها ستُستخدم لتهيئة static <code>ALLOCATOR</code>. لهذا السبب، نقدم مرة أخرى دالة <code>init</code> منفصلة غير ثابتة.</p>
+<p>دالة <code>init</code> تستخدم دالة <code>add_free_region</code>، التي سيُعرض تنفيذها بعد لحظة. الآن، نستخدم macro <a href="https://doc.rust-lang.org/core/macro.todo.html"><code>todo!</code></a> لتوفير تنفيذ مؤقت ينفّذ دائمًا panic.</p>
+<h4 id="dl-add-free-region"><a class="zola-anchor" href="#dl-add-free-region" aria-label="Anchor link for: dl-add-free-region">🔗</a>دالة <code>add_free_region</code></h4>
+<p>دالة <code>add_free_region</code> توفر عملية <em>push</em> الأساسية على linked list. نستدعي هذه الدالة حاليًا فقط من <code>init</code>، لكنها ستكون الدالة المركزية في تنفيذ <code>dealloc</code> الخاص بنا. تذكر، دالة <code>dealloc</code> تُستدعى عندما يتم تحرير منطقة ذاكرة مخصصة مرة أخرى. لتتبع منطقة الذاكرة المحررة هذه، نريد دفعها إلى linked list.</p>
+<p>تنفيذ دالة <code>add_free_region</code> يبدو هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::align_up;
+</span><span style="color:#569cd6;">use </span><span>core::mem;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Adds the given memory region to the front of the list.
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>add_free_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, addr: </span><span style="color:#569cd6;">usize</span><span>, size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#608b4e;">// ensure that the freed region is capable of holding ListNode
+</span><span>        assert_eq!(align_up(addr, mem::align_of::&lt;ListNode&gt;()), addr);
+</span><span>        assert!(size &gt;= mem::size_of::&lt;ListNode&gt;());
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// create a new list node and append it at the start of the list
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> node = ListNode::new(size);
+</span><span>        node.next = self.head.next.take();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> node_ptr = addr </span><span style="color:#569cd6;">as *mut</span><span> ListNode;
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            node_ptr.write(node);
+</span><span>            self.head.next = Some(</span><span style="color:#569cd6;">&amp;mut </span><span>*node_ptr)
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>تأخذ الدالة عنوان وحجم منطقة ذاكرة كوسيط وتضيفها إلى مقدمة القائمة. أولاً، تتأكد أن المنطقة المعطاة لديها الحجم والمحاذاة اللازمين لتخزين <code>ListNode</code>. ثم تنشئ العقدة وتدرجها في القائمة عبر الخطوات التالية:</p>
+<p><img src="https://os.phil-opp.com/ar/allocator-designs/linked-list-allocator-push.svg" alt="" /></p>
+<p>الخطوة 0 تظهر حالة heap قبل استدعاء <code>add_free_region</code>. في الخطوة 1، تُستدعى الدالة بمنطقة الذاكرة المُعلّمة كـ <code>freed</code> في الرسم. بعد الفحوصات الأولية، تنشئ الدالة <code>node</code> جديدًا على stack بحجم المنطقة المحررة. ثم تستخدم دالة <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a> لتعيين مؤشر <code>next</code> للعقدة إلى مؤشر <code>head</code> الحالي، مما يعيد تعيين مؤشر <code>head</code> إلى <code>None</code>.</p>
+<p>في الخطوة 2، تكتب الدالة <code>node</code> المنشأ حديثًا إلى بداية المنطقة المحررة عبر دالة <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write"><code>write</code></a>. ثم تشير مؤشر <code>head</code> إلى العقدة الجديدة. بنية المؤشر الناتجة تبدو فوضوية بعض الشيء لأن المنطقة المحررة تُدرج دائمًا في بداية القائمة، لكن إذا اتبعنا المؤشرات، نرى أن كل منطقة حرة لا تزال قابلة للوصول من مؤشر <code>head</code>.</p>
+<h4 id="dl-find-region"><a class="zola-anchor" href="#dl-find-region" aria-label="Anchor link for: dl-find-region">🔗</a>دالة <code>find_region</code></h4>
+<p>العملية الأساسية الثانية على linked list هي إيجاد إدخال وإزالته من القائمة. هذا هو العملية المركزية المطلوبة لتنفيذ دالة <code>alloc</code>. ننفذ العملية كدالة <code>find_region</code> بالشكل التالي:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Looks for a free region with the given size and alignment and removes
+</span><span>    </span><span style="color:#608b4e;">/// it from the list.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Returns a tuple of the list node and the start address of the allocation.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>find_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, size: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>)
+</span><span>        -&gt; Option&lt;(</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode, </span><span style="color:#569cd6;">usize</span><span>)&gt;
+</span><span>    {
+</span><span>        </span><span style="color:#608b4e;">// reference to current list node, updated for each iteration
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> current = </span><span style="color:#569cd6;">&amp;mut </span><span>self.head;
+</span><span>        </span><span style="color:#608b4e;">// look for a large enough memory region in linked list
+</span><span>        </span><span style="color:#569cd6;">while let </span><span>Some(</span><span style="color:#569cd6;">ref mut</span><span> region) = current.next {
+</span><span>            </span><span style="color:#569cd6;">if let </span><span>Ok(alloc_start) = </span><span style="color:#569cd6;">Self</span><span>::alloc_from_region(</span><span style="color:#569cd6;">&amp;</span><span>region, size, align) {
+</span><span>                </span><span style="color:#608b4e;">// region suitable for allocation -&gt; remove node from list
+</span><span>                </span><span style="color:#569cd6;">let</span><span> next = region.next.take();
+</span><span>                </span><span style="color:#569cd6;">let</span><span> ret = Some((current.next.take().unwrap(), alloc_start));
+</span><span>                current.next = next;
+</span><span>                </span><span style="color:#569cd6;">return</span><span> ret;
+</span><span>            } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>                </span><span style="color:#608b4e;">// region not suitable -&gt; continue with next region
+</span><span>                current = current.next.as_mut().unwrap();
+</span><span>            }
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// no suitable region found
+</span><span>        None
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>تستخدم الدالة متغير <code>current</code> وحلقة [<code>while let</code>] للمرور على عناصر القائمة. في البداية، <code>current</code> مُعيّن إلى عقدة <code>head</code> (dummy). في كل تكرار، يتم تحديثه إلى حقل <code>next</code> للعقدة الحالية (في كتلة <code>else</code>). إذا كانت المنطقة مناسبة لتخصيص بالحجم والمحاذاة المعطيين، تتم إزالة المنطقة من القائمة وإرجاعها مع عنوان <code>alloc_start</code>.</p>
+<p>عندما يصبح مؤشر <code>current.next</code> هو <code>None</code>، تخرج الحلقة. هذا يعني أننا مررنا على القائمة كاملة لكن لم نجد منطقة مناسبة للتخصيص. في هذه الحالة، نرجع <code>None</code>. يتم التحقق مما إذا كانت المنطقة مناسبة بواسطة دالة <code>alloc_from_region</code>، التي سيُعرض تنفيذها بعد لحظة.</p>
+<p>دعنا ننظر بمزيد من التفصيل في كيفية إزالة منطقة مناسبة من القائمة:</p>
+<p><img src="https://os.phil-opp.com/ar/allocator-designs/linked-list-allocator-remove-region.svg" alt="" /></p>
+<p>الخطوة 0 تظهر الحالة قبل تعديل أي مؤشرات. مناطق <code>region</code> و <code>current</code> ومؤشرات <code>region.next</code> و <code>current.next</code> مُعلّمة في الرسم. في الخطوة 1، يتم إعادة تعيين كلا المؤشرين <code>region.next</code> و <code>current.next</code> إلى <code>None</code> باستخدام دالة <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a>. المؤشرات الأصلية مخزنة في متغيرات محلية باسم <code>next</code> و <code>ret</code>.</p>
+<p>في الخطوة 2، يتم تعيين مؤشر <code>current.next</code> إلى مؤشر <code>next</code> المحلي، وهو مؤشر <code>region.next</code> الأصلي. التأثير هو أن <code>current</code> تشير الآن مباشرة إلى المنطقة بعد <code>region</code>، بحيث لم تعد <code>region</code> عنصرًا في linked list. ثم ترجع الدالة المؤشر إلى <code>region</code> المخزن في متغير <code>ret</code> المحلي.</p>
+<h5 id="dl-alloc-from-region"><a class="zola-anchor" href="#dl-alloc-from-region" aria-label="Anchor link for: dl-alloc-from-region">🔗</a>دالة <code>alloc_from_region</code></h5>
+<p>دالة <code>alloc_from_region</code> ترجع ما إذا كانت منطقة مناسبة لتخصيص بحجم ومحاذاة معينين. مُعرّفة هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Try to use the given region for an allocation with given size and
+</span><span>    </span><span style="color:#608b4e;">/// alignment.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Returns the allocation start address on success.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>alloc_from_region(region: </span><span style="color:#569cd6;">&amp;</span><span>ListNode, size: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>)
+</span><span>        -&gt; Result&lt;</span><span style="color:#569cd6;">usize</span><span>, ()&gt;
+</span><span>    {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = align_up(region.start_addr(), align);
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_end = alloc_start.checked_add(size).ok_or(())</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if</span><span> alloc_end &gt; region.end_addr() {
+</span><span>            </span><span style="color:#608b4e;">// region too small
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Err(());
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">let</span><span> excess_size = region.end_addr() - alloc_end;
+</span><span>        </span><span style="color:#569cd6;">if</span><span> excess_size &gt; </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">&amp;&amp;</span><span> excess_size &lt; mem::size_of::&lt;ListNode&gt;() {
+</span><span>            </span><span style="color:#608b4e;">// rest of region too small to hold a ListNode (required because the
+</span><span>            </span><span style="color:#608b4e;">// allocation splits the region in a used and a free part)
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Err(());
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// region suitable for allocation
+</span><span>        Ok(alloc_start)
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>أولاً، تحسب الدالة عنوان البداية والنهاية لتخصيص محتمل، باستخدام دالة <code>align_up</code> التي عرّفناها سابقًا ودالة <a href="https://doc.rust-lang.org/std/primitive.usize.html#method.checked_add"><code>checked_add</code></a>. إذا حدث overflow أو إذا كان عنوان النهاية خلف عنوان نهاية المنطقة، فإن التخصيص لا يناسب المنطقة ونرجع خطأ.</p>
+<p>الدالة تجري فحصًا أقل وضوحًا بعد ذلك. هذا الفحص ضروري لأنه في معظم الأحيان لا يناسب التخصيص منطقة مناسبة تمامًا، بحيث يبقى جزء من المنطقة قابلاً للاستخدام بعد التخصيص. هذا الجزء من المنطقة يحتاج إلى تخزين <code>ListNode</code> خاص به بعد التخصيص، لذا يجب أن يكون كبيرًا بما يكفي. الفحص يتحقق بالضبط من هذا: إما أن التخصيص يناسب تمامًا (<code>excess_size == 0</code>) أو الحجم الزائد كبير بما يكفي لتخزين <code>ListNode</code>.</p>
+<h4 id="tnfydh-globalalloc-1"><a class="zola-anchor" href="#tnfydh-globalalloc-1" aria-label="Anchor link for: tnfydh-globalalloc-1">🔗</a>تنفيذ <code>GlobalAlloc</code></h4>
+<p>بالعمليات الأساسية المقدمة من طريقتي <code>add_free_region</code> و <code>find_region</code>، يمكننا أخيرًا تنفيذ trait <code>GlobalAlloc</code>. كما مع bump allocator، لا ننفذ trait مباشرة لـ <code>LinkedListAllocator</code> بل فقط لـ <code>Locked&lt;LinkedListAllocator&gt;</code> ملفوف. يضيف <a href="https://os.phil-opp.com/allocator-designs/#a-locked-wrapper-type"><code>Locked</code> wrapper</a> interior mutability متزامن عبر spinlock، مما يسمح لنا بتعديل مثقف المخصص حتى لو كانت طريقتا <code>alloc</code> و <code>dealloc</code> تأخذان فقط مراجع <code>&amp;self</code>.</p>
+<p>التنفيذ يبدو هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::Locked;
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;LinkedListAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// perform layout adjustments
+</span><span>        </span><span style="color:#569cd6;">let </span><span>(size, align) = LinkedListAllocator::size_align(layout);
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Some((region, alloc_start)) = allocator.find_region(size, align) {
+</span><span>            </span><span style="color:#569cd6;">let</span><span> alloc_end = alloc_start.checked_add(size).expect(</span><span style="color:#d69d85;">&quot;overflow&quot;</span><span>);
+</span><span>            </span><span style="color:#569cd6;">let</span><span> excess_size = region.end_addr() - alloc_end;
+</span><span>            </span><span style="color:#569cd6;">if</span><span> excess_size &gt; </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>                </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                    allocator.add_free_region(alloc_end, excess_size);
+</span><span>                }
+</span><span>            }
+</span><span>            alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            ptr::null_mut()
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>        </span><span style="color:#608b4e;">// perform layout adjustments
+</span><span>        </span><span style="color:#569cd6;">let </span><span>(size, </span><span style="color:#569cd6;">_</span><span>) = LinkedListAllocator::size_align(layout);
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{ self.lock().add_free_region(ptr </span><span style="color:#569cd6;">as usize</span><span>, size) }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>لنبدأ بدالة <code>dealloc</code> لأنها أبسط: أولاً، تجري بعض تعديلات التخطيط، التي سنشرحها بعد لحظة. ثم تسترجع مرجع <code>&amp;mut LinkedListAllocator</code> باستدعاء دالة <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> على <a href="https://os.phil-opp.com/allocator-designs/#a-locked-wrapper-type"><code>Locked</code> wrapper</a>. أخيرًا، تستدعي دالة <code>add_free_region</code> لإضافة المنطقة المحررة إلى free list.</p>
+<p>دالة <code>alloc</code> أكثر تعقيدًا بعض الشيء. تبدأ بنفس تعديلات التخطيط وتستدعي أيضًا دالة <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> لاستقبال مرجع مخصص قابل للتعديل. ثم تستخدم دالة <code>find_region</code> لإيجاد منطقة ذاكرة مناسبة للتخصيص وإزالتها من القائمة. إذا لم ينجح هذا ورُجع <code>None</code>، ترجع <code>null_mut</code> للإشارة إلى خطأ لأنه لا توجد منطقة ذاكرة مناسبة.</p>
+<p>في حالة النجاح، ترجع دالة <code>find_region</code> tuple للمنطقة المناسبة (لم تعد في القائمة) وعنوان بداية التخصيص. باستخدام <code>alloc_start</code> وحجم التخصيص وعنوان نهاية المنطقة، تحسب عنوان نهاية التخصيص والحجم الزائد مرة أخرى. إذا لم يكن الحجم الزائد صفرًا، تستدعي <code>add_free_region</code> لإضافة الحجم الزائد من منطقة الذاكرة إلى free list. أخيرًا، ترجع عنوان <code>alloc_start</code> المحوّل كمؤشر <code>*mut u8</code>.</p>
+<h4 id="t-dylt-ltkhtyt"><a class="zola-anchor" href="#t-dylt-ltkhtyt" aria-label="Anchor link for: t-dylt-ltkhtyt">🔗</a>تعديلات التخطيط</h4>
+<p>إذن ما هي تعديلات التخطيط التي نجريها في بداية كل من <code>alloc</code> و <code>dealloc</code>؟ تضمن أن كل كتلة مخصصة قادرة على تخزين <code>ListNode</code>. هذا مهم لأن كتلة الذاكرة ستُحرّر في مرحلة ما، حيث نريد كتابة <code>ListNode</code> إليها. إذا كانت الكتلة أصغر من <code>ListNode</code> أو ليس لديها المحاذاة الصحيحة، يمكن أن يحدث سلوك غير معرّف.</p>
+<p>تعديلات التخطيط تتم بواسطة دالة <code>size_align</code>، المُعرّفة هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/linked_list.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Adjust the given layout so that the resulting allocated memory
+</span><span>    </span><span style="color:#608b4e;">/// region is also capable of storing a `ListNode`.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Returns the adjusted size and alignment as a (size, align) tuple.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>size_align(layout: Layout) -&gt; (</span><span style="color:#569cd6;">usize</span><span>, </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> layout = layout
+</span><span>            .align_to(mem::align_of::&lt;ListNode&gt;())
+</span><span>            .expect(</span><span style="color:#d69d85;">&quot;adjusting alignment failed&quot;</span><span>)
+</span><span>            .pad_to_align();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> size = layout.size().max(mem::size_of::&lt;ListNode&gt;());
+</span><span>        (size, layout.align())
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>أولاً، تستخدم الدالة دالة <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.align_to"><code>align_to</code></a> على <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> الممرّر لزيادة المحاذاة إلى محاذاة <code>ListNode</code> إذا لزم الأمر. ثم تستخدم دالة <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.pad_to_align"><code>pad_to_align</code></a> لتقريب الحجم إلى مضاعف المحاذاة لضمان أن عنوان بداية كتلة الذاكرة التالية سيكون لديه المحاذاة الصحيحة لتخزين <code>ListNode</code> أيضًا.
+في الخطوة الثانية، تستخدم دالة <a href="https://doc.rust-lang.org/std/cmp/trait.Ord.html#method.max"><code>max</code></a> لفرض حد أدنى لحجم التخصيص <code>mem::size_of::&lt;ListNode&gt;</code>. بهذه الطريقة، يمكن لدالة <code>dealloc</code> كتابة <code>ListNode</code> بأمان إلى كتلة الذاكرة المحررة.</p>
+<h3 id="stkhdmh-1"><a class="zola-anchor" href="#stkhdmh-1" aria-label="Anchor link for: stkhdmh-1">🔗</a>استخدامه</h3>
+<p>يمكننا الآن تحديث static <code>ALLOCATOR</code> في وحدة <code>allocator</code> لاستخدام <code>LinkedListAllocator</code> الجديد:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>linked_list::LinkedListAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;LinkedListAllocator&gt; =
+</span><span>    Locked::new(LinkedListAllocator::new());
+</span></code></pre>
+<p>بما أن دالة <code>init</code> تتصرف بنفس الطريقة لكل من bump و linked list allocators، لا نحتاج إلى تعديل استدعاء <code>init</code> في <code>init_heap</code>.</p>
+<p>عندما نشغّل اختبارات <code>heap_allocation</code> مرة أخرى، نرى أن جميع الاختبارات تنجح الآن، بما في ذلك اختبار <code>many_boxes_long_lived</code> الذي فشل مع bump allocator:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [ok]
+</span></code></pre>
+<p>هذا يظهر أن linked list allocator الخاص بنا قادر على إعادة استخدام الذاكرة المحررة للتخصيصات اللاحقة.</p>
+<h3 id="lnqsh-1"><a class="zola-anchor" href="#lnqsh-1" aria-label="Anchor link for: lnqsh-1">🔗</a>النقاش</h3>
+<p>على عكس bump allocator، فإن linked list allocator أكثر ملاءنة كمخصص للأغراض العامة، أساسًا لأنه قادر على إعادة استخدام الذاكرة المحررة مباشرة. لكن لديه أيضًا بعض العيوب. بعضها ناتج فقط عن تنفيذنا الأساسي، لكن هناك أيضًا عيوب أساسية في تصميم المخصص نفسه.</p>
+<h4 id="dmj-lktl-lmhrr"><a class="zola-anchor" href="#dmj-lktl-lmhrr" aria-label="Anchor link for: dmj-lktl-lmhrr">🔗</a>دمج الكتل المحررة</h4>
+<p>المشكلة الرئيسية مع تنفيذنا هي أنه يقسم heap فقط إلى كتل أصغر لكن لا يدمجها معًا. ضع في اعتبارك هذا المثال:</p>
+<p><img src="https://os.phil-opp.com/ar/allocator-designs/linked-list-allocator-fragmentation-on-dealloc.svg" alt="" /></p>
+<p>في السطر الأول، يتم إنشاء ثلاثة تخصيصات على heap. يتم تحرير اثنتين منها مرة أخرى في السطر 2 والثالثة في السطر 3. الآن heap بالكامل غير مستخدم، لكنه لا يزال مقسمًا إلى أربع كتل فردية. في هذه المرحلة، قد لا يكون التخصيص الكبير ممكنًا لأن أياً من الكتل الأربع ليست كبيرة بما يكفي. مع مرور الوقت، تستمر العملية، ويتم تقسيم heap إلى كتل أصغر وأصغر. في مرحلة ما، يصبح heap مجزأً جدًا بحيث حتى التخصيصات العادية ستفشل.</p>
+<p>لحل هذه المشكلة، نحتاج إلى دمج الكتل المحررة المتجاورة معًا. للمثال أعلاه، هذا يعني التالي:</p>
+<p><img src="https://os.phil-opp.com/ar/allocator-designs/linked-list-allocator-merge-on-dealloc.svg" alt="" /></p>
+<p>كما كان من قبل، يتم تحرير اثنين من التخصيصات الثلاثة في السطر <code>2</code>. بدلاً من الحفاظ على heap المجزأ، نجرِي الآن خطوة إضافية في السطر <code>2a</code> لدمج الكتلتين اليمنى معًا. في السطر <code>3</code>، يتم تحرير التخصيص الثالث (كما كان من قبل)، مما ينتج عنه heap غير مستخدم بالكامل ممثل بثلاث كتل مميزة. في خطوة دمج إضافية في السطر <code>3a</code>، ندمج الكتل الثلاث المتجاورة معًا.</p>
+<p>crate <code>linked_list_allocator</code> ينفذ استراتيجية الدمج هذه بالشكل التالي: بدلاً من إدراج كتل الذاكرة المحررة في بداية linked list عند <code>deallocate</code>، يحافظ دائمًا على القائمة مرتبة حسب عنوان البداية. بهذه الطريقة، يمكن إجراء الدمج مباشرة عند استدعاء <code>deallocate</code> بفحص عناوين وأحجام الكتلتين المجاورتين في القائمة. بالطبع، عملية deallocation أبطأ بهذه الطريقة، لكنها تمنع تجزئة heap التي رأيناها أعلاه.</p>
+<h4 id="l-d"><a class="zola-anchor" href="#l-d" aria-label="Anchor link for: l-d">🔗</a>الأداء</h4>
+<p>كما تعلمنا أعلاه، bump allocator سريع جدًا ويمكن تحسينه إلى بضع عمليات assembly فقط. linked list allocator أسوأ كثيرًا في هذه الفئة. المشكلة هي أن طلب تخصيص قد يحتاج إلى عبور linked list بالكامل حتى يجد كتلة مناسبة.</p>
+<p>بما أن طول القائمة يعتمد على عدد كتل الذاكرة غير المستخدمة، يمكن أن يختلف الأداء بشكل كبير لبرامج مختلفة. برنامج ينشئ فقط بضع تخصيصات سيشهد أداء تخصيص سريع نسبيًا. لبرنامج يجزئ heap بالعديد من التخصيصات، مع ذلك، سيكون أداء التخصيص سيئًا جدًا لأن linked list ستكون طويلة وتحتوي في الغالب على كتل صغيرة جدًا.</p>
+<p>تجدر الإشارة إلى أن مشكلة الأداء هذه ليست مشكلة سببها تنفيذنا الأساسي بل مشكلة أساسية في نهج linked list. بما أن أداء التخصيص يمكن أن يكون مهمًا جدًا لكود kernel-level، نستكشف تصميم مخصص ثالث في التالي يتبادل الأداء المحسن مقابل استخدام أقل للذاكرة.</p>
+<h2 id="fixed-size-block-allocator"><a class="zola-anchor" href="#fixed-size-block-allocator" aria-label="Anchor link for: fixed-size-block-allocator">🔗</a>Fixed-Size Block Allocator</h2>
+<p>فيما يلي، نقدم تصميم مخصص يستخدم كتل ذاكرة ذات حجم ثابت لتلبية طلبات التخصيص. بهذه الطريقة، غالبًا ما يرجع المخصص كتل أكبر مما هو مطلوب للتخصيصات، مما ينتج عنه ذاكرة مهدرة بسبب <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">internal fragmentation</a>. من ناحية أخرى، يقلل بشكل كبير الوقت المطلوب لإيجاد كتلة مناسبة (مقارنة بـ linked list allocator)، مما ينتج عنه أداء تخصيص أفضل بكثير.</p>
+<h3 id="lmqdm-1"><a class="zola-anchor" href="#lmqdm-1" aria-label="Anchor link for: lmqdm-1">🔗</a>المقدمة</h3>
+<p>الفكرة وراء <em>fixed-size block allocator</em> هي التالية: بدلاً من تخصيص نفس مقدار الذاكرة المطلوب بالضبط، نعرّف عددًا صغيرًا من أحجام الكتل ونقرب كل تخصيص إلى حجم الكتلة التالي. على سبيل المثال، مع أحجام كتل 16 و 64 و 512 بايت، تخصيص 4 بايت سيرجع كتلة 16 بايت، تخصيص 48 بايت كتلة 64 بايت، وتخصيص 128 بايت كتلة 512 بايت.</p>
+<p>مثل linked list allocator، نتتبع الذاكرة غير المستخدمة بإنشاء linked list في الذاكرة غير المستخدمة. لكن بدلاً من استخدام قائمة واحدة بأحجام كتل مختلفة، ننشئ قائمة منفصلة لكل فئة حجم. كل قائمة تخزن فقط كتل بحجم واحد. على سبيل المثال، مع أحجام كتل 16 و 64 و 512، ستكون هناك ثلاث قوائم linked منفصلة في الذاكرة:</p>
+<p><img src="https://os.phil-opp.com/ar/allocator-designs/fixed-size-block-example.svg" alt="" />.</p>
+<p>بدلاً من مؤشر <code>head</code> واحد، لدينا ثلاثة مؤشرات رأس <code>head_16</code> و <code>head_64</code> و <code>head_512</code> تشير كل منها إلى أول كتلة غير مستخدمة بالحجم المناسب. جميع العقد في قائمة واحدة لها نفس الحجم. على سبيل المثال، القائمة التي بدأها مؤشر <code>head_16</code> تحتوي فقط على كتل 16 بايت. هذا يعني أننا لم نعد بحاجة إلى تخزين الحجم في كل عقدة قائمة لأنه محدد بالفعل باسم مؤشر الرأس.</p>
+<p>بما أن كل عنصر في قائمة له نفس الحجم، فإن كل عنصر قائمة مناسب بالتساوي لطلب تخصيص. هذا يعني أنه يمكننا إجراء تخصيص بكفاءة عالية باستخدام الخطوات التالية:</p>
+<ul>
+<li>تقريب حجم التخصيص المطلوب إلى حجم الكتلة التالي. على سبيل المثال، عند طلب تخصيص 12 بايت، سنختار حجم الكتلة 16 في المثال أعلاه.</li>
+<li>استرجاع مؤشر الرأس للقائمة، مثلًا، لحجم الكتلة 16، نحتاج إلى استخدام <code>head_16</code>.</li>
+<li>إزالة أول كتلة من القائمة وإرجاعها.</li>
+</ul>
+<p>الأهم من ذلك، يمكننا دائمًا إرجاع العنصر الأول من القائمة ولم نعد بحاجة إلى عبور القائمة كاملة. وبالتالي، التخصيصات أسرع بكثير من linked list allocator.</p>
+<h4 id="hjm-lktl-wldhkr-lmhdr"><a class="zola-anchor" href="#hjm-lktl-wldhkr-lmhdr" aria-label="Anchor link for: hjm-lktl-wldhkr-lmhdr">🔗</a>أحجام الكتل والذاكرة المهدرة</h4>
+<p>اعتمادًا على أحجام الكتل، نفقد الكثير من الذاكرة بالتقريب. على سبيل المثال، عند إرجاع كتلة 512 بايت لتخصيص 128 بايت، ثلاثة أرباع الذاكرة المخصصة غير مستخدمة. بتحديد أحجام كتل معقولة، يمكن الحد من كمية الذاكرة المهدرة إلى حد ما. على سبيل المثال، عند استخدام قوى العدد 2 (4، 8، 16، 32، 64، 128، …) كأحجام كتل، يمكننا الحد من هدر الذاكرة إلى نصف حجم التخصيص في أسوأ الحالات وربع حجم التخصيص في المتوسط.</p>
+<p>من الشائع أيضًا تحسين أحجام الكتل بناءً على أحجام التخصيص الشائعة في برنامج. على سبيل المثال، يمكننا إضافة حجم كتلة 24 أيضًا لتحسين استخدام الذاكرة للبرامج التي تجري غالبًا تخصيصات بـ 24 بايت. بهذه الطريقة، يمكن تقليل كمية الذاكرة المهدرة غالبًا دون فقدان مزايا الأداء.</p>
+<h4 id="deallocation"><a class="zola-anchor" href="#deallocation" aria-label="Anchor link for: deallocation">🔗</a>Deallocation</h4>
+<p>مثل التخصيص، deallocation سريع جدًا أيضًا. يتضمن الخطوات التالية:</p>
+<ul>
+<li>تقريب حجم الكتلة المحررة إلى حجم الكتلة التالي. هذا مطلوب لأن المترجم يمرر فقط حجم التخصيص المطلوب إلى <code>dealloc</code>، ليس حجم الكتلة التي أرجعها <code>alloc</code>. باستخدام دالة تعديل الحجم نفسها في كل من <code>alloc</code> و <code>dealloc</code>، يمكننا التأكد من أننا نحرر دائمًا الكمية الصحيحة من الذاكرة.</li>
+<li>استرجاع مؤشر الرأس للقائمة.</li>
+<li>إضافة الكتلة المحررة إلى مقدمة القائمة بتحديث مؤشر الرأس.</li>
+</ul>
+<p>الأهم من ذلك، لم يعد مطلوب عبور القائمة للـ deallocation أيضًا. هذا يعني أن الوقت المطلوب لاستدعاء <code>dealloc</code> يبقى كما هو بغض النظر عن طول القائمة.</p>
+<h4 id="mkhss-htyty"><a class="zola-anchor" href="#mkhss-htyty" aria-label="Anchor link for: mkhss-htyty">🔗</a>مخصص احتياطي</h4>
+<p>نظرًا لأن التخصيصات الكبيرة (&gt;2 KB) غالبًا ما تكون نادرة، خاصة في kernels أنظمة التشغيل، قد يكون من المنطقي العودة إلى مخصص مختلف لهذه التخصيصات. على سبيل المثال، يمكننا العودة إلى linked list allocator للتخصيصات الأكبر من 2048 بايت لتقليل هدر الذاكرة. بما أنه يُتوقع عدد قليل جدًا من التخصيصات بهذا الحجم، ستبقى القائمة صغيرة وستكون عمليات (de)allocation سريعة بشكل معقول.</p>
+<h4 id="creating-new-blocks"><a class="zola-anchor" href="#creating-new-blocks" aria-label="Anchor link for: creating-new-blocks">🔗</a>إنشاء كتل جديدة</h4>
+<p>أعلاه، افترضنا دائمًا أن هناك دائمًا كتل كافية بحجم معين في القائمة لتلبية جميع طلبات التخصيص. مع ذلك، في مرحلة ما، تصبح linked list لحجم كتلة معين فارغة. في هذه النقطة، هناك طريقتان يمكننا من خلالهما إنشاء كتل غير مستخدمة جديدة بحجم معين لتلبية طلب تخصيص:</p>
+<ul>
+<li>تخصيص كتلة جديدة من المخصص الاحتياطي (إذا كان هناك واحد).</li>
+<li>تقسيم كتلة أكبر من قائمة مختلفة. هذا يعمل بشكل أفضل إذا كانت أحجام الكتل قوى للعدد 2. على سبيل المثال، يمكن تقسيم كتلة 32 بايت إلى كتلتين 16 بايت.</li>
+</ul>
+<p>لتنفيذنا، سنخصص كتل جديدة من المخصص الاحتياطي لأن التنفيذ أبسط بكثير.</p>
+<h3 id="ltnfydh-2"><a class="zola-anchor" href="#ltnfydh-2" aria-label="Anchor link for: ltnfydh-2">🔗</a>التنفيذ</h3>
+<p>الآن بعد أن عرفنا كيف يعمل fixed-size block allocator، يمكننا بدء تنفيذنا. لن نعتمد على تنفيذ linked list allocator الذي أنشأناه في القسم السابق، لذا يمكنك متابعة هذا الجزء حتى لو تخطيت تنفيذ linked list allocator.</p>
+<h4 id="qd-lqy-m"><a class="zola-anchor" href="#qd-lqy-m" aria-label="Anchor link for: qd-lqy-m">🔗</a>عقدة القائمة</h4>
+<p>نبدأ تنفيذنا بإنشاء نوع <code>ListNode</code> في وحدة <code>allocator::fixed_size_block</code> جديدة:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>fixed_size_block;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>ListNode {
+</span><span>    next: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;,
+</span><span>}
+</span></code></pre>
+<p>هذا النوع مشابه لنوع <code>ListNode</code> من [تنفيذ linked list allocator]، مع الفرق أنه لا يوجد حقل <code>size</code>. ليس مطلوبًا لأن كل كتلة في قائمة لها نفس الحجم مع تصميم fixed-size block allocator.</p>
+<h4 id="hjm-lktl"><a class="zola-anchor" href="#hjm-lktl" aria-label="Anchor link for: hjm-lktl">🔗</a>أحجام الكتل</h4>
+<p>بعد ذلك، نعرّف ثابت <code>BLOCK_SIZES</code> slice بأحجام الكتل المستخدمة لتنفيذنا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#608b4e;">/// The block sizes to use.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// The sizes must each be power of 2 because they are also used as
+</span><span style="color:#608b4e;">/// the block alignment (alignments must be always powers of 2).
+</span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">usize</span><span>] = </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#b5cea8;">8</span><span>, </span><span style="color:#b5cea8;">16</span><span>, </span><span style="color:#b5cea8;">32</span><span>, </span><span style="color:#b5cea8;">64</span><span>, </span><span style="color:#b5cea8;">128</span><span>, </span><span style="color:#b5cea8;">256</span><span>, </span><span style="color:#b5cea8;">512</span><span>, </span><span style="color:#b5cea8;">1024</span><span>, </span><span style="color:#b5cea8;">2048</span><span>];
+</span></code></pre>
+<p>كأحجام كتل، نستخدم قوى العدد 2، بدءًا من 8 حتى 2048. لا نعرّف أي أحجام كتل أصغر من 8 لأن كل كتلة يجب أن تكون قادرة على تخزين مؤشر 64-bit إلى الكتلة التالية عند تحريرها. للتخصيصات الأكبر من 2048 بايت، سنعود إلى linked list allocator.</p>
+<p>لتبسيط التنفيذ، نعرّف حجم الكتلة كمحاذاته المطلوبة في الذاكرة. لذا كتلة 16 بايت دائمًا محاذاة على حدود 16 بايت وكتلة 512 بايت محاذاة على حدود 512 بايت. بما أن المحاذاة يجب أن تكون دائمًا قوى للعدد 2، هذا يستبعد أي أحجام كتل أخرى. إذا احتجنا إلى أحجام كتل ليست قوى للعدد 2 في المستقبل، يمكننا تعديل تنفيذنا لذلك (مثلًا، بتعريف مصفوفة <code>BLOCK_ALIGNMENTS</code> ثانية).</p>
+<h4 id="nw-lmkhss-1"><a class="zola-anchor" href="#nw-lmkhss-1" aria-label="Anchor link for: nw-lmkhss-1">🔗</a>نوع المخصص</h4>
+<p>باستخدام نوع <code>ListNode</code> و slice <code>BLOCK_SIZES</code>، يمكننا الآن تعريف نوع المخصص:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>FixedSizeBlockAllocator {
+</span><span>    list_heads: [Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;; BLOCK_SIZES.len()],
+</span><span>    fallback_allocator: linked_list_allocator::Heap,
+</span><span>}
+</span></code></pre>
+<p>الحقل <code>list_heads</code> هو مصفوفة من مؤشرات <code>head</code>، واحدة لكل حجم كتلة. هذا مُنفّذ باستخدام <code>len()</code> من slice <code>BLOCK_SIZES</code> كطول المصفوفة. كمخصص احتياطي للتخصيصات الأكبر من أكبر حجم كتلة، نستخدم المخصص المقدم من <code>linked_list_allocator</code>. يمكننا أيضًا استخدام <code>LinkedListAllocator</code> الذي نفذناه بأنفسنا، لكنه لديه عيب أنه لا [يدمج الكتل المحررة].</p>
+<p>لبناء <code>FixedSizeBlockAllocator</code>، نوفر دالتي <code>new</code> و <code>init</code> نفسهما التي نفذناها لأنواع المخصصات الأخرى أيضًا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>FixedSizeBlockAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Creates an empty FixedSizeBlockAllocator.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">EMPTY</span><span>: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt; = None;
+</span><span>        FixedSizeBlockAllocator {
+</span><span>            list_heads: [</span><span style="color:#b4cea8;">EMPTY</span><span>; </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>.len()],
+</span><span>            fallback_allocator: linked_list_allocator::Heap::empty(),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Initialize the allocator with the given heap bounds.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// This function is unsafe because the caller must guarantee that the given
+</span><span>    </span><span style="color:#608b4e;">/// heap bounds are valid and that the heap is unused. This method must be
+</span><span>    </span><span style="color:#608b4e;">/// called only once.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{ self.fallback_allocator.init(heap_start, heap_size); }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>دالة <code>new</code> فقط تهيئ مصفوفة <code>list_heads</code> بعقد فارغة وتنشئ <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.empty"><code>empty</code></a> linked list allocator كـ <code>fallback_allocator</code>. الثابت <code>EMPTY</code> مطلوب لإخبار مترجم Rust أننا نريد تهيئة المصفوفة بقيمة ثابتة. تهيئة المصفوفة مباشرة كـ <code>[None; BLOCK_SIZES.len()]</code> لا تعمل، لأن المترجم يتطلب عندها <code>Option&lt;&amp;'static mut ListNode&gt;</code> لتنفيذ trait <code>Copy</code>، وهو ما لا ينفذه. هذا قيد حالي لمترجم Rust، قد يزول في المستقبل.</p>
+<p>دالة <code>init</code> غير الآمنة فقط تستدعي دالة <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> لـ <code>fallback_allocator</code> دون إجراء أي تهيئة إضافية لمصفوفة <code>list_heads</code>. بدلاً من ذلك، سنهيئ القوائم بشكل كسول عند استدعاءات <code>alloc</code> و <code>dealloc</code>.</p>
+<p>للراحة، ننشئ أيضًا دالة <code>fallback_alloc</code> خاصة تخصص باستخدام <code>fallback_allocator</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::Layout;
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>FixedSizeBlockAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Allocates using the fallback allocator.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>fallback_alloc(</span><span style="color:#569cd6;">&amp;mut </span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#569cd6;">match </span><span>self.fallback_allocator.allocate_first_fit(layout) {
+</span><span>            Ok(ptr) </span><span style="color:#569cd6;">=&gt;</span><span> ptr.as_ptr(),
+</span><span>            Err(</span><span style="color:#569cd6;">_</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>ptr::null_mut(),
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>نوع <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a> من crate <code>linked_list_allocator</code> لا ينفذ <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> (لأنه [غير ممكن بدون locking]). بدلاً من ذلك، يوفر دالة <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.allocate_first_fit"><code>allocate_first_fit</code></a> لها واجهة مختلفة قليلاً. بدلاً من إرجاع <code>*mut u8</code> واستخدام مؤشر null للإشارة إلى خطأ، يرجع <code>Result&lt;NonNull&lt;u8&gt;, ()&gt;</code>. النوع <a href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html"><code>NonNull</code></a> هو تجريد لمؤشر raw مضمون ألا يكون مؤشر null. بربط حالة <code>Ok</code> بدالة <a href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html#method.as_ptr"><code>NonNull::as_ptr</code></a> وحالة <code>Err</code> بمؤشر null، يمكننا بسهولة ترجمة هذا مرة أخرى إلى نوع <code>*mut u8</code>.</p>
+<h4 id="hsb-fhrs-lqy-m"><a class="zola-anchor" href="#hsb-fhrs-lqy-m" aria-label="Anchor link for: hsb-fhrs-lqy-m">🔗</a>حساب فهرس القائمة</h4>
+<p>قبل تنفيذ trait <code>GlobalAlloc</code>، نعرّف دالة مساعدة <code>list_index</code> ترجع أقل حجم كتلة ممكن لـ <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> معين:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Choose an appropriate block size for the given layout.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Returns an index into the `BLOCK_SIZES` array.
+</span><span style="color:#569cd6;">fn </span><span>list_index(layout: </span><span style="color:#569cd6;">&amp;</span><span>Layout) -&gt; Option&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> required_block_size = layout.size().max(layout.align());
+</span><span>    </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>.iter().position(|</span><span style="color:#569cd6;">&amp;</span><span>s| s &gt;= required_block_size)
+</span><span>}
+</span></code></pre>
+<p>يجب أن تحتوي الكتلة على الأقل على الحجم والمحاذاة المطلوبين بواسطة <code>Layout</code> المعطى. بما أننا عرّفنا أن حجم الكتلة هو أيضًا محاذاته، هذا يعني أن <code>required_block_size</code> هو <a href="https://doc.rust-lang.org/core/cmp/trait.Ord.html#method.max">maximum</a> لـ <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.size"><code>size()</code></a> و <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.align"><code>align()</code></a> للـ layout. لإيجاد الكتلة الأكبر التالية في slice <code>BLOCK_SIZES</code>، نستخدم أولاً دالة <a href="https://doc.rust-lang.org/std/primitive.slice.html#method.iter"><code>iter()</code></a> للحصول على iterator ثم دالة <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.position"><code>position()</code></a> لإيجاد فهرس أول كتلة على الأقل كبيرة مثل <code>required_block_size</code>.</p>
+<p>لاحظ أننا لا نرجع حجم الكتلة نفسه، بل الفهرس في slice <code>BLOCK_SIZES</code>. السبب هو أننا نريد استخدام الفهرس المُرجع كفهرس في مصفوفة <code>list_heads</code>.</p>
+<h4 id="tnfydh-globalalloc-2"><a class="zola-anchor" href="#tnfydh-globalalloc-2" aria-label="Anchor link for: tnfydh-globalalloc-2">🔗</a>تنفيذ <code>GlobalAlloc</code></h4>
+<p>الخطوة الأخيرة هي تنفيذ trait <code>GlobalAlloc</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::Locked;
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::GlobalAlloc;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;FixedSizeBlockAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        todo!();
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>مثل المخصصات الأخرى، لا ننفذ trait <code>GlobalAlloc</code> مباشرة لنوع المخصص الخاص بنا، بل نستخدم <a href="https://os.phil-opp.com/allocator-designs/#a-locked-wrapper-type"><code>Locked</code> wrapper</a> لإضافة interior mutability متزامن. بما أن تنفيذي <code>alloc</code> و <code>dealloc</code> كبيران نسبيًا، نقدمهما واحدًا تلو الآخر في التالي.</p>
+<h5 id="alloc"><a class="zola-anchor" href="#alloc" aria-label="Anchor link for: alloc">🔗</a><code>alloc</code></h5>
+<p>تنفيذ دالة <code>alloc</code> يبدو هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in `impl` block in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>    </span><span style="color:#569cd6;">match </span><span>list_index(</span><span style="color:#569cd6;">&amp;</span><span>layout) {
+</span><span>        Some(index) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">match</span><span> allocator.list_heads[index].take() {
+</span><span>                Some(node) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                    allocator.list_heads[index] = node.next.take();
+</span><span>                    node </span><span style="color:#569cd6;">as *mut</span><span> ListNode </span><span style="color:#569cd6;">as *mut u8
+</span><span>                }
+</span><span>                None </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                    </span><span style="color:#608b4e;">// no block exists in list =&gt; allocate new block
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> block_size = </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index];
+</span><span>                    </span><span style="color:#608b4e;">// only works if all block sizes are a power of 2
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> block_align = block_size;
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> layout = Layout::from_size_align(block_size, block_align)
+</span><span>                        .unwrap();
+</span><span>                    allocator.fallback_alloc(layout)
+</span><span>                }
+</span><span>            }
+</span><span>        }
+</span><span>        None </span><span style="color:#569cd6;">=&gt;</span><span> allocator.fallback_alloc(layout),
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>لنمر بها خطوة بخطوة:</p>
+<p>أولاً، نستخدم دالة <code>Locked::lock</code> للحصول على مرجع قابل للتعديل لمثقف المخصص الملفوف. بعد ذلك، نستدعي دالة <code>list_index</code> التي عرّفناها للتو لحساب حجم الكتلة المناسب للـ layout المعطى والحصول على الفهرس المقابل في مصفوفة <code>list_heads</code>. إذا كان هذا الفهرس <code>None</code>، لا يوجد حجم كتلة يناسب التخصيص، لذا نستخدم <code>fallback_allocator</code> باستخدام دالة <code>fallback_alloc</code>.</p>
+<p>إذا كان فهرس القائمة <code>Some</code>، نحاول إزالة أول عقدة في القائمة المقابلة التي بدأها <code>list_heads[index]</code> باستخدام دالة <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a>. إذا لم تكن القائمة فارغة، ندخل فرع <code>Some(node)</code> من عبارة <code>match</code>، حيث نشير مؤشر رأس القائمة إلى خليفة <code>node</code> المنبثقة (باستخدام <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>take</code></a> مرة أخرى). أخيرًا، نرجع مؤشر <code>node</code> المنبثق كـ <code>*mut u8</code>.</p>
+<p>إذا كان رأس القائمة <code>None</code>، فهذا يشير إلى أن قائمة الكتل فارغة. هذا يعني أننا نحتاج إلى إنشاء كتلة جديدة كما هو <a href="https://os.phil-opp.com/ar/allocator-designs/#creating-new-blocks">موضح أعلاه</a>. لهذا، نسترجع أولاً حجم الكتلة الحالي من slice <code>BLOCK_SIZES</code> ونستخدمه كحجم ومحاذاة للكتلة الجديدة. ثم ننشئ <code>Layout</code> جديدًا منه ونستدعي دالة <code>fallback_alloc</code> لإجراء التخصيص. سبب تعديل التخطيط والمحاذاة هو أن الكتلة ستُضاف إلى قائمة الكتل عند deallocation.</p>
+<h4 id="dealloc"><a class="zola-anchor" href="#dealloc" aria-label="Anchor link for: dealloc">🔗</a><code>dealloc</code></h4>
+<p>تنفيذ دالة <code>dealloc</code> يبدو هكذا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator/fixed_size_block.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::{mem, ptr::NonNull};
+</span><span>
+</span><span style="color:#608b4e;">// inside the `unsafe impl GlobalAlloc` block
+</span><span>
+</span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>    </span><span style="color:#569cd6;">match </span><span>list_index(</span><span style="color:#569cd6;">&amp;</span><span>layout) {
+</span><span>        Some(index) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">let</span><span> new_node = ListNode {
+</span><span>                next: allocator.list_heads[index].take(),
+</span><span>            };
+</span><span>            </span><span style="color:#608b4e;">// verify that block has size and alignment required for storing node
+</span><span>            assert!(mem::size_of::&lt;ListNode&gt;() &lt;= </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index]);
+</span><span>            assert!(mem::align_of::&lt;ListNode&gt;() &lt;= </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index]);
+</span><span>            </span><span style="color:#569cd6;">let</span><span> new_node_ptr = ptr </span><span style="color:#569cd6;">as *mut</span><span> ListNode;
+</span><span>            </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                new_node_ptr.write(new_node);
+</span><span>                allocator.list_heads[index] = Some(</span><span style="color:#569cd6;">&amp;mut </span><span>*new_node_ptr);
+</span><span>            }
+</span><span>        }
+</span><span>        None </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">let</span><span> ptr = NonNull::new(ptr).unwrap();
+</span><span>            </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                allocator.fallback_allocator.deallocate(ptr, layout);
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>مثل <code>alloc</code>، نستخدم أولاً دالة <code>lock</code> للحصول على مرجع مخصص قابل للتعديل ثم دالة <code>list_index</code> للحصول على قائمة الكتل المقابلة للـ <code>Layout</code> المعطى. إذا كان الفهرس <code>None</code>، لا يوجد حجم كتلة مناسب في <code>BLOCK_SIZES</code>، مما يشير إلى أن التخصيص تم إنشاؤه بواسطة المخصص الاحتياطي. لذلك، نستخدم <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.deallocate"><code>deallocate</code></a> الخاص به لتحرير الذاكرة مرة أخرى. الدالة تتوقع <a href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html"><code>NonNull</code></a> بدلاً من <code>*mut u8</code>، لذا نحتاج إلى تحويل المؤشر أولاً. (استدعاء <code>unwrap</code> يفشل فقط إذا كان المؤشر null، وهو ما لا يجب أن يحدث أبدًا عندما يستدعي المترجم <code>dealloc</code>.)</p>
+<p>إذا أرجع <code>list_index</code> فهرس كتلة، نحتاج إلى إضافة كتلة الذاكرة المحررة إلى القائمة. لهذا، ننشئ أولاً <code>ListNode</code> جديد يشير إلى رأس القائمة الحالي (باستخدام <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a> مرة أخرى). قبل كتابة العقدة الجديدة في كتلة الذاكرة المحررة، نتأكد أولاً أن حجم الكتلة الحالي المحدد بـ <code>index</code> لديه الحجم والمحاذاة المطلوبين لتخزين <code>ListNode</code>. ثم نجرِي التحويل بتحويل مؤشر <code>*mut u8</code> المعطى إلى مؤشر <code>*mut ListNode</code> ثم استدعاء دالة <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write"><code>write</code></a> غير الآمنة عليه. الخطوة الأخيرة هي تعيين مؤشر رأس القائمة، الذي هو حاليًا <code>None</code> لأننا استدعينا <code>take</code> عليه، إلى <code>ListNode</code> الجديد. لهذا، نحول <code>new_node_ptr</code> الخام إلى مرجع قابل للتعديل.</p>
+<p>هناك بعض الأمور الجديرة بالملاحظة:</p>
+<ul>
+<li>لا نفرّق بين الكتل المخصصة من قائمة الكتل والكتل المخصصة من المخصص الاحتياطي. هذا يعني أن الكتل الجديدة المنشأة في <code>alloc</code> تُضاف إلى قائمة الكتل عند <code>dealloc</code>، مما يزيد عدد الكتل بهذا الحجم.</li>
+<li>دالة <code>alloc</code> هي المكان الوحيد الذي تُنشأ فيه كتل جديدة في تنفيذنا. هذا يعني أننا نبدأ بقوائم كتل فارغة ونملأ هذه القوائم بشكل كسول فقط عندما تُجرى تخصيصات بحجم كتلتها.</li>
+<li>لا نحتاج إلى كتل <code>unsafe</code> في <code>alloc</code> و <code>dealloc</code>، رغم أننا نجرِي عمليات <code>unsafe</code>. السبب هو أن Rust يعامل حاليًا جسم الدوال غير الآمنة بالكامل ككتلة <code>unsafe</code> واحدة كبيرة. بما أن استخدام كتل <code>unsafe</code> صريحة له ميزة أنه من الواضح أي العمليات غير آمنة وأيها ليست كذلك، هناك <a href="https://github.com/rust-lang/rfcs/pull/2585">RFC مقترح</a> لتغيير هذا السلوك.</li>
+</ul>
+<h3 id="stkhdmh-2"><a class="zola-anchor" href="#stkhdmh-2" aria-label="Anchor link for: stkhdmh-2">🔗</a>استخدامه</h3>
+<p>لاستخدام <code>FixedSizeBlockAllocator</code> الجديد، نحتاج إلى تحديث static <code>ALLOCATOR</code> في وحدة <code>allocator</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>fixed_size_block::FixedSizeBlockAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;FixedSizeBlockAllocator&gt; = Locked::new(
+</span><span>    FixedSizeBlockAllocator::new());
+</span></code></pre>
+<p>بما أن دالة <code>init</code> تتصرف بنفس الطريقة لجميع المخصصات التي نفذناها، لا نحتاج إلى تعديل استدعاء <code>init</code> في <code>init_heap</code>.</p>
+<p>عندما نشغّل اختبارات <code>heap_allocation</code> مرة أخرى، يجب أن تنجح جميع الاختبارات:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [ok]
+</span></code></pre>
+<p>يبدو أن المخصص الجديد يعمل!</p>
+<h3 id="lnqsh-2"><a class="zola-anchor" href="#lnqsh-2" aria-label="Anchor link for: lnqsh-2">🔗</a>النقاش</h3>
+<p>بينما نهج fixed-size block لديه أداء أفضل بكثير من نهج linked list، فإنه يهدر حتى نصف الذاكرة عند استخدام قوى العدد 2 كأحجام كتل. ما إذا كانت هذه المقايضة تستحق الأمر يعتمد بشكل كبير على نوع التطبيق. لنواة نظام تشغيل، حيث الأداء حاسم، يبدو نهج fixed-size block الخيار الأفضل.</p>
+<p>على جانب التنفيذ، هناك أشياء مختلفة يمكننا تحسينها في تنفيذنا الحالي:</p>
+<ul>
+<li>بدلاً من تخصيص الكتل بشكل كسول فقط باستخدام المخصص الاحتياطي، قد يكون من الأفضل ملء القوائم مسبقًا لتحسين أداء التخصيصات الأولية.</li>
+<li>لتبسيط التنفيذ، سمحنا فقط بأحجام كتل قوى للعدد 2 حتى نتمكن من استخدامها كمحاذاة للكتل أيضًا. بتخزين (أو حساب) المحاذاة بطريقة مختلفة، يمكننا أيضًا السماح بأحجام أخرى عشوائية. بهذه الطريقة، يمكننا إضافة المزيد من أحجام الكتل، مثلًا، لأحجام التخصيص الشائعة، لتقليل الذاكرة المهدرة.</li>
+<li>حاليًا ننشئ كتل جديدة فقط، لكن لا نحررها مرة أخرى. هذا ينتج تجزئة وقد يؤدي في النهاية إلى فشل التخصيص للتخصيصات الكبيرة. قد يكون من المنطقي فرض حد أقصى لطول القائمة لكل حجم كتلة. عند الوصول إلى الحد الأقصى، تُحرر deallocations اللاحقة باستخدام المخصص الاحتياطي بدلاً من إضافتها إلى القائمة.</li>
+<li>بدلاً من العودة إلى linked list allocator، يمكننا أن يكون لدينا مخصص خاص للتخصيصات الأكبر من 4 KiB. الفكرة هي استخدام <a href="https://os.phil-opp.com/paging-introduction/">paging</a>، الذي يعمل على صفحات 4 KiB، لتعيين كتلة متصلة من الذاكرة الافتراضية إلى إطارات فيزيائية غير متصلة. بهذه الطريقة، لم تعد تجزئة الذاكرة غير المستخدمة مشكلة للتخصيصات الكبيرة.</li>
+<li>مع مثل هذا page allocator، قد يكون من المنطقي إضافة أحجام كتل حتى 4 KiB وإسقاط linked list allocator بالكامل. المزايا الرئيسية لهذا ستكون تقليل التجزئة وتحسين قابلية التنبؤ بالأداء، أي أداء أسوأ حالة أفضل.</li>
+</ul>
+<p>من المهم ملاحظة أن تحسينات التنفيذ الموضحة أعلاه هي فقط اقتراحات. المخصصات المستخدمة في kernels أنظمة التشغيل عادةً ما تكون محسّنة بشكل كبير للحمل المحدد للـ kernel، وهو ما لا يكون ممكنًا إلا من خلال profiling مكثف.</p>
+<h3 id="lkhtlft"><a class="zola-anchor" href="#lkhtlft" aria-label="Anchor link for: lkhtlft">🔗</a>الاختلافات</h3>
+<p>هناك أيضًا العديد من الاختلافات لتصميم fixed-size block allocator. مثالان شائعان هما <em>slab allocator</em> و <em>buddy allocator</em>، اللذان يُستخدمان أيضًا في kernels شائعة مثل Linux. فيما يلي، نقدم مقدمة قصيرة لهذين التصميمين.</p>
+<h4 id="slab-allocator"><a class="zola-anchor" href="#slab-allocator" aria-label="Anchor link for: slab-allocator">🔗</a>Slab Allocator</h4>
+<p>الفكرة وراء <a href="https://en.wikipedia.org/wiki/Slab_allocation">slab allocator</a> هي استخدام أحجام كتل تتوافق مباشرة مع أنواع محددة في kernel. بهذه الطريقة، تخصيصات تلك الأنواع تناسب حجم الكتلة بالضبط ولا تُهدر ذاكرة. في بعض الأحيان، قد يكون من الممكن حتى تهيئة مثيلات النوع مسبقًا في الكتل غير المستخدمة لتحسين الأداء أكثر.</p>
+<p>غالبًا ما يتم دمج slab allocation مع مخصصات أخرى. على سبيل المثال، يمكن استخدامه مع fixed-size block allocator لتقسيم كتلة مخصصة أكثر لتقليل هدر الذاكرة. غالبًا ما يُستخدم أيضًا لتنفيذ <a href="https://en.wikipedia.org/wiki/Object_pool_pattern">object pool pattern</a> فوق تخصيص كبير واحد.</p>
+<h4 id="buddy-allocator"><a class="zola-anchor" href="#buddy-allocator" aria-label="Anchor link for: buddy-allocator">🔗</a>Buddy Allocator</h4>
+<p>بدلاً من استخدام linked list لإدارة الكتل المحررة، يستخدم تصميم <a href="https://en.wikipedia.org/wiki/Buddy_memory_allocation">buddy allocator</a> بنية بيانات <a href="https://en.wikipedia.org/wiki/Binary_tree">binary tree</a> مع أحجام كتل قوى للعدد 2. عند الحاجة إلى كتلة جديدة بحجم معين، يقسم كتلة بحجم أكبر إلى نصفين، مما ينشئ عقدتين فرعيتين في الشجرة. كلما تم تحرير كتلة مرة أخرى، يتم تحليل كتلة الجوار في الشجرة. إذا كانت كتلة الجوار حرة أيضًا، يتم دمج الكتلتين معًا لتشكيل كتلة ضعف الحجم.</p>
+<p>ميزة عملية الدمج هذه هي تقليل <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#External_fragmentation">external fragmentation</a> بحيث يمكن إعادة استخدام الكتل الصغيرة المحررة لتخصيص كبير. كما أنه لا يستخدم مخصصًا احتياطيًا، لذا الأداء أكثر قابلية للتنبؤ. أكبر عيب هو أن أحجام الكتل قوى للعدد 2 فقط ممكنة، مما قد ينتج كمية كبيرة من الذاكرة المهدرة بسبب <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">internal fragmentation</a>. لهذا السبب، غالبًا ما يتم دمج buddy allocators مع slab allocator لتقسيم كتلة مخصصة أكثر إلى كتل أصغر متعددة.</p>
+<h2 id="lmlkhs"><a class="zola-anchor" href="#lmlkhs" aria-label="Anchor link for: lmlkhs">🔗</a>الملخص</h2>
+<p>قدم هذا المقال نظرة عامة على تصاميم مخصصات مختلفة. تعلمنا كيفية تنفيذ <a href="https://os.phil-opp.com/allocator-designs/#bump-allocator">bump allocator</a> أساسي، الذي يوزع الذاكرة خطيًا بزيادة مؤشر <code>next</code> واحد. بينما bump allocation سريعة جدًا، لا يمكنها إعادة استخدام الذاكرة إلا بعد تحرير جميع التخصيصات. لهذا السبب، نادرًا ما يُستخدم كمخصص عالمي.</p>
+<p>بعد ذلك، أنشأنا <a href="https://os.phil-opp.com/allocator-designs/#linked-list-allocator">linked list allocator</a> يستخدم كتل الذاكرة المحررة نفسها لإنشاء linked list، ما يُسمى <a href="https://en.wikipedia.org/wiki/Free_list">free list</a>. هذه القائمة تجعل من الممكن تخزين عدد عشوائي من الكتل المحررة بأحجام مختلفة. بينما لا يحدث هدر ذاكرة، يعاني النهج من ضعف الأداء لأن طلب تخصيص قد يتطلب عبورًا كاملاً للقائمة. تنفيذنا يعاني أيضًا من <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#External_fragmentation">external fragmentation</a> لأنه لا يدمج الكتل المحررة المتجاورة معًا.</p>
+<p>لحل مشاكل الأداء في نهج linked list، أنشأنا <a href="https://os.phil-opp.com/allocator-designs/#fixed-size-block-allocator">fixed-size block allocator</a> يحدد مجموعة ثابتة من أحجام الكتل مسبقًا. لكل حجم كتلة، توجد <a href="https://en.wikipedia.org/wiki/Free_list">free list</a> منفصلة بحيث تحتاج التخصيصات والـ deallocations فقط إلى إدراج/إزالة في مقدمة القائمة وبالتالي تكون سريعة جدًا. بما أن كل تخصيص يُقرّب إلى حجم الكتلة الأكبر التالي، تُهدر بعض الذاكرة بسبب <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">internal fragmentation</a>.</p>
+<p>هناك العديد من تصاميم المخصصات الأخرى بمقايضات مختلفة. <a href="https://os.phil-opp.com/allocator-designs/#slab-allocator">Slab allocation</a> يعمل جيدًا لتحسين تخصيص الهياكل الثابتة الشائعة، لكنه ليس قابلًا للتطبيق في جميع الحالات. <a href="https://os.phil-opp.com/allocator-designs/#buddy-allocator">Buddy allocation</a> يستخدم binary tree لدمج الكتل المحررة معًا، لكنه يهدر كمية كبيرة من الذاكرة لأنه يدعم فقط أحجام كتل قوى للعدد 2. من المهم أيضًا تذكر أن كل تنفيذ kernel لديه حمل عمل فريد، لذا لا يوجد تصميم مخصص “أفضل” يناسب جميع الحالات.</p>
+<h2 id="m-ltly"><a class="zola-anchor" href="#m-ltly" aria-label="Anchor link for: m-ltly">🔗</a>ما التالي؟</h2>
+<p>بهذا المقال، نختتم تنفيذ إدارة الذاكرة لدينا مؤقتًا. بعد ذلك، سنبدأ استكشف <a href="https://en.wikipedia.org/wiki/Computer_multitasking"><em>multitasking</em></a>، بدءًا من cooperative multitasking في شكل <a href="https://rust-lang.github.io/async-book/01_getting_started/04_async_await_primer.html"><em>async/await</em></a>. في المقالات اللاحقة، سنستكشف <a href="https://en.wikipedia.org/wiki/Thread_(computing)"><em>threads</em></a> و <a href="https://en.wikipedia.org/wiki/Multiprocessing"><em>multiprocessing</em></a> و <a href="https://en.wikipedia.org/wiki/Process_(computing)"><em>processes</em></a>.</p>
+
+    </div>
+
+    <div class="post-footer-support right-to-left">
+        <h2>ادعمني</h2>
+<p>إنشاء وصيانة هذه المدونة والمكتبات المرتبطة بها يتطلب جهدًا كبيرًا، لكنني أستمتع حقًا بذلك. بدعمك لي، يمكنني تخصيص وقت أكثر لإنشاء محتوى جديد وميزات جديدة والصيانة المستمرة. أفضل طريقة لدعمي هي <a href="https://github.com/sponsors/phil-opp"><em>رعايتي على GitHub</em></a>. شكرًا لك!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/ar/heap-allocation/">&laquo; تخصيص Heap</a>
+        
+        
+            <a class="next" href="/ar/async-await/">Async&#x2F;Await &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="right-to-left">التعليقات</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        هل لديك مشكلة، أو تريد مشاركة ملاحظات، أو مناقشة أفكار إضافية؟ لا تتردد في ترك تعليق هنا! يرجى الالتزام باللغة الإنجليزية واتباع <a href="https://www.rust-lang.org/policies/code-of-conduct">مدونة سلوك Rust</a>. يتم ربط هذا الخيط من التعليقات مباشرة بـ <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Allocator%20Designs%20%28ar%29%22%20in%3Atitle"><em>نقاش على GitHub</em></a>، لذا يمكنك التعليق هناك أيضًا إذا أردت.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Allocator Designs (ar)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="ar"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Allocator%20Designs%20%28ar%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="right-to-left">
+            يفضل كتابة التعليقات باللغة الإنجليزية إن أمكن.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/allocator-designs/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/allocator-designs/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/allocator-designs/ja/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/allocator-designs/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="ru" class=""><a href="https://os.phil-opp.com/ru/allocator-designs/">
+                        Russian
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/allocator-designs/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

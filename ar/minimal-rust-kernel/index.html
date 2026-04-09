@@ -1,0 +1,557 @@
+<!doctype html>
+
+<html lang="ar">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="في هذا المقال، سنقوم بإنشاء نواة Rust بسيطة من 64-bit لمعمارية x86. نحن نبني على الثنائي المستقل لـ Rust من المقال السابق لإنشاء صورة قرص قابلة للإقلا…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/ar/minimal-rust-kernel/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>نواة Rust بسيطة للغاية | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/ar" title="All Posts">« كل المقالات</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="right-to-left">
+        <h2>جدول المحتويات</h2>
+    <ol>
+        <li>
+            <a href="#the-boot-process">عملية الإقلاع</a>
+            <ol>
+                <li>
+                    <a href="#lql-br-bios">الإقلاع عبر BIOS</a>
+                </li><li>
+                    <a href="#uefi">UEFI</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#nw-bsyt-llgy">نواة بسيطة للغاية</a>
+            <ol>
+                <li>
+                    <a href="#tthbyt-rust-nightly">تثبيت Rust Nightly</a>
+                </li><li>
+                    <a href="#mwsf-lhdf">مواصفة الهدف</a>
+                </li><li>
+                    <a href="#bn-lnw">بناء النواة</a>
+                </li><li>
+                    <a href="#ltb-l-lshsh">الطباعة على الشاشة</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#tshgyl-lnw">تشغيل النواة</a>
+            <ol>
+                <li>
+                    <a href="#nsh-swr-ql">إنشاء صورة إقلاع</a>
+                </li><li>
+                    <a href="#tshgylh-fy-qemu">تشغيلها في QEMU</a>
+                </li><li>
+                    <a href="#jhz-hqyqy">جهاز حقيقي</a>
+                </li><li>
+                    <a href="#stkhdm-cargo-run">استخدام cargo run</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#m-ltly">ما التالي؟</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="right-to-left">
+    <h1>نواة Rust بسيطة للغاية</h1>
+    <time datetime="2018-02-10" class="post-date">
+        Feb 10, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning right-to-left">
+            
+            
+            <p>
+            <b>المحتوى المترجم:</b>
+            هذه ترجمة مجتمعية لمقالة <strong><a href="https://os.phil-opp.com/minimal-rust-kernel/">A Minimal Rust Kernel</a></strong>. قد تكون غير مكتملة أو قديمة أو تحتوي على أخطاء. يرجى الإبلاغ عن أي مشاكل!
+            </p>
+            <p>
+                ترجمة بواسطة <a href="https://github.com/mindfreq">@mindfreq</a>.</p>
+            </div>
+    
+
+    <div class="right-to-left">
+    <p>في هذا المقال، سنقوم بإنشاء نواة Rust بسيطة من 64-bit لمعمارية x86. نحن نبني على <a href="https://os.phil-opp.com/freestanding-rust-binary/">الثنائي المستقل لـ Rust</a> من المقال السابق لإنشاء صورة قرص قابلة للإقلاع تطبع شيئًا ما على الشاشة.</p>
+<span id="continue-reading"></span>
+<p>هذا المدونة مطوّرة بشكل مفتوح على <a href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/minimal-rust-kernel/#comments">في الأسفل</a>. يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a href="https://github.com/phil-opp/blog_os/tree/post-02"><code>post-02</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>جدول المحتويات</b></summary>
+        <ul>
+            <li>
+                <a href="#the-boot-process">عملية الإقلاع</a>
+                <ul>
+                    <li>
+                        <a href="#lql-br-bios">الإقلاع عبر BIOS</a>
+                    </li><li>
+                        <a href="#uefi">UEFI</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#nw-bsyt-llgy">نواة بسيطة للغاية</a>
+                <ul>
+                    <li>
+                        <a href="#tthbyt-rust-nightly">تثبيت Rust Nightly</a>
+                    </li><li>
+                        <a href="#mwsf-lhdf">مواصفة الهدف</a>
+                    </li><li>
+                        <a href="#bn-lnw">بناء النواة</a>
+                    </li><li>
+                        <a href="#ltb-l-lshsh">الطباعة على الشاشة</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#tshgyl-lnw">تشغيل النواة</a>
+                <ul>
+                    <li>
+                        <a href="#nsh-swr-ql">إنشاء صورة إقلاع</a>
+                    </li><li>
+                        <a href="#tshgylh-fy-qemu">تشغيلها في QEMU</a>
+                    </li><li>
+                        <a href="#jhz-hqyqy">جهاز حقيقي</a>
+                    </li><li>
+                        <a href="#stkhdm-cargo-run">استخدام cargo run</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#m-ltly">ما التالي؟</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+        </ul>
+    </details>
+
+<h2 id="the-boot-process"><a class="zola-anchor" href="#the-boot-process" aria-label="Anchor link for: the-boot-process">🔗</a>عملية الإقلاع</h2>
+<p>عند تشغيل الكمبيوتر، يبدأ بتنفيذ كود الـ firmware المخزن في <a href="https://en.wikipedia.org/wiki/Read-only_memory">ROM</a> على اللوحة الأم. يقوم هذا الكود بإجراء <a href="https://en.wikipedia.org/wiki/Power-on_self-test">power-on self-test</a>، واكتشاف الـ RAM المتاح، والتهيئة المسبقة لوحدة المعالجة المركزية والأجهزة. بعد ذلك، يبحث عن قرص قابل للإقلاع ويبدأ في تحميل نواة نظام التشغيل.</p>
+<p>في x86، هناك معياران للـ firmware: “نظام الإدخال/الإخراج الأساسي“ (<strong><a href="https://en.wikipedia.org/wiki/BIOS">BIOS</a></strong>) والمعيار الأحدث “واجهة البرامج الثابتة الموسعة الموحدة” (<strong><a href="https://en.wikipedia.org/wiki/Unified_Extensible_Firmware_Interface">UEFI</a></strong>). معيار BIOS قديم ومتجاوز، لكنه بسيط ومدعوم جيدًا على أي جهاز x86 منذ الثمانينيات. على النقيض من ذلك، UEFI أكثر حداثة ولديه ميزات أكثر بكثير، لكن إعداده أكثر تعقيدًا (على الأقل في رأيي).</p>
+<p>حاليًا، نحن ندعم BIOS فقط، لكن دعم UEFI مخطط له أيضًا. إذا كنت ترغب في مساعدتنا في هذا الأمر، راجع <a href="https://github.com/phil-opp/blog_os/issues/349">Github issue</a>.</p>
+<h3 id="lql-br-bios"><a class="zola-anchor" href="#lql-br-bios" aria-label="Anchor link for: lql-br-bios">🔗</a>الإقلاع عبر BIOS</h3>
+<p>جميع تقريبًا أنظمة x86 تدعم الإقلاع عبر BIOS، بما في ذلك أجهزة UEFI الأحدث التي تستخدم BIOS محاكى. هذا رائع، لأنك يمكنك استخدام نفس منطق الإقلاع عبر جميع الأجهزة من القرن الماضي. لكن هذه التوافقية الواسعة هي في الوقت نفسه أكبر عيوب الإقلاع عبر BIOS، لأنها تعني أن وحدة المعالجة المركزية توضع في وضع توافقية من 16-bit يسمى <a href="https://en.wikipedia.org/wiki/Real_mode">real mode</a> قبل الإقلاع حتى تعمل أجهزة الإقلاع القديمة من الثمانينيات.</p>
+<p>ولكن لنبدأ من البداية:</p>
+<p>عند تشغيل الكمبيوتر، يقوم بتحميل BIOS من ذاكرة flash خاصة موجودة على اللوحة الأم. يقوم BIOS بتشغيل routines الفحص الذاتي والتهيئة للأجهزة، ثم يبحث عن أقراص قابلة للإقلاع. إذا وجد واحدًا، يتم نقل التحكم إلى الـ <em>bootloader</em> الخاص به، وهو جزء من الكود التنفيذي بحجم 512-byte مخزن في بداية القرص. معظم أجهزة الإقلاع أكبر من 512 byte، لذلك عادةً ما تُقسم أجهزة الإقلاع إلى مرحلة أولى صغيرة تتسع في 512 byte، ومرحلة ثانية يتم تحميلها لاحقًا بواسطة المرحلة الأولى.</p>
+<p>يجب على الـ bootloader تحديد موقع صورة النواة على القرص وتحميلها في الذاكرة. كما يحتاج إلى تبديل وحدة المعالجة المركزية من <a href="https://en.wikipedia.org/wiki/Real_mode">real mode</a> من 16-bit إلى <a href="https://en.wikipedia.org/wiki/Protected_mode">protected mode</a> من 32-bit، ثم إلى <a href="https://en.wikipedia.org/wiki/Long_mode">long mode</a> من 64-bit، حيث تتوفر سجلات 64-bit وذاكرة الرئيسية الكاملة. وظيفته الثالثة هي الاستعلام عن معلومات معينة (مثل خريطة الذاكرة) من BIOS وتمريرها إلى نواة نظام التشغيل.</p>
+<p>كتابة bootloader أمر مرهق بعض الشيء لأنه يتطلب لغة assembly وعددًا كبيرًا من الخطوات غير البديهية مثل “اكتب هذه القيمة السحرية في هذا السجل”. لذلك، لن نغطي إنشاء الـ bootloader في هذا المقال، وبدلاً من ذلك نوفر أداة تسمى <a href="https://github.com/rust-osdev/bootloader">bootimage</a> تضيف تلقائيًا bootloader إلى نواتك.</p>
+<p>إذا كنت مهتمًا ببناء bootloader خاص بك: ترقب، فمجموعة مقالات حول هذا الموضوع مخطط لها بالفعل! <!-- , check out our “_[Writing a Bootloader]_” posts, where we explain in detail how a bootloader is built. --></p>
+<h4 id="m-yr-multiboot"><a class="zola-anchor" href="#m-yr-multiboot" aria-label="Anchor link for: m-yr-multiboot">🔗</a>معيار Multiboot</h4>
+<p>لتجنب أن يقوم كل نظام تشغيل بتطبيق bootloader خاص به، والذي يتوافق مع نظام واحد فقط، أنشأت <a href="https://en.wikipedia.org/wiki/Free_Software_Foundation">Free Software Foundation</a> معيارًا مفتوحًا لـ bootloader يسمى <a href="https://wiki.osdev.org/Multiboot">Multiboot</a> في عام 1995. يحدد المعيار واجهة بين الـ bootloader ونظام التشغيل، بحيث يمكن لأي bootloader متوافق مع Multiboot تحميل أي نظام تشغيل متوافق مع Multiboot. التطبيق المرجعي هو <a href="https://en.wikipedia.org/wiki/GNU_GRUB">GNU GRUB</a>، وهو أشهر bootloader لأنظمة Linux.</p>
+<p>لجعل النواة متوافقة مع Multiboot، يلزم فقط إدراج ما يسمى <a href="https://www.gnu.org/software/grub/manual/multiboot/multiboot.html#OS-image-format">Multiboot header</a> في بداية ملف النواة. هذا يجعل من السهل جدًا إقلاع نظام التشغيل من GRUB. ومع ذلك، فإن GRUB ومعيار Multiboot لديهما بعض المشاكل أيضًا:</p>
+<ul>
+<li>يدعمان فقط protected mode من 32-bit. هذا يعني أنه لا يزال عليك القيام بتكوين وحدة المعالجة المركزية للتبديل إلى long mode من 64-bit.</li>
+<li>تم تصميمهما لجعل الـ bootloader بسيطًا بدلاً من النواة. على سبيل المثال، يجب ربط النواة مع <a href="https://wiki.osdev.org/Multiboot#Multiboot_2">adjusted default page size</a>، لأن GRUB لا يمكنه العثور على Multiboot header بخلاف ذلك. مثال آخر هو أن <a href="https://www.gnu.org/software/grub/manual/multiboot/multiboot.html#Boot-information-format">boot information</a>، التي يتم تمريرها إلى النواة، تحتوي على العديد من الهياكل المعتمدة على المعمارية بدلاً من توفير تجريدات نظيفة.</li>
+<li>كل من GRUB ومعيار Multiboot موثقان بشكل ضعيف فقط.</li>
+<li>يجب تثبيت GRUB على نظام المضيف لإنشاء صورة قرص قابلة للإقلاع من ملف النواة. هذا يجعل التطوير على Windows أو Mac أكثر صعوبة.</li>
+</ul>
+<p>بسبب هذه العيوب، قررنا عدم استخدام GRUB أو معيار Multiboot. ومع ذلك، نخطط لإضافة دعم Multiboot إلى أداة <a href="https://github.com/rust-osdev/bootloader">bootimage</a> الخاصة بنا، بحيث يمكن تحميل نواتك على نظام GRUB أيضًا. إذا كنت مهتمًا بكتابة نواة متوافقة مع Multiboot، راجع <a href="https://os.phil-opp.com/edition-1/">الإصدار الأول</a> من هذه السلسلة.</p>
+<h3 id="uefi"><a class="zola-anchor" href="#uefi" aria-label="Anchor link for: uefi">🔗</a>UEFI</h3>
+<p>(نحن لا ندعم UEFI في الوقت الحالي، لكننا نود ذلك! إذا كنت ترغب في المساعدة، يرجى إخبارنا في <a href="https://github.com/phil-opp/blog_os/issues/349">Github issue</a>.)</p>
+<h2 id="nw-bsyt-llgy"><a class="zola-anchor" href="#nw-bsyt-llgy" aria-label="Anchor link for: nw-bsyt-llgy">🔗</a>نواة بسيطة للغاية</h2>
+<p>الآن بعد أن عرفنا تقريبًا كيف يقلع الكمبيوتر، حان الوقت لإنشاء نواتنا البسيطة. هدفنا هو إنشاء صورة قرص تطبع “Hello World!” على الشاشة عند الإقلاع. نحن نفعل ذلك من خلال توسيع <a href="https://os.phil-opp.com/freestanding-rust-binary/">الثنائي المستقل لـ Rust</a> من المقال السابق.</p>
+<p>كما قد تتذكر، قمنا ببناء الثنائي المستقل من خلال <code>cargo</code>، ولكن بناءً على نظام التشغيل، كنا بحاجة إلى أسماء entry point مختلفة وأعلام تجميع مختلفة. وذلك لأن <code>cargo</code> يبني لنظام المضيف <em>host system</em> افتراضيًا، أي النظام الذي تعمل عليه. هذا ليس شيئًا نريده لنواتنا، لأن نواة تعمل على نظام مثل Windows لا معنى لها. بدلاً من ذلك، نريد التجميع لنظام هدف <em>target system</em> محدد بوضوح.</p>
+<h3 id="tthbyt-rust-nightly"><a class="zola-anchor" href="#tthbyt-rust-nightly" aria-label="Anchor link for: tthbyt-rust-nightly">🔗</a>تثبيت Rust Nightly</h3>
+<p>لدى Rust قنوات إصدار ثلاث: <em>stable</em> و <em>beta</em> و <em>nightly</em>. يشرح Rust Book الفرق بين هذه القنوات بشكل جيد جدًا، خذ دقيقة و<a href="https://doc.rust-lang.org/book/appendix-07-nightly-rust.html#choo-choo-release-channels-and-riding-the-trains">تحقق منه</a>. لبناء نظام تشغيل، سنحتاج إلى بعض الميزات التجريبية المتوفرة فقط على قناة nightly، لذلك نحتاج إلى تثبيت نسخة nightly من Rust.</p>
+<p>لإدارة تثبيتات Rust، أوصي بشدة بـ <a href="https://www.rustup.rs/">rustup</a>. يسمح لك بتثبيت مترجمات nightly و beta و stable جنبًا إلى جنب ويجعل تحديثها سهلًا. مع rustup، يمكنك استخدام مترجم nightly للدليل الحالي عن طريق تشغيل <code>rustup override set nightly</code>. بدلاً من ذلك، يمكنك إضافة ملف يسمى <code>rust-toolchain</code> بالمحتوى <code>nightly</code> إلى الدليل الجذري للمشروع. يمكنك التحقق من أن لديك نسخة nightly مثبتة عن طريق تشغيل <code>rustc --version</code>: يجب أن يحتوي رقم الإصدار على <code>-nightly</code> في النهاية.</p>
+<p>يسمح لك المترجم nightly بالتفعيل لميزات تجريبية مختلفة باستخدام ما يسمى <em>feature flags</em> في أعلى ملفك. على سبيل المثال، يمكننا تفعيل <a href="https://doc.rust-lang.org/stable/reference/inline-assembly.html"><code>asm!</code> macro</a> التجريبي لـ inline assembly عن طريق إضافة <code>#![feature(asm)]</code> إلى أعلى <code>main.rs</code> الخاص بنا. لاحظ أن هذه الميزات التجريبية غير مستقرة تمامًا، مما يعني أن إصدارات Rust المستقبلية قد تغيرها أو تزيلها دون إنذار مسبق. لهذا السبب، سنستخدمها فقط عند الضرورة القصوى.</p>
+<h3 id="mwsf-lhdf"><a class="zola-anchor" href="#mwsf-lhdf" aria-label="Anchor link for: mwsf-lhdf">🔗</a>مواصفة الهدف</h3>
+<p>يدعم Cargo أنظمة هدف مختلفة من خلال المعلمة <code>--target</code>. يتم وصف الهدف من خلال ما يسمى <em><a href="https://clang.llvm.org/docs/CrossCompilation.html#target-triple">target triple</a></em>، الذي يصف معمارية CPU والبائع ونظام التشغيل و<a href="https://stackoverflow.com/a/2456882">ABI</a>. على سبيل المثال، target triple <code>x86_64-unknown-linux-gnu</code> يصف نظامًا بـ CPU من نوع <code>x86_64</code>، بدون بائع واضح، ونظام تشغيل Linux مع GNU ABI. يدعم Rust <a href="https://forge.rust-lang.org/release/platform-support.html">عديد من target triples المختلفة</a>، بما في ذلك <code>arm-linux-androideabi</code> لـ Android أو <a href="https://www.hellorust.com/setup/wasm-target/"><code>wasm32-unknown-unknown</code> لـ WebAssembly</a>.</p>
+<p>بالنسبة لنظام الهدف الخاص بنا، نحتاج إلى بعض معاملات التكوين الخاصة (مثل عدم وجود نظام تشغيل أساسي)، لذلك لا يوجد من <a href="https://forge.rust-lang.org/release/platform-support.html">target triples الموجودة</a> ما يناسبنا. لحسن الحظ، يسمح لنا Rust بتحديد <a href="https://doc.rust-lang.org/nightly/rustc/targets/custom.html">هدفنا الخاص</a> من خلال ملف JSON. على سبيل المثال، ملف JSON الذي يصف هدف <code>x86_64-unknown-linux-gnu</code> يبدو كالتالي:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span>{
+</span><span>    </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64-unknown-linux-gnu&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;data-layout&quot;</span><span>: </span><span style="color:#d69d85;">&quot;e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;arch&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-endian&quot;</span><span>: </span><span style="color:#d69d85;">&quot;little&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-pointer-width&quot;</span><span>: </span><span style="color:#b5cea8;">64</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-c-int-width&quot;</span><span>: </span><span style="color:#b5cea8;">32</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;os&quot;</span><span>: </span><span style="color:#d69d85;">&quot;linux&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;executables&quot;</span><span>: </span><span style="color:#569cd6;">true</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;linker-flavor&quot;</span><span>: </span><span style="color:#d69d85;">&quot;gcc&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;pre-link-args&quot;</span><span>: [</span><span style="color:#d69d85;">&quot;-m64&quot;</span><span>],
+</span><span>    </span><span style="color:#d69d85;">&quot;morestack&quot;</span><span>: </span><span style="color:#569cd6;">false
+</span><span>}
+</span></code></pre>
+<p>معظم الحقول مطلوبة من قبل LLVM لتوليد الكود لتلك المنصة. على سبيل المثال، حقل <a href="https://llvm.org/docs/LangRef.html#data-layout"><code>data-layout</code></a> يحدد أحجام الأنواع المختلفة من الأعداد الصحيحة والكسور العشرية وأنواع المؤشرات. ثم هناك حقول يستخدمها Rust للتجميع الشرطي، مثل <code>target-pointer-width</code>. النوع الثالث من الحقول يحدد كيفية بناء الـ crate. على سبيل المثال، حقل <code>pre-link-args</code> يحدد الوسائط التي يتم تمريرها إلى الـ <a href="https://en.wikipedia.org/wiki/Linker_(computing)">linker</a>.</p>
+<p>نحن نستهدف أيضًا أنظمة <code>x86_64</code> بنواتنا، لذلك سيكون مواصفات الهدف الخاصة بنا مشابهة جدًا لما سبق. لنبدأ بإنشاء ملف <code>x86_64-blog_os.json</code> (اختر أي اسم تريده) بالمحتوى التالي:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span>{
+</span><span>    </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64-unknown-none&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;data-layout&quot;</span><span>: </span><span style="color:#d69d85;">&quot;e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;arch&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-endian&quot;</span><span>: </span><span style="color:#d69d85;">&quot;little&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-pointer-width&quot;</span><span>: </span><span style="color:#b5cea8;">64</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-c-int-width&quot;</span><span>: </span><span style="color:#b5cea8;">32</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;os&quot;</span><span>: </span><span style="color:#d69d85;">&quot;none&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;executables&quot;</span><span>: </span><span style="color:#569cd6;">true
+</span><span>}
+</span></code></pre>
+<p>لاحظ أننا غيّرنا نظام التشغيل في <code>llvm-target</code> وحقل <code>os</code> إلى <code>none</code>، لأننا ستعمل على bare metal.</p>
+<p>نضيف الإدخالات التالية المتعلقة بالبناء:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;linker-flavor&quot;</span><span>: </span><span style="color:#d69d85;">&quot;ld.lld&quot;</span><span>,
+</span><span style="color:#d69d85;">&quot;linker&quot;</span><span>: </span><span style="color:#d69d85;">&quot;rust-lld&quot;</span><span>,
+</span></code></pre>
+<p>بدلاً من استخدام linker الافتراضي للمنصة (الذي قد لا يدعم أهداف Linux)، نستخدم linker <a href="https://lld.llvm.org/">LLD</a> عبر الأنظمة الذي يأتي مع Rust لربط نواتنا.</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;panic-strategy&quot;</span><span>: </span><span style="color:#d69d85;">&quot;abort&quot;</span><span>,
+</span></code></pre>
+<p>تحدد هذه الإعدادات أن الهدف لا يدعم <a href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">stack unwinding</a> عند الـ panic، لذلك يجب أن يتوقف البرنامج مباشرة بدلاً من ذلك. لهذا نفس تأثير خيار <code>panic = "abort"</code> في Cargo.toml الخاص بنا، لذلك يمكننا إزالته من هناك. (لاحظ أنه على عكس خيار Cargo.toml، ينطبق هذا الخيار أيضًا عند إعادة تجميع مكتبة <code>core</code> لاحقًا في هذا المقال. لذلك، حتى لو كنت تفضل الاحتفاظ بخيار Cargo.toml، تأكد من تضمين هذا الخيار.)</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;disable-redzone&quot;</span><span>: </span><span style="color:#569cd6;">true</span><span>,
+</span></code></pre>
+<p>نحن نكتب نواة، لذلك سنحتاج إلى معالجة المقاطعات في مرحلة ما. للقيام بذلك بأمان، يجب علينا تعطيل تحسين معين لمؤشر الـ stack يسمى <em>“red zone”</em>، لأنه سيؤدي إلى تلف الـ stack بخلاف ذلك. لمزيد من المعلومات، راجع مقالنا المنفصل حول <a href="https://os.phil-opp.com/red-zone/">تعطيل red zone</a>.</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;features&quot;</span><span>: </span><span style="color:#d69d85;">&quot;-mmx,-sse,+soft-float&quot;</span><span>,
+</span></code></pre>
+<p>يتحكم حقل <code>features</code> في تفعيل/تعطيل ميزات الهدف. نحن نعطل ميزتي <code>mmx</code> و <code>sse</code> بإضافة بادئة سالبة إليها ونفعّل ميزة <code>soft-float</code> بإضافة بادئة موجبة إليها. لاحظ أنه يجب عدم وجود مسافات بين الأعلام المختلفة، وإلا فإن LLVM يفشل في تفسير سلسلة الميزات.</p>
+<p>ميزتا <code>mmx</code> و <code>sse</code> تحددان دعم تعليمات <a href="https://en.wikipedia.org/wiki/SIMD">SIMD</a>، التي غالبًا ما تسرع البرامج بشكل كبير. ومع ذلك، فإن استخدام سجلات SIMD الكبيرة في أنظمة التشغيل يؤدي إلى مشاكل في الأداء. السبب هو أن النواة تحتاج إلى استعادة جميع السجلات إلى حالتها الأصلية قبل استئناف برنامج تم مقاطعته. هذا يعني أن النواة يجب أن تحفظ حالة SIMD الكاملة في الذاكرة الرئيسية عند كل system call أو مقاطعة أجهزة. بما أن حالة SIMD كبيرة جدًا (512–1600 byte) ويمكن أن تحدث المقاطعات بشكل متكرر جدًا، فإن عمليات الحفظ/الاستعادة الإضافية هذه تضر بالأداء بشكل ملحوظ. لتجنب ذلك، نحن نعطل SIMD لنواتنا (وليس للتطبيقات التي تعمل عليها!).</p>
+<p>مشكلة تعطيل SIMD هي أن عمليات الكسور العشرية على <code>x86_64</code> تتطلب سجلات SIMD افتراضيًا. لحل هذه المشكلة، نضيف ميزة <code>soft-float</code>، التي تحاكي جميع عمليات الكسور العشرية عبر دوال برمجية تعتمد على الأعداد الصحيحة العادية.</p>
+<p>لمزيد من المعلومات، راجع مقالتنا حول [تعطيل SIMD]<a href="https://os.phil-opp.com/disable-simd/">disabling SIMD</a>.</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;rustc-abi&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86-softfloat&quot;
+</span></code></pre>
+<p>بما أننا نريد استخدام ميزة <code>soft-float</code>، نحتاج أيضًا إلى إخبار مترجم Rust <code>rustc</code> أننا نريد استخدام ABI المقابل. يمكننا ذلك عن طريق تعيين حقل <code>rustc-abi</code> إلى <code>x86-softfloat</code>.</p>
+<h4 id="dmj-kl-shy"><a class="zola-anchor" href="#dmj-kl-shy" aria-label="Anchor link for: dmj-kl-shy">🔗</a>دمج كل شيء</h4>
+<p>ملف مواصفات الهدف الخاص بنا يبدو الآن كالتالي:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span>{
+</span><span>    </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64-unknown-none&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;data-layout&quot;</span><span>: </span><span style="color:#d69d85;">&quot;e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;arch&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-endian&quot;</span><span>: </span><span style="color:#d69d85;">&quot;little&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-pointer-width&quot;</span><span>: </span><span style="color:#b5cea8;">64</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-c-int-width&quot;</span><span>: </span><span style="color:#b5cea8;">32</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;os&quot;</span><span>: </span><span style="color:#d69d85;">&quot;none&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;executables&quot;</span><span>: </span><span style="color:#569cd6;">true</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;linker-flavor&quot;</span><span>: </span><span style="color:#d69d85;">&quot;ld.lld&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;linker&quot;</span><span>: </span><span style="color:#d69d85;">&quot;rust-lld&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;panic-strategy&quot;</span><span>: </span><span style="color:#d69d85;">&quot;abort&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;disable-redzone&quot;</span><span>: </span><span style="color:#569cd6;">true</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;features&quot;</span><span>: </span><span style="color:#d69d85;">&quot;-mmx,-sse,+soft-float&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;rustc-abi&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86-softfloat&quot;
+</span><span>}
+</span></code></pre>
+<h3 id="bn-lnw"><a class="zola-anchor" href="#bn-lnw" aria-label="Anchor link for: bn-lnw">🔗</a>بناء النواة</h3>
+<p>سيستخدم التجميع لهدفنا الجديد اصطلاحات Linux، لأن ld.lld linker-flavor يوجّه llvm للتجميع مع العلم <code>-flavor gnu</code> (لمزيد من خيارات linker، راجع <a href="https://doc.rust-lang.org/rustc/codegen-options/index.html#linker-flavor">توثيق rustc</a>). هذا يعني أننا نحتاج إلى entry point باسم <code>_start</code> كما هو موضح في <a href="https://os.phil-opp.com/freestanding-rust-binary/">المقال السابق</a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs
+</span><span>
+</span><span>#![no_std] </span><span style="color:#608b4e;">// don&#39;t link the Rust standard library
+</span><span>#![no_main] </span><span style="color:#608b4e;">// disable all Rust-level entry points
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span style="color:#608b4e;">/// This function is called on panic.
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span>#[unsafe(no_mangle)] </span><span style="color:#608b4e;">// don&#39;t mangle the name of this function
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// this function is the entry point, since the linker looks for a function
+</span><span>    </span><span style="color:#608b4e;">// named `_start` by default
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>لاحظ أن الـ entry point يجب أن يسمى <code>_start</code> بغض النظر عن نظام التشغيل المضيف.</p>
+<p>يمكننا الآن بناء النواة لهدفنا الجديد عن طريق تمرير اسم ملف JSON كـ <code>--target</code>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build --target x86_64-blog_os.json
+</span><span>
+</span><span>error: `.json` target specs require -Zjson-target-spec
+</span></code></pre>
+<p>فشل! يخبرنا الخطأ أن مواصفات JSON target المخصصة هي ميزة غير مستقرة تتطلب تفعيلًا صريحًا. وذلك لأن تنسيق ملفات JSON target غير مستقر بعد، لذلك قد تحدث تغييرات عليه في إصدارات Rust المستقبلية. راجع <a href="https://github.com/rust-lang/rust/issues/151528">issue التتبع لمواصفات JSON target المخصصة</a> لمزيد من المعلومات.</p>
+<h4 id="khyr-json-target-spec"><a class="zola-anchor" href="#khyr-json-target-spec" aria-label="Anchor link for: khyr-json-target-spec">🔗</a>خيار <code>json-target-spec</code></h4>
+<p>لتفعيل دعم مواصفات JSON target المخصصة، نحتاج إلى إنشاء ملف <a href="https://doc.rust-lang.org/cargo/reference/config.html">تكوين cargo</a> محلي في <code>.cargo/config.toml</code> (يجب أن يكون مجلد <code>.cargo</code> بجانب مجلد <code>src</code>) بالمحتوى التالي:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in .cargo/config.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">unstable</span><span>]
+</span><span style="color:#569cd6;">json-target-spec </span><span>= </span><span style="color:#569cd6;">true
+</span></code></pre>
+<p>هذا يفعل ميزة <code>json-target-spec</code> غير المستقرة، مما يسمح لنا بملفات JSON target المخصصة.</p>
+<p>مع هذا التكوين في مكانه، لنحاول البناء مرة أخرى:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build --target x86_64-blog_os.json
+</span><span>
+</span><span>error[E0463]: can&#39;t find crate for `core`
+</span></code></pre>
+<p>لا يزال يفشل، ولكن بخطأ جديد. يخبرنا الخطأ أن مترجم Rust لا يجد <a href="https://doc.rust-lang.org/nightly/core/index.html">مكتبة <code>core</code></a>. تحتوي هذه المكتبة على أنواع Rust الأساسية مثل <code>Result</code> و <code>iterators</code> و <code>Option</code>، وهي مرتبطة ضمنيًا بجميع <code>no_std</code> crates.</p>
+<p>المشكلة هي أن مكتبة core موزعة مع مترجم Rust كمكتبة <em>مجمّعة مسبقًا</em>. لذلك فهي صالحة فقط لـ host triples المدعومة (مثل <code>x86_64-unknown-linux-gnu</code>) ولكن ليس لهدفنا المخصص. إذا أردنا تجميع كود لأهداف أخرى، نحتاج إلى إعادة تجميع <code>core</code> لهذه الأهداف أولاً.</p>
+<h4 id="khyr-build-std"><a class="zola-anchor" href="#khyr-build-std" aria-label="Anchor link for: khyr-build-std">🔗</a>خيار <code>build-std</code></h4>
+<p>هنا يأتي دور ميزة <a href="https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#build-std"><code>build-std</code> feature</a> في cargo. تسمح بإعادة تجميع <code>core</code> وغيرها من crates مكتبة القياسية عند الطلب، بدلاً من استخدام النسخ المجمّعة مسبقًا المتوفرة مع تثبيت Rust. هذه الميزة جديدة جدًا وما زالت غير مكتملة، لذلك هي محددة كـ “غير مستقرة” ومتوفرة فقط على [مترجمات Rust nightly].</p>
+<p>لاستخدام الميزة، نحتاج إلى إضافة ما يلي إلى ملف <a href="https://doc.rust-lang.org/cargo/reference/config.html">تكوين cargo</a> في <code>.cargo/config.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in .cargo/config.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">unstable</span><span>]
+</span><span style="color:#569cd6;">json-target-spec </span><span>= </span><span style="color:#569cd6;">true
+</span><span style="color:#569cd6;">build-std </span><span>= [</span><span style="color:#d69d85;">&quot;core&quot;</span><span>, </span><span style="color:#d69d85;">&quot;compiler_builtins&quot;</span><span>]
+</span></code></pre>
+<p>هذا يخبر cargo أنه يجب إعادة تجميع مكتبتي <code>core</code> و <code>compiler_builtins</code>. هذه الأخيرة مطلوبة لأنها dependency لـ <code>core</code>. من أجل إعادة تجميع هذه المكتبات، يحتاج cargo إلى الوصول إلى كود مصدر Rust، الذي يمكننا تثبيته مع <code>rustup component add rust-src</code>.</p>
+<div class="note">
+<p><strong>ملاحظة:</strong> يتطلب مفتاح التكوين <code>unstable.build-std</code> على الأقل Rust nightly من 2020-07-15.</p>
+</div>
+<p>بعد تعيين مفتاح التكوين <code>unstable.build-std</code> وتثبيت مكون <code>rust-src</code>، يمكننا إعادة تشغيل أمر البناء:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build --target x86_64-blog_os.json
+</span><span>   Compiling core v0.0.0 (/…/rust/src/libcore)
+</span><span>   Compiling rustc-std-workspace-core v1.99.0 (/…/rust/src/tools/rustc-std-workspace-core)
+</span><span>   Compiling compiler_builtins v0.1.32
+</span><span>   Compiling blog_os v0.1.0 (/…/blog_os)
+</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.29 secs
+</span></code></pre>
+<p>نرى أن <code>cargo build</code> الآن يعيد تجميع مكتبات <code>core</code> و <code>rustc-std-workspace-core</code> (dependency لـ <code>compiler_builtins</code>) و <code>compiler_builtins</code> لهدفنا المخصص.</p>
+<h4 id="ldwl-lmt-lq-bldhkr"><a class="zola-anchor" href="#ldwl-lmt-lq-bldhkr" aria-label="Anchor link for: ldwl-lmt-lq-bldhkr">🔗</a>الدوال المتعلقة بالذاكرة</h4>
+<p>يفترض مترجم Rust أن مجموعة معينة من الدوال المدمجة متوفرة لجميع الأنظمة. معظم هذه الدوال توفرها مكتبة <code>compiler_builtins</code> التي أعدنا تجميعها للتو. ومع ذلك، هناك بعض الدوال المتعلقة بالذاكرة في تلك المكتبة غير مفعلة افتراضيًا لأنها عادةً ما توفرها مكتبة C على النظام. تشمل هذه الدوال <code>memset</code>، التي تضع جميع البايتات في كتلة ذاكرة بقيمة معينة، و <code>memcpy</code>، التي تنسخ كتلة ذاكرة إلى أخرى، و <code>memcmp</code>، التي تقارن كتلتي ذاكرة. بينما لم نكن بحاجة إلى أي من هذه الدوال لتجميع نواتنا الآن، ستكون مطلوبة بمجرد إضافة المزيد من الكود إليها (مثل نسخ الـ structs).</p>
+<p>بما أننا لا يمكننا الربط بمكتبة C لنظام التشغيل، نحتاج إلى طريقة بديلة لتوفير هذه الدوال للمترجم. نهج ممكن لذلك قد يكون تنفيذ دوال <code>memset</code> الخاصة بنا وتطبيق السمة <code>#[unsafe(no_mangle)]</code> عليها (لتجنب إعادة التسمية التلقائية أثناء التجميع). ومع ذلك، هذا خطير لأن أصغر خطأ في تنفيذ هذه الدوال قد يؤدي إلى سلوك غير محدد. على سبيل المثال، تنفيذ <code>memcpy</code> بحلقة <code>for</code> قد يؤدي إلى recursion غير محدود لأن حلقات <code>for</code> تستدعي ضمنياً دالة trait <a href="https://doc.rust-lang.org/stable/core/iter/trait.IntoIterator.html#tymethod.into_iter"><code>IntoIterator::into_iter</code></a>، التي قد تستدعي <code>memcpy</code> مرة أخرى. لذلك من الجيد إعادة استخدام التطبيقات الموجودة والمجربة بدلاً من ذلك.</p>
+<p>لحسن الحظ، تحتوي مكتبة <code>compiler_builtins</code> بالفعل على تطبيقات لجميع الدوال المطلوبة، ولكنها معطلة افتراضيًا حتى لا تتصادم مع التطبيقات من مكتبة C. يمكننا تفعيلها عن طريق تعيين العلم <a href="https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#build-std-features"><code>build-std-features</code></a> في cargo إلى <code>["compiler-builtins-mem"]</code>. مثل علم <code>build-std</code>، يمكن تمرير هذا العلم إما في سطر الأوامر كعلم <code>-Z</code> أو تكوينه في جدول <code>unstable</code> في ملف <code>.cargo/config.toml</code>. بما أننا نريد دائمًا البناء مع هذا العلم، فإن خيار ملف التكوين مناسب أكثر بالنسبة لنا:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in .cargo/config.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">unstable</span><span>]
+</span><span style="color:#569cd6;">json-target-spec </span><span>= </span><span style="color:#569cd6;">true
+</span><span style="color:#569cd6;">build-std-features </span><span>= [</span><span style="color:#d69d85;">&quot;compiler-builtins-mem&quot;</span><span>]
+</span><span style="color:#569cd6;">build-std </span><span>= [</span><span style="color:#d69d85;">&quot;core&quot;</span><span>, </span><span style="color:#d69d85;">&quot;compiler_builtins&quot;</span><span>]
+</span></code></pre>
+<p>(دعم ميزة <code>compiler-builtins-mem</code> تمت <a href="https://github.com/rust-lang/rust/pull/77284">إضافته مؤخرًا جدًا</a>، لذلك تحتاج على الأقل إلى Rust nightly <code>2020-09-30</code> لها.)</p>
+<p>خلف الكواليس، يفعل هذا العلم ميزة <a href="https://github.com/rust-lang/compiler-builtins/blob/eff506cd49b637f1ab5931625a33cef7e91fbbf6/Cargo.toml#L54-L55"><code>mem</code> feature</a> في مكتبة <code>compiler_builtins</code>. تأثير هذا هو أن السمة <code>#[unsafe(no_mangle)]</code> تُطبق على <a href="https://github.com/rust-lang/compiler-builtins/blob/eff506cd49b637f1ab5931625a33cef7e91fbbf6/src/mem.rs#L12-L69">تطبيقات <code>memcpy</code> وغيرها</a> في المكتبة، مما يجعلها متاحة لـ linker.</p>
+<p>مع هذا التغيير، تحتوي نواتنا على تطبيقات صالحة لجميع الدوال المطلوبة من المترجم، لذلك ستستمر في التجميع حتى لو أصبح كودنا أكثر تعقيدًا.</p>
+<h4 id="t-yyn-hdf-ftrdy"><a class="zola-anchor" href="#t-yyn-hdf-ftrdy" aria-label="Anchor link for: t-yyn-hdf-ftrdy">🔗</a>تعيين هدف افتراضي</h4>
+<p>لتجنب تمرير المعلمة <code>--target</code> في كل مرة نستدعي فيها <code>cargo build</code>، يمكننا تجاوز الهدف الافتراضي. للقيام بذلك، نضيف ما يلي إلى ملف <a href="https://doc.rust-lang.org/cargo/reference/config.html">تكوين cargo</a> في <code>.cargo/config.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in .cargo/config.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">build</span><span>]
+</span><span style="color:#569cd6;">target </span><span>= </span><span style="color:#d69d85;">&quot;x86_64-blog_os.json&quot;
+</span></code></pre>
+<p>هذا يخبر <code>cargo</code> باستخدام هدف <code>x86_64-blog_os.json</code> الخاص بنا عندما لا يتم تمرير وسيطة <code>--target</code> صريحة. هذا يعني أننا يمكننا الآن بناء نواتنا بـ <code>cargo build</code> بسيط. لمزيد من المعلومات حول خيارات تكوين cargo، راجع <a href="https://doc.rust-lang.org/cargo/reference/config.html">التوثيق الرسمي</a>.</p>
+<p>الآن نحن قادرون على بناء نواتنا لهدف bare metal بـ <code>cargo build</code> بسيط. ومع ذلك، فإن entry point <code>_start</code> الخاص بنا، الذي سيتم استدعاؤه من قبل bootloader، لا يزال فارغًا. حان الوقت أن نخرج شيئًا ما على الشاشة منه.</p>
+<h3 id="ltb-l-lshsh"><a class="zola-anchor" href="#ltb-l-lshsh" aria-label="Anchor link for: ltb-l-lshsh">🔗</a>الطباعة على الشاشة</h3>
+<p>أسهل طباعة نص على الشاشة في هذه المرحلة هي <a href="https://en.wikipedia.org/wiki/VGA-compatible_text_mode">VGA text buffer</a>. وهي منطقة ذاكرة خاصة مُعيّنة على أجهزة VGA تحتوي على المحتويات المعروضة على الشاشة. عادةً ما تتكون من 25 سطرًا يحتوي كل منها على 80 خلية حرف. تعرض كل خلية حرف ASCII مع بعض ألوان الخلفية والمقدمة. يبدو الإخراج على الشاشة كالتالي:</p>
+<p><img src="https://upload.wikimedia.org/wikipedia/commons/f/f8/Codepage-437.png" alt="screen output for common ASCII characters" /></p>
+<p>سنناقش التخطيط الدقيق لـ buffer VGA في المقال التالي، حيث سنكتب أول driver صغير له. لطباعة “Hello World!”، نحتاج فقط إلى معرفة أن الـ buffer موجود على العنوان <code>0xb8000</code> وأن كل خلية حرف تتكون من بايت ASCII وبايت لون.</p>
+<p>يبدو التنفيذ كالتالي:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">HELLO</span><span>: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">u8</span><span>] = </span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&quot;Hello World!&quot;</span><span>;
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> vga_buffer = </span><span style="color:#b5cea8;">0xb8000 </span><span style="color:#569cd6;">as *mut u8</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, </span><span style="color:#569cd6;">&amp;</span><span>byte) </span><span style="color:#569cd6;">in </span><span style="color:#b4cea8;">HELLO</span><span>.iter().enumerate() {
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            *vga_buffer.offset(i </span><span style="color:#569cd6;">as isize </span><span>* </span><span style="color:#b5cea8;">2</span><span>) = byte;
+</span><span>            *vga_buffer.offset(i </span><span style="color:#569cd6;">as isize </span><span>* </span><span style="color:#b5cea8;">2 </span><span>+ </span><span style="color:#b5cea8;">1</span><span>) = </span><span style="color:#b5cea8;">0xb</span><span>;
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>أولاً، نحول العدد الصحيح <code>0xb8000</code> إلى <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">مؤشر خام</a>. ثم ن<a href="https://doc.rust-lang.org/stable/book/ch13-02-iterators.html">تكرار</a> على بايتات <a href="https://doc.rust-lang.org/reference/tokens.html#byte-string-literals">السلسلة النصية من البايتات</a> <code>HELLO</code> <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html#the-static-lifetime">الثابتة</a>. نستخدم الدالة <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a> للحصول على متغير عدّاد <code>i</code> أيضًا. في جسم حلقة for، نستخدم الدالة <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a> لكتابة بايت السلسلة وبايت اللون المقابل (<code>0xb</code> هو لون سيان فاتح).</p>
+<p>لاحظ أن هناك كتلة <a href="https://doc.rust-lang.org/stable/book/ch19-01-unsafe-rust.html"><code>unsafe</code></a> حول جميع عمليات الكتابة في الذاكرة. السبب هو أن مترجم Rust لا يستطيع إثبات أن المؤشرات الخام التي ننشئها صالحة. يمكنها الإشارة إلى أي مكان وتؤدي إلى تلف البيانات. بوضعها في كتلة <code>unsafe</code>، نحن نخبر المترجم أننا متأكدون تمامًا من أن العمليات صالحة. لاحظ أن كتلة <code>unsafe</code> لا توقف فحوصات الأمان في Rust. إنها تسمح لك فقط بـ <a href="https://doc.rust-lang.org/stable/book/ch20-01-unsafe-rust.html#unsafe-superpowers">خمسة أشياء إضافية</a>.</p>
+<p>أريد التأكيد على أن <strong>هذا ليس الطريقة التي نريد القيام بها في Rust!</strong> من السهل جدًا ارتكاب أخطاء عند العمل مع المؤشرات الخام داخل كتل unsafe. على سبيل المثال، يمكننا بسهولة الكتابة بعد نهاية buffer إذا لم نكن حذرين.</p>
+<p>لذلك نريد تقليل استخدام <code>unsafe</code> قدر الإمكان. يمنحنا Rust القدرة على القيام بذلك بإنشاء تجريدات آمنة. على سبيل المثال، يمكننا إنشاء نوع buffer VGA يجمع كل عدم الأمان ويضمن أنه من <em>المستحيل</em> القيام بأي شيء خاطئ من الخارج. بهذه الطريقة، سنحتاج فقط إلى كميات قليلة من كود <code>unsafe</code> ونضمن عدم انتهاك <a href="https://en.wikipedia.org/wiki/Memory_safety">أمان الذاكرة</a>. سنقوم بإنشاء مثل هذا التجريد الآمن لـ buffer VGA في المقال التالي.</p>
+<h2 id="tshgyl-lnw"><a class="zola-anchor" href="#tshgyl-lnw" aria-label="Anchor link for: tshgyl-lnw">🔗</a>تشغيل النواة</h2>
+<p>الآن بعد أن لدينا ملف قابل للتنفيذ يفعل شيئًا محسوسًا، حان الوقت لتشغيله. أولاً، نحتاج إلى تحويل نواتنا المجمّعة إلى صورة قرص قابلة للإقلاع عن طريق ربطها بـ bootloader. ثم يمكننا تشغيل صورة القرص في الآلة الافتراضية <a href="https://www.qemu.org/">QEMU</a> أو إقلاعها على أجهزة حقيقية باستخدام USB stick.</p>
+<h3 id="nsh-swr-ql"><a class="zola-anchor" href="#nsh-swr-ql" aria-label="Anchor link for: nsh-swr-ql">🔗</a>إنشاء صورة إقلاع</h3>
+<p>لتحويل نواتنا المجمّعة إلى صورة قرص قابلة للإقلاع، نحتاج إلى ربطها بـ bootloader. كما تعلمنا في <a href="https://os.phil-opp.com/ar/minimal-rust-kernel/#the-boot-process">القسم حول الإقلاع</a>، فإن الـ bootloader مسؤول عن تهيئة وحدة المعالجة المركزية وتحميل نواتنا.</p>
+<p>بدلاً من كتابة bootloader خاص بنا، وهو مشروع بحد ذاته، نستخدم مكتبة <a href="https://crates.io/crates/bootloader"><code>bootloader</code></a>. تنفذ هذه المكتبة bootloader أساسي لـ BIOS بدون أي تبعيات C، فقط Rust و inline assembly. لاستخدامها لإقلاع نواتنا، نحتاج إلى إضافة dependency عليها:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">bootloader </span><span>= </span><span style="color:#d69d85;">&quot;0.9&quot;
+</span></code></pre>
+<p><strong>ملاحظة:</strong> هذا المقال متوافق فقط مع <code>bootloader v0.9</code>. الإصدارات الأحدث تستخدم نظام بناء مختلف وستؤدي إلى أخطاء بناء عند اتباع هذا المقال.</p>
+<p>إضافة bootloader كـ dependency لا يكفي لإنشاء صورة قرص قابلة للإقلاع فعليًا. المشكلة هي أننا نحتاج إلى ربط نواتنا مع bootloader بعد التجميع، ولكن cargo لا يدعم <a href="https://github.com/rust-lang/cargo/issues/545">سكريپتات ما بعد البناء</a>.</p>
+<p>لحل هذه المشكلة، أنشأنا أداة تسمى <code>bootimage</code> تقوم أولاً بتجميع النواة و bootloader، ثم تربطهما معًا لإنشاء صورة قرص قابلة للإقلاع. لتثبيت الأداة، اذهب إلى الدليل الرئيسي (أو أي دليل خارج مشروع cargo) ونفّذ الأمر التالي في terminal:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo install bootimage
+</span></code></pre>
+<p>لتشغيل <code>bootimage</code> وبناء الـ bootloader، تحتاج إلى تثبيت مكون <code>llvm-tools-preview</code> rustup. يمكنك ذلك بتنفيذ <code>rustup component add llvm-tools-preview</code>.</p>
+<p>بعد تثبيت <code>bootimage</code> وإضافة مكون <code>llvm-tools-preview</code>، يمكنك إنشاء صورة قرص قابلة للإقلاع بالعودة إلى دليل مشروع cargo وتنفيذ:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo bootimage
+</span></code></pre>
+<p>نرى أن الأداة تعيد تجميع نواتنا باستخدام <code>cargo build</code>، لذلك ستلتقط تلقائيًا أي تغييرات تقوم بها. بعد ذلك، تجمع الـ bootloader، وقد يستغرق ذلك بعض الوقت. مثل جميع تبعيات crates، يتم بناؤها مرة واحدة فقط ثم يتم تخزينها مؤقتًا، لذلك ستكون البناءات اللاحقة أسرع بكثير. أخيرًا، تجمع <code>bootimage</code> bootloader ونواتك في صورة قرص قابلة للإقلاع.</p>
+<p>بعد تنفيذ الأمر، يجب أن ترى صورة قرص قابلة للإقلاع باسم <code>bootimage-blog_os.bin</code> في دليل <code>target/x86_64-blog_os/debug</code>. يمكنك إقلاعها على آلة افتراضية أو نسخها على USB drive لإقلاعها على أجهزة حقيقية. (لاحظ أن هذا ليس صورة CD، التي لها تنسيق مختلف، لذلك حرقها على CD لا يعمل).</p>
+<h4 id="kyf-t-ml"><a class="zola-anchor" href="#kyf-t-ml" aria-label="Anchor link for: kyf-t-ml">🔗</a>كيف تعمل؟</h4>
+<p>تقوم أداة <code>bootimage</code> بالخطوات التالية خلف الكواليس:</p>
+<ul>
+<li>تجمع نواتنا إلى ملف <a href="https://en.wikipedia.org/wiki/Executable_and_Linkable_Format">ELF</a>.</li>
+<li>تجمع dependency bootloader كـ executable مستقل.</li>
+<li>تربط بايتات ملف ELF للنواة مع bootloader.</li>
+</ul>
+<p>عند الإقلاع، يقرأ الـ bootloader ملف ELF المُلحق ويحلله. ثم يعيّن أجزاء البرنامج إلى عناوين افتراضية في page tables، ويصفّر قسم <code>.bss</code>، ويُعدّ stack. أخيرًا، يقرأ عنوان entry point (دالة <code>_start</code> الخاصة بنا) ويقفز إليها.</p>
+<h3 id="tshgylh-fy-qemu"><a class="zola-anchor" href="#tshgylh-fy-qemu" aria-label="Anchor link for: tshgylh-fy-qemu">🔗</a>تشغيلها في QEMU</h3>
+<p>يمكننا الآن إقلاع صورة القرص في آلة افتراضية. لإقلاعها في <a href="https://www.qemu.org/">QEMU</a>، نفّذ الأمر التالي:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; qemu-system-x86_64 -drive format=raw,file=target/x86_64-blog_os/debug/bootimage-blog_os.bin
+</span></code></pre>
+<p>يفتح هذا نافذة منفصلة يجب أن تبدو مشابهة لهذا:</p>
+<p><img src="https://os.phil-opp.com/ar/minimal-rust-kernel/qemu.png" alt="QEMU showing “Hello World!”" /></p>
+<p>نرى أن “Hello World!” الخاصة بنا مرئية على الشاشة.</p>
+<h3 id="jhz-hqyqy"><a class="zola-anchor" href="#jhz-hqyqy" aria-label="Anchor link for: jhz-hqyqy">🔗</a>جهاز حقيقي</h3>
+<p>من الممكن أيضًا كتابتها على USB stick وإقلاعها على جهاز حقيقي، <strong>لكن كن حذرًا</strong> في اختيار اسم الجهاز الصحيح، لأن <strong>كل شيء على ذلك الجهاز يتم الكتابة فوقه</strong>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; dd if=target/x86_64-blog_os/debug/bootimage-blog_os.bin of=/dev/sdX &amp;&amp; sync
+</span></code></pre>
+<p>حيث <code>sdX</code> هو اسم جهاز USB stick.</p>
+<p>بعد كتابة الصورة على USB stick، يمكنك تشغيلها على أجهزة حقيقية عن طريق الإقلاع منها. ربما تحتاج إلى استخدام قائمة إقلاع خاصة أو تغيير ترتيب الإقلاع في تكوين BIOS للإقلاع من USB stick. لاحظ أنها لا تعمل حاليًا لأجهزة UEFI، لأن مكتبة <code>bootloader</code> لا تدعم UEFI بعد.</p>
+<h3 id="stkhdm-cargo-run"><a class="zola-anchor" href="#stkhdm-cargo-run" aria-label="Anchor link for: stkhdm-cargo-run">🔗</a>استخدام <code>cargo run</code></h3>
+<p>لتسهيل تشغيل نواتنا في QEMU، يمكننا تعيين مفتاح التكوين <code>runner</code> لـ cargo:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in .cargo/config.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;none&quot;)&#39;</span><span>]
+</span><span style="color:#569cd6;">runner </span><span>= </span><span style="color:#d69d85;">&quot;bootimage runner&quot;
+</span></code></pre>
+<p>جدول <code>target.'cfg(target_os = "none")'</code> ينطبق على جميع الأهداف التي يكون فيها حقل <code>"os"</code> في ملف تكوين الهدف مُعيّن إلى <code>"none"</code>. هذا يشمل هدف <code>x86_64-blog_os.json</code> الخاص بنا. يحدد المفتاح <code>runner</code> الأمر الذي يجب استدعاؤه لـ <code>cargo run</code>. يتم تشغيل الأمر بعد بناء ناجح مع تمرير مسار executable كوسيطة أولى. راجع <a href="https://doc.rust-lang.org/cargo/reference/config.html">توثيق cargo</a> لمزيد من التفاصيل.</p>
+<p>أمر <code>bootimage runner</code> مصمم خصيصًا ليكون قابلاً للاستخدام كـ executable <code>runner</code>. يربط الملف التنفيذي المعطى مع dependency bootloader للمشروع ثم يطلق QEMU. راجع [Readme لـ <code>bootimage</code>] لمزيد من التفاصيل وخيارات التكوين الممكنة.</p>
+<p>الآن يمكننا استخدام <code>cargo run</code> لتجميع نواتنا وإقلاعها في QEMU.</p>
+<h2 id="m-ltly"><a class="zola-anchor" href="#m-ltly" aria-label="Anchor link for: m-ltly">🔗</a>ما التالي؟</h2>
+<p>في المقال التالي، سنستكشف VGA text buffer بمزيد من التفصيل وسنكتب واجهة آمنة له. سنضيف أيضًا دعم macro <code>println</code>.</p>
+
+    </div>
+
+    <div class="post-footer-support right-to-left">
+        <h2>ادعمني</h2>
+<p>إنشاء وصيانة هذه المدونة والمكتبات المرتبطة بها يتطلب جهدًا كبيرًا، لكنني أستمتع حقًا بذلك. بدعمك لي، يمكنني تخصيص وقت أكثر لإنشاء محتوى جديد وميزات جديدة والصيانة المستمرة. أفضل طريقة لدعمي هي <a href="https://github.com/sponsors/phil-opp"><em>رعايتي على GitHub</em></a>. شكرًا لك!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/ar/freestanding-rust-binary/">&laquo; ثنائي Rust مستقل</a>
+        
+        
+            <a class="next" href="/ar/vga-text-mode/">وضع نص VGA &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="right-to-left">التعليقات</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        هل لديك مشكلة، أو تريد مشاركة ملاحظات، أو مناقشة أفكار إضافية؟ لا تتردد في ترك تعليق هنا! يرجى الالتزام باللغة الإنجليزية واتباع <a href="https://www.rust-lang.org/policies/code-of-conduct">مدونة سلوك Rust</a>. يتم ربط هذا الخيط من التعليقات مباشرة بـ <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22A%20Minimal%20Rust%20Kernel%20%28ar%29%22%20in%3Atitle"><em>نقاش على GitHub</em></a>، لذا يمكنك التعليق هناك أيضًا إذا أردت.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="A Minimal Rust Kernel (ar)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="ar"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22A%20Minimal%20Rust%20Kernel%20%28ar%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="right-to-left">
+            يفضل كتابة التعليقات باللغة الإنجليزية إن أمكن.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/minimal-rust-kernel/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/minimal-rust-kernel/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/minimal-rust-kernel/">
+                        Persian
+                    </a></li><li data-lang-switch-to="fr" class=""><a href="https://os.phil-opp.com/fr/minimal-rust-kernel/">
+                        French
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/minimal-rust-kernel/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/minimal-rust-kernel/">
+                        Korean
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/minimal-rust-kernel/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="ru" class=""><a href="https://os.phil-opp.com/ru/minimal-rust-kernel/">
+                        Russian
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/minimal-rust-kernel/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

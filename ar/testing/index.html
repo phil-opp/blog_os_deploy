@@ -1,0 +1,1044 @@
+<!doctype html>
+
+<html lang="ar">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="يستكشف هذا المقال اختبارات الوحدة والتكامل في executables no_std. سنستخدم دعم Rust لـ test frameworks المخصصة لتنفيذ دوال الاختبار داخل نواتنا. للإبلا…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/ar/testing/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>الاختبار | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/ar" title="All Posts">« كل المقالات</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="right-to-left">
+        <h2>جدول المحتويات</h2>
+    <ol>
+        <li>
+            <a href="#lmttlbt">المتطلبات</a>
+            
+        </li><li>
+            <a href="#lkhtbr-fy-rust">الاختبار في Rust</a>
+            <ol>
+                <li>
+                    <a href="#tr-lkhtbr-lmkhss">أطر الاختبار المخصصة</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#lkhrwj-mn-qemu">الخروج من QEMU</a>
+            <ol>
+                <li>
+                    <a href="#mnfdh-ldkhl-lkhrj">منافذ الإدخال/الإخراج</a>
+                </li><li>
+                    <a href="#stkhdm-jhz-lkhrwj">استخدام جهاز الخروج</a>
+                </li><li>
+                    <a href="#rmz-lkhrwj-lnjh">رمز الخروج الناجح</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ltb-l-whd-lthkm">الطباعة على وحدة التحكم</a>
+            <ol>
+                <li>
+                    <a href="#lmnfdh-ltslsly">المنفذ التسلسلي</a>
+                </li><li>
+                    <a href="#wsy-t-qemu">وسائط QEMU</a>
+                </li><li>
+                    <a href="#tb-rsl-kht-nd-l-panic">طباعة رسالة خطأ عند الـ panic</a>
+                </li><li>
+                    <a href="#khf-qemu">إخفاء QEMU</a>
+                </li><li>
+                    <a href="#lmhlt-lzmny">المهلات الزمنية</a>
+                </li><li>
+                    <a href="#drj-brt-ltb-tlqy-yan">إدراج عبارات الطباعة تلقائيًا</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#khtbr-buffer-vga">اختبار Buffer VGA</a>
+            
+        </li><li>
+            <a href="#khtbrt-ltkml">اختبارات التكامل</a>
+            <ol>
+                <li>
+                    <a href="#nsh-mktb">إنشاء مكتبة</a>
+                </li><li>
+                    <a href="#kml-khtbr-ltkml">إكمال اختبار التكامل</a>
+                </li><li>
+                    <a href="#lkhtbrt-lmstqbly">الاختبارات المستقبلية</a>
+                </li><li>
+                    <a href="#lkhtbrt-lty-yjb-n-tusyb-bl-panic">الاختبارات التي يجب أن تُصيب بالـ panic</a>
+                </li><li>
+                    <a href="#lkhtbrt-bdwn-harness">الاختبارات بدون harness</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#lkhls">الخلاصة</a>
+            
+        </li><li>
+            <a href="#m-ltly">ما التالي؟</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="right-to-left">
+    <h1>الاختبار</h1>
+    <time datetime="2019-04-27" class="post-date">
+        Apr 27, 2019
+        
+    </time>
+    </div>
+
+    
+        <div class="warning right-to-left">
+            
+            
+            <p>
+            <b>المحتوى المترجم:</b>
+            هذه ترجمة مجتمعية لمقالة <strong><a href="https://os.phil-opp.com/testing/">Testing</a></strong>. قد تكون غير مكتملة أو قديمة أو تحتوي على أخطاء. يرجى الإبلاغ عن أي مشاكل!
+            </p>
+            <p>
+                ترجمة بواسطة <a href="https://github.com/mindfreq">@mindfreq</a>.</p>
+            </div>
+    
+
+    <div class="right-to-left">
+    <p>يستكشف هذا المقال اختبارات الوحدة والتكامل في executables <code>no_std</code>. سنستخدم دعم Rust لـ test frameworks المخصصة لتنفيذ دوال الاختبار داخل نواتنا. للإبلاغ عن النتائج خارج QEMU، سنستخدم ميزات مختلفة من QEMU وأداة <code>bootimage</code>.</p>
+<span id="continue-reading"></span>
+<p>هذا المدونة مطوّرة بشكل مفتوح على <a href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/testing/#comments">في الأسفل</a>. يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a href="https://github.com/phil-opp/blog_os/tree/post-04"><code>post-04</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>جدول المحتويات</b></summary>
+        <ul>
+            <li>
+                <a href="#lmttlbt">المتطلبات</a>
+                
+            </li><li>
+                <a href="#lkhtbr-fy-rust">الاختبار في Rust</a>
+                <ul>
+                    <li>
+                        <a href="#tr-lkhtbr-lmkhss">أطر الاختبار المخصصة</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#lkhrwj-mn-qemu">الخروج من QEMU</a>
+                <ul>
+                    <li>
+                        <a href="#mnfdh-ldkhl-lkhrj">منافذ الإدخال/الإخراج</a>
+                    </li><li>
+                        <a href="#stkhdm-jhz-lkhrwj">استخدام جهاز الخروج</a>
+                    </li><li>
+                        <a href="#rmz-lkhrwj-lnjh">رمز الخروج الناجح</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ltb-l-whd-lthkm">الطباعة على وحدة التحكم</a>
+                <ul>
+                    <li>
+                        <a href="#lmnfdh-ltslsly">المنفذ التسلسلي</a>
+                    </li><li>
+                        <a href="#wsy-t-qemu">وسائط QEMU</a>
+                    </li><li>
+                        <a href="#tb-rsl-kht-nd-l-panic">طباعة رسالة خطأ عند الـ panic</a>
+                    </li><li>
+                        <a href="#khf-qemu">إخفاء QEMU</a>
+                    </li><li>
+                        <a href="#lmhlt-lzmny">المهلات الزمنية</a>
+                    </li><li>
+                        <a href="#drj-brt-ltb-tlqy-yan">إدراج عبارات الطباعة تلقائيًا</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#khtbr-buffer-vga">اختبار Buffer VGA</a>
+                
+            </li><li>
+                <a href="#khtbrt-ltkml">اختبارات التكامل</a>
+                <ul>
+                    <li>
+                        <a href="#nsh-mktb">إنشاء مكتبة</a>
+                    </li><li>
+                        <a href="#kml-khtbr-ltkml">إكمال اختبار التكامل</a>
+                    </li><li>
+                        <a href="#lkhtbrt-lmstqbly">الاختبارات المستقبلية</a>
+                    </li><li>
+                        <a href="#lkhtbrt-lty-yjb-n-tusyb-bl-panic">الاختبارات التي يجب أن تُصيب بالـ panic</a>
+                    </li><li>
+                        <a href="#lkhtbrt-bdwn-harness">الاختبارات بدون harness</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#lkhls">الخلاصة</a>
+                
+            </li><li>
+                <a href="#m-ltly">ما التالي؟</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+        </ul>
+    </details>
+
+<h2 id="lmttlbt"><a class="zola-anchor" href="#lmttlbt" aria-label="Anchor link for: lmttlbt">🔗</a>المتطلبات</h2>
+<p>يحل هذا المقال محل مقالات <a href="https://os.phil-opp.com/unit-testing/"><em>Unit Testing</em></a> و <a href="https://os.phil-opp.com/integration-tests/"><em>Integration Tests</em></a> (المهجورة الآن). يفترض أنك اتبعت مقال <a href="https://os.phil-opp.com/minimal-rust-kernel/"><em>A Minimal Rust Kernel</em></a> بعد 2019-04-27. بشكل رئيسي، يتطلب أن يكون لديك ملف <code>.cargo/config.toml</code> يـ<a href="https://os.phil-opp.com/minimal-rust-kernel/#set-a-default-target">يضبط هدفًا افتراضيًا</a> و<a href="https://os.phil-opp.com/minimal-rust-kernel/#using-cargo-run">يحدد runner executable</a>.</p>
+<h2 id="lkhtbr-fy-rust"><a class="zola-anchor" href="#lkhtbr-fy-rust" aria-label="Anchor link for: lkhtbr-fy-rust">🔗</a>الاختبار في Rust</h2>
+<p>لدى Rust <a href="https://doc.rust-lang.org/book/ch11-00-testing.html">test framework مدمج</a> قادر على تشغيل اختبارات الوحدة دون الحاجة إلى إعداد أي شيء. فقط أنشئ دالة تتحقق من بعض النتائج من خلال assertions وأضف السمة <code>#[test]</code> إلى ترويسة الدالة. ثم <code>cargo test</code> ستجد تلقائيًا وتنفذ جميع دوال الاختبار في crate الخاص بك.</p>
+<p>لتفعيل الاختبار لثنائي نواتنا، يمكننا تعيين العلم <code>test</code> في Cargo.toml إلى <code>true</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[[</span><span style="color:#808080;">bin</span><span>]]
+</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;blog_os&quot;
+</span><span style="color:#569cd6;">test </span><span>= </span><span style="color:#569cd6;">true
+</span><span style="color:#569cd6;">bench </span><span>= </span><span style="color:#569cd6;">false
+</span></code></pre>
+<p>يحدد <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#configuring-a-target">قسم <code>[[bin]]</code></a> كيف يجب على <code>cargo</code> تجميع executable <code>blog_os</code> الخاص بنا.
+يحدد حقل <code>test</code> ما إذا كان الاختبار مدعومًا لهذا الـ executable.
+قمنا بتعيين <code>test = false</code> في المقال الأول <a href="https://os.phil-opp.com/freestanding-rust-binary/#making-rust-analyzer-happy">لجعل <code>rust-analyzer</code> سعيدًا</a>، لكننا الآن نريد تفعيل الاختبار، لذلك نعيّنه إلى <code>true</code>.</p>
+<p>لسوء الحظ، الاختبار أكثر تعقيدًا بعض الشيء لتطبيقات <code>no_std</code> مثل نواتنا. المشكلة هي أن test framework في Rust يستخدم ضمنيًا مكتبة <a href="https://doc.rust-lang.org/test/index.html"><code>test</code></a> المدمجة، التي تعتمد على مكتبة القياسية. هذا يعني أننا لا نستطيع استخدام test framework الافتراضي لنواتنا <code>#[no_std]</code>.</p>
+<p>يمكننا رؤية هذا عندما نحاول تشغيل <code>cargo test</code> في مشروعنا:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
+</span><span>   Compiling blog_os v0.1.0 (/…/blog_os)
+</span><span>error[E0463]: can&#39;t find crate for `test`
+</span></code></pre>
+<p>بما أن مكتبة <code>test</code> تعتمد على مكتبة القياسية، فهي غير متاحة لهدف bare metal الخاص بنا. بينما <a href="https://github.com/japaric/utest">نقل مكتبة <code>test</code> إلى سياق <code>#[no_std]</code> ممكن</a>، فهو غير مستقر للغاية ويحتاج إلى بعض الحيل، مثل إعادة تعريف macro <code>panic</code>.</p>
+<h3 id="tr-lkhtbr-lmkhss"><a class="zola-anchor" href="#tr-lkhtbr-lmkhss" aria-label="Anchor link for: tr-lkhtbr-lmkhss">🔗</a>أطر الاختبار المخصصة</h3>
+<p>لحسن الحظ، يدعم Rust استبدال test framework الافتراضي من خلال الميزة غير المستقرة <a href="https://doc.rust-lang.org/unstable-book/language-features/custom-test-frameworks.html"><code>custom_test_frameworks</code></a>. لا تحتاج هذه الميزة إلى مكتبات خارجية وبالتالي تعمل أيضًا في بيئات <code>#[no_std]</code>. تعمل عن طريق جمع جميع الدوال الموسومة بسمة <code>#[test_case]</code> ثم استدعاء دالة runner محددة من قبل المستخدم مع قائمة الاختبارات كوسيطة. بهذا، تعطي التنفيذ تحكمًا أقصى في عملية الاختبار.</p>
+<p>العيب مقارنة بـ test framework الافتراضي هو أن العديد من الميزات المتقدمة، مثل <a href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html#checking-for-panics-with-should_panic">اختبارات <code>should_panic</code></a>، غير متاحة. بدلاً من ذلك، يعتمد على التنفيذ نفسه توفير هذه الميزات إذا لزم الأمر. هذا مثالي بالنسبة لنا لأن لدينا بيئة تنفيذ خاصة جدًا حيث لن تعمل التطبيقات الافتراضية لهذه الميزات المتقدمة على أي حال. على سبيل المثال، تعتمد السمة <code>#[should_panic]</code> على stack unwinding لcatch الـ panics، التي عطّلناها لنواتنا.</p>
+<p>لتنفيذ test framework مخصص لنواتنا، نضيف ما يلي إلى <code>main.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(crate::test_runner)]
+</span><span>
+</span><span>#[cfg(test)]
+</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Running </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>الـ runner الخاص بنا يطبع فقط رسالة تصحيح قصيرة ثم يستدعي كل دالة اختبار في القائمة. نوع الوسيطة <code>&amp;[&amp;dyn Fn()]</code> هي <a href="https://doc.rust-lang.org/std/primitive.slice.html"><em>slice</em></a> من مراجع <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/trait-objects.html"><em>trait object</em></a> لـ trait <a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a>. إنها أساسًا قائمة مراجع لأنواع يمكن استدعاؤها كدالة. بما أن الدالة غير مفيدة لتشغيلات non-test، نستخدم السمة <code>#[cfg(test)]</code> لتضمينها فقط للاختبارات.</p>
+<p>عندما نشغّل <code>cargo test</code> الآن، نرى أنه ينجح (إذا لم ينجح، راجع الملاحظة أدناه). ومع ذلك، لا نزال نرى “Hello World” بدلاً من الرسالة من <code>test_runner</code> الخاص بنا. السبب هو أن دالة <code>_start</code> الخاصة بنا لا تزال تستخدم كـ entry point. تولّد ميزة custom test frameworks دالة <code>main</code> تستدعي <code>test_runner</code>، ولكن هذه الدالة تُتجاهل لأننا نستخدم السمة <code>#[no_main]</code> ونوفر entry point خاص بنا.</p>
+<div class = "warning">
+<p><strong>ملاحظة:</strong> يوجد حاليًا bug في cargo يؤدي إلى أخطاء “duplicate lang item” عند <code>cargo test</code> في بعض الحالات. يحدث عندما تعيّن <code>panic = "abort"</code> لـ profile في <code>Cargo.toml</code>. حاول إزالته، ثم <code>cargo test</code> سيعمل. بدلاً من ذلك، إذا لم يعمل ذلك، أضف <code>panic-abort-tests = true</code> إلى قسم <code>[unstable]</code> في ملف <code>.cargo/config.toml</code>. راجع <a href="https://github.com/rust-lang/cargo/issues/7359">cargo issue</a> لمزيد من المعلومات حول هذا.</p>
+</div>
+<p>لحل هذا، نحتاج أولاً إلى تغيير اسم الدالة المولّدة إلى شيء مختلف عن <code>main</code> من خلال السمة <code>reexport_test_harness_main</code>. ثم يمكننا استدعاء الدالة المعاد تسميتها من دالة <code>_start</code> الخاصة بنا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>نعيّن اسم دالة entry point لـ test framework إلى <code>test_main</code> ونستدعيها من entry point <code>_start</code> الخاص بنا. نستخدم <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">التجميع الشرطي</a> لإضافة استدعاء <code>test_main</code> فقط في سياقات الاختبار لأن الدالة لا تُولّد في تشغيل عادي.</p>
+<p>عندما ننفّذ <code>cargo test</code> الآن، نرى رسالة “Running 0 tests” من <code>test_runner</code> الخاص بنا على الشاشة. الآن نحن مستعدون لإنشاء أول دالة اختبار لنا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;trivial assertion... &quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>عندما نشغّل <code>cargo test</code> الآن، نرى الإخراج التالي:</p>
+<p><img src="https://os.phil-opp.com/ar/testing/qemu-test-runner-output.png" alt="QEMU printing “Hello World!”, “Running 1 tests”, and “trivial assertion… [ok]”" /></p>
+<p>الـ <code>tests</code> slice الممرر إلى دالة <code>test_runner</code> الخاصة بنا يحتوي الآن على مرجع إلى دالة <code>trivial_assertion</code>. من الإخراج <code>trivial assertion... [ok]</code> على الشاشة، نرى أن الاختبار تم استدعاؤه وأنه نجح.</p>
+<p>بعد تنفيذ الاختبارات، يعود <code>test_runner</code> الخاص بنا إلى دالة <code>test_main</code>، التي بدورها تعود إلى دالة entry point <code>_start</code> الخاصة بنا. في نهاية <code>_start</code>، ندخل في loop غير محدود لأن دالة entry point غير مسموح لها بالعودة. هذه مشكلة، لأننا نريد <code>cargo test</code> أن ينتهي بعد تشغيل جميع الاختبارات.</p>
+<h2 id="lkhrwj-mn-qemu"><a class="zola-anchor" href="#lkhrwj-mn-qemu" aria-label="Anchor link for: lkhrwj-mn-qemu">🔗</a>الخروج من QEMU</h2>
+<p>الآن، لدينا loop غير محدود في نهاية دالة <code>_start</code> الخاصة بنا ونحتاج إلى إغلاق QEMU يدويًا في كل تشغيل لـ <code>cargo test</code>. هذا مؤسف لأننا نريد أيضًا تشغيل <code>cargo test</code> في scripts دون تفاعل المستخدم. الحل النظيف لهذا سيكون تنفيذ طريقة مناسبة لإيقاف نظام التشغيل الخاص بنا. لسوء الحظ، هذا معقد نسبيًا لأنه يتطلب تنفيذ دعم إما لمعيار إدارة الطاقة <a href="https://wiki.osdev.org/APM">APM</a> أو <a href="https://wiki.osdev.org/ACPI">ACPI</a>.</p>
+<p>لحسن الحظ، هناك مخرج: يدعم QEMU جهازًا خاصًا يسمى <code>isa-debug-exit</code>، يوفر طريقة سهلة للخروج من QEMU من نظام الضيف. لتفعيله، نحتاج إلى تمرير وسيطة <code>-device</code> إلى QEMU. يمكننا ذلك بإضافة مفتاح تكوين <code>package.metadata.bootimage.test-args</code> في <code>Cargo.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-args </span><span>= [</span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>]
+</span></code></pre>
+<p>يضيف <code>bootimage runner</code> الـ <code>test-args</code> إلى أمر QEMU الافتراضي لجميع executables الاختبار. لـ <code>cargo run</code> العادي، تُتجاهل الوسائط.</p>
+<p>مع اسم الجهاز (<code>isa-debug-exit</code>)، نمرر المعلمتين <code>iobase</code> و <code>iosize</code> اللتين تحددان <em>I/O port</em> الذي يمكن الوصول إليه من نواتنا.</p>
+<h3 id="mnfdh-ldkhl-lkhrj"><a class="zola-anchor" href="#mnfdh-ldkhl-lkhrj" aria-label="Anchor link for: mnfdh-ldkhl-lkhrj">🔗</a>منافذ الإدخال/الإخراج</h3>
+<p>هنا نهجان مختلفان للتواصل بين وحدة المعالجة المركزية والأجهزة الطرفية على x86، <strong>memory-mapped I/O</strong> و <strong>port-mapped I/O</strong>. استخدمنا بالفعل memory-mapped I/O للوصول إلى <a href="https://os.phil-opp.com/vga-text-mode/">VGA text buffer</a> من خلال عنوان الذاكرة <code>0xb8000</code>. هذا العنوان غير مُعيّن إلى RAM بل إلى ذاكرة ما على جهاز VGA.</p>
+<p>على النقيض، يستخدم port-mapped I/O I/O bus منفصل للتواصل. كل جهاز طرفي متصل لديه رقم port واحد أو أكثر. للتواصل مع مثل هذا I/O port، هناك تعليمات CPU خاصة تسمى <code>in</code> و <code>out</code>، التي تأخذ رقم port وبايت بيانات (هناك أيضًا تنويعات من هذه الأوامر تسمح بإرسال <code>u16</code> أو <code>u32</code>).</p>
+<p>يستخدم جهاز <code>isa-debug-exit</code> port-mapped I/O. تحدد المعلمة <code>iobase</code> على أي عنوان port يجب أن يكون الجهاز (<code>0xf4</code> هو <a href="https://wiki.osdev.org/I/O_Ports#The_list">port غير مستخدم عمومًا</a> على IO bus لـ x86) وتحدد <code>iosize</code> حجم port (<code>0x04</code> يعني أربعة بايتات).</p>
+<h3 id="stkhdm-jhz-lkhrwj"><a class="zola-anchor" href="#stkhdm-jhz-lkhrwj" aria-label="Anchor link for: stkhdm-jhz-lkhrwj">🔗</a>استخدام جهاز الخروج</h3>
+<p>وظيفة جهاز <code>isa-debug-exit</code> بسيطة جدًا. عند كتابة <code>value</code> إلى I/O port المحدد بواسطة <code>iobase</code>، تجعل QEMU يخرج بـ <a href="https://en.wikipedia.org/wiki/Exit_status">exit status</a> <code>(value &lt;&lt; 1) | 1</code>. لذلك عندما نكتب <code>0</code> إلى port، سيخرج QEMU بـ exit status <code>(0 &lt;&lt; 1) | 1 = 1</code>، وعندما نكتب <code>1</code> إلى port، سيخرج بـ exit status <code>(1 &lt;&lt; 1) | 1 = 3</code>.</p>
+<p>بدلاً من استدعاء تعليمات assembly <code>in</code> و <code>out</code> يدويًا، نستخدم التجريدات التي توفرها مكتبة <a href="https://docs.rs/x86_64/0.14.2/x86_64/"><code>x86_64</code></a>. لإضافة dependency على تلك المكتبة، نضيفها إلى قسم <code>dependencies</code> في <code>Cargo.toml</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">x86_64 </span><span>= </span><span style="color:#d69d85;">&quot;0.14.2&quot;
+</span></code></pre>
+<p>الآن يمكننا استخدام النوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> الذي توفره المكتبة لإنشاء دالة <code>exit_qemu</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(u32)]
+</span><span style="color:#569cd6;">pub enum </span><span>QemuExitCode {
+</span><span>    Success = </span><span style="color:#b5cea8;">0x10</span><span>,
+</span><span>    Failed = </span><span style="color:#b5cea8;">0x11</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>exit_qemu(exit_code: QemuExitCode) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0xf4</span><span>);
+</span><span>        port.write(exit_code </span><span style="color:#569cd6;">as u32</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>الدالة تنشئ <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> جديدًا عند <code>0xf4</code>، وهو <code>iobase</code> لجهاز <code>isa-debug-exit</code>. ثم تكتب exit code الممرر إلى port. نستخدم <code>u32</code> لأننا حددنا <code>iosize</code> لجهاز <code>isa-debug-exit</code> كـ 4 بايتات. كلتا العمليتين غير آمنتين لأن الكتابة إلى I/O port يمكن أن تؤدي عمومًا إلى سلوك عشوائي.</p>
+<p>لتحديد exit status، ننشئ enum <code>QemuExitCode</code>. الفكرة هي الخروج بـ exit code النجاح إذا نجحت جميع الاختبارات و exit code الفشل بخلاف ذلك. الـ enum محدد كـ <code>#[repr(u32)]</code> لتمثيل كل variant بـ عدد صحيح <code>u32</code>. نستخدم exit code <code>0x10</code> للنجاح و <code>0x11</code> للفشل. exit codes الفعلية لا تهم كثيرًا، طالما لا تتعارض مع exit codes الافتراضية لـ QEMU. على سبيل المثال، استخدام exit code <code>0</code> للنجاح ليس فكرة جيدة لأنه يصبح <code>(0 &lt;&lt; 1) | 1 = 1</code> بعد التحويل، وهو exit code الافتراضي عندما يفشل QEMU في التشغيل. لذلك لن نستطيع التمييز بين خطأ QEMU وتشغيل اختبار ناجح.</p>
+<p>يمكننا الآن تحديث <code>test_runner</code> للخروج من QEMU بعد تشغيل جميع الاختبارات:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Running </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test();
+</span><span>    }
+</span><span>    </span><span style="color:#608b4e;">/// new
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>}
+</span></code></pre>
+<p>عندما نشغّل <code>cargo test</code> الآن، نرى أن QEMU يُغلق فورًا بعد تنفيذ الاختبارات. المشكلة هي أن <code>cargo test</code> يفسر الاختبار على أنه فشل حتى لو مررنا exit code <code>Success</code>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
+</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.03s
+</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-5804fc7d2dd4c9be
+</span><span>Building bootloader
+</span><span>   Compiling bootloader v0.5.3 (/home/philipp/Documents/bootloader)
+</span><span>    Finished release [optimized + debuginfo] target(s) in 1.07s
+</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
+</span><span>    deps/bootimage-blog_os-5804fc7d2dd4c9be.bin -device isa-debug-exit,iobase=0xf4,
+</span><span>    iosize=0x04`
+</span><span>error: test failed, to rerun pass &#39;--bin blog_os&#39;
+</span></code></pre>
+<p>المشكلة هي أن <code>cargo test</code> يعتبر جميع error codes باستثناء <code>0</code> كفشل.</p>
+<h3 id="rmz-lkhrwj-lnjh"><a class="zola-anchor" href="#rmz-lkhrwj-lnjh" aria-label="Anchor link for: rmz-lkhrwj-lnjh">🔗</a>رمز الخروج الناجح</h3>
+<p>للتعامل مع هذا، يوفر <code>bootimage</code> مفتاح تكوين <code>test-success-exit-code</code> يربط exit code محدد بـ exit code <code>0</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-args </span><span>= [</span><span style="color:#ff3333;">…</span><span>]
+</span><span style="color:#569cd6;">test-success-exit-code </span><span>= </span><span style="color:#b5cea8;">33         </span><span style="color:#608b4e;"># (0x10 &lt;&lt; 1) | 1
+</span></code></pre>
+<p>مع هذا التكوين، يربط <code>bootimage</code> exit code النجاح الخاص بنا بـ exit code 0، بحيث يتعرف <code>cargo test</code> بشكل صحيح على حالة النجاح ولا يحسب الاختبار على أنه فشل.</p>
+<p>الـ runner الخاص بنا الآن يغلق QEMU تلقائيًا ويربط نتائج الاختبار بشكل صحيح. لا نزال نرى نافذة QEMU تفتح لفترة قصيرة جدًا، لكنها لا تكفي لقراءة النتائج. سيكون من الجيد لو كان بإمكاننا طباعة نتائج الاختبار إلى console بدلاً من ذلك، حتى نتمكن من رؤيتها بعد خروج QEMU.</p>
+<h2 id="ltb-l-whd-lthkm"><a class="zola-anchor" href="#ltb-l-whd-lthkm" aria-label="Anchor link for: ltb-l-whd-lthkm">🔗</a>الطباعة على وحدة التحكم</h2>
+<p>لرؤية إخراج الاختبار على console، نحتاج إلى إرسال البيانات من نواتنا إلى نظام المضيف بطريقة ما. هناك طرق مختلفة لتحقيق هذا، على سبيل المثال، بإرسال البيانات عبر واجهة TCP network. ومع ذلك، إعداد network stack معقد للغاية، لذلك سنختار حلًا أبسط بدلاً من ذلك.</p>
+<h3 id="lmnfdh-ltslsly"><a class="zola-anchor" href="#lmnfdh-ltslsly" aria-label="Anchor link for: lmnfdh-ltslsly">🔗</a>المنفذ التسلسلي</h3>
+<p>طريقة بسيطة لإرسال البيانات هي استخدام <a href="https://en.wikipedia.org/wiki/Serial_port">serial port</a>، معيار واجهة قديم لم يعد موجودًا في أجهزة الكمبيوتر الحديثة. من السهل برمجته ويمكن لـ QEMU إعادة توجيه البايتات المرسلة عبر serial إلى stdout أو ملف.</p>
+<p>الرقائق التي تنفذ واجهة serial تسمى <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter">UARTs</a>. هناك <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter#Models">عديد من نماذج UART</a> على x86، لكن لحسن الحظ الاختلافات الوحيدة بينها هي بعض الميزات المتقدمة التي لا نحتاجها. UARTs الشائعة اليوم جميعها متوافقة مع <a href="https://en.wikipedia.org/wiki/16550_UART">16550 UART</a>، لذلك سنستخدم ذلك النموذج لـ test framework الخاص بنا.</p>
+<p>سنستخدم مكتبة <a href="https://docs.rs/uart_16550"><code>uart_16550</code></a> لتهيئة UART وإرسال البيانات عبر serial port. لإضافتها كـ dependency، نحدّث <code>Cargo.toml</code> و <code>main.rs</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.2.0&quot;
+</span></code></pre>
+<p>تحتوي مكتبة <code>uart_16550</code> على struct <code>SerialPort</code> يمثل سجلات UART، لكننا لا نزال نحتاج إلى إنشاء instance منها بأنفسنا. لذلك، ننشئ module <code>serial</code> جديدًا بالمحتوى التالي:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">mod </span><span>serial;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>uart_16550::SerialPort;
+</span><span style="color:#569cd6;">use </span><span>spin::Mutex;
+</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;SerialPort&gt; = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> serial_port = </span><span style="color:#569cd6;">unsafe </span><span>{ SerialPort::new(</span><span style="color:#b5cea8;">0x3F8</span><span>) };
+</span><span>        serial_port.init();
+</span><span>        Mutex::new(serial_port)
+</span><span>    };
+</span><span>}
+</span></code></pre>
+<p>مثل <a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGA text buffer</a>، نستخدم <code>lazy_static</code> و spinlock لإنشاء instance <code>static</code> writer. باستخدام <code>lazy_static</code> نضمن أن دالة <code>init</code> تُستدعى مرة واحدة فقط عند أول استخدام.</p>
+<p>مثل جهاز <code>isa-debug-exit</code>، يُبرمج UART باستخدام port I/O. بما أن UART أكثر تعقيدًا، يستخدم عدة I/O ports لبرمجة سجلات الجهاز المختلفة. الدالة غير الآمنة <code>SerialPort::new</code> تتوقع عنوان أول I/O port لـ UART كوسيطة، من خلاله يمكن حساب عناوين جميع ports المطلوبة. نمرر عنوان port <code>0x3F8</code>، وهو رقم port القياسي لأول واجهة serial.</p>
+<p>لجعل serial port سهل الاستخدام، نضيف macros <code>serial_print!</code> و <code>serial_println!</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
+</span><span>
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: ::core::fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#b4cea8;">SERIAL1</span><span>.lock().write_fmt(args).expect(</span><span style="color:#d69d85;">&quot;Printing to serial failed&quot;</span><span>);
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// Prints to the host through the serial interface.
+</span><span>#[macro_export]
+</span><span>macro_rules! serial_print {
+</span><span>    (</span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>        $crate::serial::_print(format_args!(</span><span style="color:#569cd6;">$</span><span>($arg)*));
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// Prints to the host through the serial interface, appending a newline.
+</span><span>#[macro_export]
+</span><span>macro_rules! serial_println {
+</span><span>    () </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(</span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>));
+</span><span>    ($fmt:</span><span style="color:#569cd6;">expr</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>)));
+</span><span>    ($fmt:</span><span style="color:#569cd6;">expr</span><span>, </span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(
+</span><span>        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>), </span><span style="color:#569cd6;">$</span><span>($arg)*));
+</span><span>}
+</span></code></pre>
+<p>التنفيذ مشابه جدًا لتنفيذ macros <code>print</code> و <code>println</code> الخاصة بنا. بما أن نوع <code>SerialPort</code> ينفذ بالفعل trait <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a>، لا نحتاج إلى توفير تنفيذنا الخاص.</p>
+<p>الآن يمكننا الطباعة إلى واجهة serial بدلاً من VGA text buffer في كود الاختبار:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#[cfg(test)]
+</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span>, tests.len());
+</span><span>    […]
+</span><span>}
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;trivial assertion... &quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>لاحظ أن macro <code>serial_println</code> تعيش مباشرة تحت namespace الجذر لأننا استخدمنا السمة <code>#[macro_export]</code>، لذلك الاستيراد عبر <code>use crate::serial::serial_println</code> لن يعمل.</p>
+<h3 id="wsy-t-qemu"><a class="zola-anchor" href="#wsy-t-qemu" aria-label="Anchor link for: wsy-t-qemu">🔗</a>وسائط QEMU</h3>
+<p>لرؤية serial output من QEMU، نحتاج إلى استخدام الوسيطة <code>-serial</code> لإعادة توجيه الإخراج إلى stdout:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-args </span><span>= [
+</span><span>    </span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span>, </span><span style="color:#d69d85;">&quot;stdio&quot;
+</span><span>]
+</span></code></pre>
+<p>عندما نشغّل <code>cargo test</code> الآن، نرى إخراج الاختبار مباشرة في console:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
+</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
+</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
+</span><span>Building bootloader
+</span><span>    Finished release [optimized + debuginfo] target(s) in 0.02s
+</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
+</span><span>    deps/bootimage-blog_os-7b7c37b4ad62551a.bin -device
+</span><span>    isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`
+</span><span>Running 1 tests
+</span><span>trivial assertion... [ok]
+</span></code></pre>
+<p>ومع ذلك، عندما يفشل اختبار، لا نزال نرى الإخراج داخل QEMU لأن panic handler لا يزال يستخدم <code>println</code>. لمحاكاة هذا، يمكننا تغيير assertion في اختبار <code>trivial_assertion</code> إلى <code>assert_eq!(0, 1)</code>:</p>
+<p><img src="https://os.phil-opp.com/ar/testing/qemu-failed-test.png" alt="QEMU printing “Hello World!” and “panicked at ‘assertion failed: (left == right) left: 0, right: 1’, src/main.rs:55:5" /></p>
+<p>نرى أن رسالة panic لا تزال تُطبع إلى buffer VGA، بينما يُطبع إخراج الاختبار الآخر إلى serial port. رسالة panic مفيدة جدًا، لذلك سيكون من المفيد رؤيتها في console أيضًا.</p>
+<h3 id="tb-rsl-kht-nd-l-panic"><a class="zola-anchor" href="#tb-rsl-kht-nd-l-panic" aria-label="Anchor link for: tb-rsl-kht-nd-l-panic">🔗</a>طباعة رسالة خطأ عند الـ panic</h3>
+<p>للخروج من QEMU مع رسالة خطأ عند panic، يمكننا استخدام <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">التجميع الشرطي</a> لاستخدام panic handler مختلف في وضع الاختبار:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span style="color:#608b4e;">// our existing panic handler
+</span><span>#[cfg(not(test))] </span><span style="color:#608b4e;">// new attribute
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// our panic handler in test mode
+</span><span>#[cfg(test)]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    exit_qemu(QemuExitCode::Failed);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>لـ panic handler الاختبار، نستخدم <code>serial_println</code> بدلاً من <code>println</code> ثم نخرج من QEMU بـ exit code فشل. لاحظ أننا لا نزال نحتاج إلى <code>loop</code> غير محدود بعد استدعاء <code>exit_qemu</code> لأن المترجم لا يعرف أن جهاز <code>isa-debug-exit</code> يسبب خروج البرنامج.</p>
+<p>الآن QEMU يخرج أيضًا للاختبارات الفاشلة ويطبع رسالة خطأ مفيدة على console:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
+</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
+</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
+</span><span>Building bootloader
+</span><span>    Finished release [optimized + debuginfo] target(s) in 0.02s
+</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
+</span><span>    deps/bootimage-blog_os-7b7c37b4ad62551a.bin -device
+</span><span>    isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`
+</span><span>Running 1 tests
+</span><span>trivial assertion... [failed]
+</span><span>
+</span><span>Error: panicked at &#39;assertion failed: `(left == right)`
+</span><span>  left: `0`,
+</span><span> right: `1`&#39;, src/main.rs:65:5
+</span></code></pre>
+<p>بما أننا نرى جميع إخراج الاختبار على console الآن، لم نعد بحاجة إلى نافذة QEMU التي تظهر لفترة قصيرة. لذلك يمكننا إخفاؤها تمامًا.</p>
+<h3 id="khf-qemu"><a class="zola-anchor" href="#khf-qemu" aria-label="Anchor link for: khf-qemu">🔗</a>إخفاء QEMU</h3>
+<p>بما أننا نדווח عن نتائج الاختبار الكاملة باستخدام جهاز <code>isa-debug-exit</code> و serial port، لم نعد بحاجة إلى نافذة QEMU. يمكننا إخفاؤها بتمرير الوسيطة <code>-display none</code> إلى QEMU:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-args </span><span>= [
+</span><span>    </span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span>, </span><span style="color:#d69d85;">&quot;stdio&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;-display&quot;</span><span>, </span><span style="color:#d69d85;">&quot;none&quot;
+</span><span>]
+</span></code></pre>
+<p>الآن يعمل QEMU تمامًا في الخلفية ولا تفتح نافذة بعد الآن. هذا ليس أقل إزعاجًا فحسب، بل يسمح أيضًا لـ test framework بالعمل في بيئات بدون واجهة مستخدم رسومية، مثل خدمات CI أو اتصالات <a href="https://en.wikipedia.org/wiki/Secure_Shell">SSH</a>.</p>
+<h3 id="lmhlt-lzmny"><a class="zola-anchor" href="#lmhlt-lzmny" aria-label="Anchor link for: lmhlt-lzmny">🔗</a>المهلات الزمنية</h3>
+<p>بما أن <code>cargo test</code> ينتظر حتى ينتهي test runner، فإن اختبار لا يعود أبدًا يمكن أن يحجب test runner إلى الأبد. هذا مؤسف، لكن ليس مشكلة كبيرة في الممارسة العملية لأنه عادةً ما يكون من السهل تجنب loops غير محدودة. في حالتنا، يمكن أن تحدث loops غير محدودة في حالات مختلفة:</p>
+<ul>
+<li>يفشل bootloader في تحميل نواتنا، مما يسبب إعادة إقلاع النظام بشكل غير محدود.</li>
+<li>يفشل BIOS/UEFI firmware في تحميل bootloader، مما يسبب نفس إعادة الإقلاع غير المحدودة.</li>
+<li>يدخل وحدة المعالجة المركزية في عبارة <code>loop {}</code> في نهاية بعض دوالنا، على سبيل المثال لأن جهاز خروج QEMU لا يعمل بشكل صحيح.</li>
+<li>تسبب الأجهزة إعادة ضبط النظام، على سبيل المثال عند عدم التقاط استثناء وحدة المعالجة المركزية (يُشرح في مقال مستقبلي).</li>
+</ul>
+<p>بما أن loops غير محدودة يمكن أن تحدث في العديد من الحالات، تضبط أداة <code>bootimage</code> timeout مدته 5 دقائق لكل executable اختبار افتراضيًا. إذا لم ينتهِ الاختبار خلال هذا الوقت، يُحدّد على أنه فاشل وتُطبع خطأ “Timed Out” إلى console. تضمن هذه الميزة أن الاختبارات العالقة في loop غير محدود لا تحجب <code>cargo test</code> إلى الأبد.</p>
+<p>يمكنك تجربة ذلك بنفسك بإضافة عبارة <code>loop {}</code> في اختبار <code>trivial_assertion</code>. عندما تشغّل <code>cargo test</code>، ترى أن الاختبار يُحدّد على أنه timed out بعد 5 دقائق. مدة Timeout <a href="https://github.com/rust-osdev/bootimage#configuration">قابلة للتكوين</a> عبر مفتاح <code>test-timeout</code> في Cargo.toml:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-timeout </span><span>= </span><span style="color:#b5cea8;">300          </span><span style="color:#608b4e;"># (in seconds)
+</span></code></pre>
+<p>إذا كنت لا تريد الانتظار 5 دقائق لي timed out اختبار <code>trivial_assertion</code>، يمكنك تقليل القيمة أعلاه مؤقتًا.</p>
+<h3 id="drj-brt-ltb-tlqy-yan"><a class="zola-anchor" href="#drj-brt-ltb-tlqy-yan" aria-label="Anchor link for: drj-brt-ltb-tlqy-yan">🔗</a>إدراج عبارات الطباعة تلقائيًا</h3>
+<p>يحتاج اختبار <code>trivial_assertion</code> حاليًا إلى طباعة معلومات حالته الخاصة باستخدام <code>serial_print!</code>/<code>serial_println!</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;trivial assertion... &quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>إضافة عبارات الطباعة هذه يدويًا لكل اختبار نكتبه مرهق، لذلك لنحدّث <code>test_runner</code> لطباعة هذه الرسائل تلقائيًا. لذلك، نحتاج إلى إنشاء trait <code>Testable</code> جديد:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">pub trait </span><span>Testable {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; ();
+</span><span>}
+</span></code></pre>
+<p>الحيلة الآن هي تنفيذ هذا trait لجميع الأنواع <code>T</code> التي تنفذ <a href="https://doc.rust-lang.org/stable/core/ops/trait.Fn.html">trait <code>Fn()</code></a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span>T
+</span><span style="color:#569cd6;">where
+</span><span>    T: Fn(),
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) {
+</span><span>        serial_print!(</span><span style="color:#d69d85;">&quot;{}...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>, core::any::type_name::&lt;T&gt;());
+</span><span>        self();
+</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>ننفذ دالة <code>run</code> عن طريق طباعة اسم الدالة أولاً باستخدام دالة <a href="https://doc.rust-lang.org/stable/core/any/fn.type_name.html"><code>any::type_name</code></a>. هذه الدالة منفذة مباشرة في المترجم وتعيد وصفًا نصيًا لكل نوع. للدوال، النوع هو اسمها، لذلك هذا بالضبط ما نريده في هذه الحالة. الحرف <code>\t</code> هو <a href="https://en.wikipedia.org/wiki/Tab_character">حرف tab</a>، الذي يضيف بعض المحاذاة لرسائل <code>[ok]</code>.</p>
+<p>بعد طباعة اسم الدالة، نستدعي دالة الاختبار عبر <code>self()</code>. هذا يعمل فقط لأننا نتطلب أن <code>self</code> ينفذ trait <code>Fn()</code>. بعد أن تعود دالة الاختبار، نطبع <code>[ok]</code> للإشارة إلى أن الدالة لم تُ panic.</p>
+<p>الخطوة الأخيرة هي تحديث <code>test_runner</code> لاستخدام trait <code>Testable</code> الجديد:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#[cfg(test)]
+</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Testable]) { </span><span style="color:#608b4e;">// new
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test.run(); </span><span style="color:#608b4e;">// new
+</span><span>    }
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>}
+</span></code></pre>
+<p>التغييران الوحيدان هما نوع وسيطة <code>tests</code> من <code>&amp;[&amp;dyn Fn()]</code> إلى <code>&amp;[&amp;dyn Testable]</code> وحقيقة أننا نستدعي الآن <code>test.run()</code> بدلاً من <code>test()</code>.</p>
+<p>يمكننا الآن إزالة عبارات الطباعة من اختبار <code>trivial_assertion</code> لأنها تُطبع تلقائيًا الآن:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>}
+</span></code></pre>
+<p>إخراج <code>cargo test</code> الآن يبدو كالتالي:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>Running 1 tests
+</span><span>blog_os::trivial_assertion...	[ok]
+</span></code></pre>
+<p>اسم الدالة يتضمن الآن المسار الكامل إلى الدالة، وهو مفيد عندما يكون لدوال الاختبار في modules مختلفة نفس الاسم. بخلاف ذلك، يبدو الإخراج كما كان من قبل، لكن لم نعد بحاجة إلى إضافة عبارات طباعة إلى اختباراتنا يدويًا.</p>
+<h2 id="khtbr-buffer-vga"><a class="zola-anchor" href="#khtbr-buffer-vga" aria-label="Anchor link for: khtbr-buffer-vga">🔗</a>اختبار Buffer VGA</h2>
+<p>الآن بعد أن لدينا test framework يعمل، يمكننا إنشاء بعض الاختبارات لتنفيذ VGA buffer الخاص بنا. أولاً، ننشئ اختبارًا بسيطًا جدًا للتحقق من أن <code>println</code> يعمل دون panic:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_simple() {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;test_println_simple output&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>الاختبار يطبع فقط شيئًا إلى buffer VGA. إذا انتهى دون panic، فهذا يعني أن استدعاء <code>println</code> لم يُ panic أيضًا.</p>
+<p>لضمان عدم حدوث panic حتى لو طُبعت العديد من الأسطر وتم إزالتها من الشاشة، يمكننا إنشاء اختبار آخر:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_many() {
+</span><span>    </span><span style="color:#569cd6;">for _ in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">200 </span><span>{
+</span><span>        println!(</span><span style="color:#d69d85;">&quot;test_println_many output&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>يمكننا أيضًا إنشاء دالة اختبار للتحقق من أن الأسطر المطبوعة تظهر فعليًا على الشاشة:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span>;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s);
+</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> screen_char = </span><span style="color:#b4cea8;">WRITER</span><span>.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
+</span><span>        assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>الدالة تحدد سلسلة نصية اختبارية، تطبعها باستخدام <code>println</code>، ثم تمر على أحرف الشاشة لـ <code>WRITER</code> الثابت، الذي يمثل VGA text buffer. بما أن <code>println</code> يطبع إلى آخر سطر شاشة ثم يضيف فورًا سطرًا جديدًا، يجب أن تظهر السلسلة النصية في السطر <code>BUFFER_HEIGHT - 2</code>.</p>
+<p>باستخدام <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a>، نعد عدد التكرارات في المتغير <code>i</code>، الذي نستخدمه لتحميل حرف الشاشة المقابل لـ <code>c</code>. بمقارنة <code>ascii_character</code> لحرف الشاشة مع <code>c</code>، نضمن أن كل حرف من السلسلة النصية يظهر فعليًا في VGA text buffer.</p>
+<p>كما يمكنك التخيل، يمكننا إنشاء العديد من دوال الاختبار الأخرى. على سبيل المثال، دالة تختبر عدم حدوث panic عند طباعة أسطر طويلة جدًا وأنها تُ zabat بشكل صحيح، أو دالة لاختبار أن أسطر جديدة وأحرف غير قابلة للطباعة وأحرف non-unicode تُتعامل معها بشكل صحيح.</p>
+<p>لفترة متبقية من هذا المقال، سنشرح كيفية إنشاء <em>integration tests</em> لاختبار تفاعل المكونات المختلفة معًا.</p>
+<h2 id="khtbrt-ltkml"><a class="zola-anchor" href="#khtbrt-ltkml" aria-label="Anchor link for: khtbrt-ltkml">🔗</a>اختبارات التكامل</h2>
+<p>الاصطلاح لـ <a href="https://doc.rust-lang.org/book/ch11-03-test-organization.html#integration-tests">integration tests</a> في Rust هو وضعها في دليل <code>tests</code> في جذر المشروع (بجانب دليل <code>src</code>). كلاً من test framework الافتراضي و custom test frameworks سيجدان تلقائيًا وينفذان جميع الاختبارات في ذلك الدليل.</p>
+<p>جميع integration tests هي executables مستقلة و completely منفصلة عن <code>main.rs</code> الخاص بنا. هذا يعني أن كل اختبار يحتاج إلى تحديد entry point خاص به. لننشئ integration test نموذجيًا يسمى <code>basic_boot</code> لمعرفة كيف يعمل بالتفصيل:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/basic_boot.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(crate::test_runner)]
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span>#[unsafe(no_mangle)] </span><span style="color:#608b4e;">// don&#39;t mangle the name of this function
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    test_main();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    unimplemented!();
+</span><span>}
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>بما أن integration tests هي executables مستقلة، نحتاج إلى توفير جميع سمات crate (<code>no_std</code> و <code>no_main</code> و <code>test_runner</code> إلخ) مرة أخرى. نحتاج أيضًا إلى إنشاء entry point <code>_start</code> جديدة، التي تستدعي دالة entry point الاختبار <code>test_main</code>. لا نحتاج إلى أي سمات <code>cfg(test)</code> لأن integration test executables لا تُبنى أبدًا في وضع non-test.</p>
+<p>نستخدم macro <a href="https://doc.rust-lang.org/core/macro.unimplemented.html"><code>unimplemented</code></a> الذي يُ panic دائمًا كـ placeholder لدالة <code>test_runner</code> ونضع فقط <code>loop</code> في معالج <code>panic</code> حاليًا. بشكل مثالي، نريد تنفيذ هذه الدوال بالضبط كما فعلنا في <code>main.rs</code> باستخدام macro <code>serial_println</code> ودالة <code>exit_qemu</code>. المشكلة هي أننا لا نملك الوصول إلى هذه الدوال لأن الاختبارات تُبنى completely منفصلة عن executable <code>main.rs</code> الخاص بنا.</p>
+<p>إذا شغّلت <code>cargo test</code> في هذه المرحلة، ستحصل على loop غير محدود لأن panic handler يُ loop بشكل غير محدود. تحتاج إلى استخدام اختصار لوحة المفاتيح <code>ctrl+c</code> للخروج من QEMU.</p>
+<h3 id="nsh-mktb"><a class="zola-anchor" href="#nsh-mktb" aria-label="Anchor link for: nsh-mktb">🔗</a>إنشاء مكتبة</h3>
+<p>لجعل الدوال المطلوبة متاحة لـ integration test، نحتاج إلى فصل مكتبة من <code>main.rs</code>، التي يمكن تضمينها من قبل crates أخرى و integration test executables. لذلك، ننشئ ملف <code>src/lib.rs</code> جديدًا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>
+</span></code></pre>
+<p>مثل <code>main.rs</code>، فإن <code>lib.rs</code> هو ملف خاص يتعرف عليه cargo تلقائيًا. المكتبة هي وحدة تجميع منفصلة، لذلك نحتاج إلى تحديد السمة <code>#![no_std]</code> مرة أخرى.</p>
+<p>لجعل مكتبتنا تعمل مع <code>cargo test</code>، نحتاج أيضًا إلى نقل دوال الاختبار والسمات من <code>main.rs</code> إلى <code>lib.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
+</span><span>
+</span><span>#![cfg_attr(test, no_main)]
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(crate::test_runner)]
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span style="color:#569cd6;">pub trait </span><span>Testable {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; ();
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span>T
+</span><span style="color:#569cd6;">where
+</span><span>    T: Fn(),
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) {
+</span><span>        serial_print!(</span><span style="color:#d69d85;">&quot;{}...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>, core::any::type_name::&lt;T&gt;());
+</span><span>        self();
+</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Testable]) {
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test.run();
+</span><span>    }
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>test_panic_handler(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    exit_qemu(QemuExitCode::Failed);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// Entry point for `cargo test`
+</span><span>#[cfg(test)]
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    test_main();
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span>#[cfg(test)]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    test_panic_handler(info)
+</span><span>}
+</span></code></pre>
+<p>لجعل <code>test_runner</code> متاحًا لـ executables و integration tests، نجعله public ولا نطبق السمة <code>cfg(test)</code> عليه. نفصل أيضًا تنفيذ panic handler إلى دالة <code>test_panic_handler</code> public، حتى تكون متاحة لـ executables أيضًا.</p>
+<p>بما أن <code>lib.rs</code> يُختبر بشكل مستقل عن <code>main.rs</code>، نحتاج إلى إضافة entry point <code>_start</code> و panic handler عندما تُجمّع المكتبة في وضع الاختبار. باستخدام crate attribute <a href="https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg_attr-attribute"><code>cfg_attr</code></a>، نفعل شرطيًا السمة <code>no_main</code> في هذه الحالة.</p>
+<p>ننقل أيضًا enum <code>QemuExitCode</code> ودالة <code>exit_qemu</code> ونجعلها public:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(u32)]
+</span><span style="color:#569cd6;">pub enum </span><span>QemuExitCode {
+</span><span>    Success = </span><span style="color:#b5cea8;">0x10</span><span>,
+</span><span>    Failed = </span><span style="color:#b5cea8;">0x11</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>exit_qemu(exit_code: QemuExitCode) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0xf4</span><span>);
+</span><span>        port.write(exit_code </span><span style="color:#569cd6;">as u32</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>الآن يمكن لـ executables و integration tests استيراد هذه الدوال من المكتبة ولا تحتاج إلى تحديد تطبيقاتها الخاصة. لجعل <code>println</code> و <code>serial_println</code> متاحين أيضًا، ننقل إعلانات modules:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>serial;
+</span><span style="color:#569cd6;">pub mod </span><span>vga_buffer;
+</span></code></pre>
+<p>نجعل modules public لجعلها قابلة للاستخدام خارج مكتبتنا. هذا مطلوب أيضًا لجعل macros <code>println</code> و <code>serial_println</code> قابلة للاستخدام لأنها تستخدم دوال <code>_print</code> للـ modules.</p>
+<p>الآن يمكننا تحديث <code>main.rs</code> لاستخدام المكتبة:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(blog_os::test_runner)]
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span style="color:#569cd6;">use </span><span>blog_os::println;
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// This function is called on panic.
+</span><span>#[cfg(not(test))]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span>#[cfg(test)]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    blog_os::test_panic_handler(info)
+</span><span>}
+</span></code></pre>
+<p>المكتبة قابلة للاستخدام مثل أي external crate عادية. تسمى <code>blog_os</code>، مثل crate الخاص بنا. يستخدم الكود أعلاه دالة <code>blog_os::test_runner</code> في السمة <code>test_runner</code> ودالة <code>blog_os::test_panic_handler</code> في panic handler <code>cfg(test)</code> الخاص بنا. يستورد أيضًا macro <code>println</code> لجعلها متاحة لدوال <code>_start</code> و <code>panic</code> الخاصة بنا.</p>
+<p>في هذه المرحلة، يجب أن يعمل <code>cargo run</code> و <code>cargo test</code> مرة أخرى. بالطبع، <code>cargo test</code> لا يزال يُ loop بشكل غير محدود (يمكنك الخروج بـ <code>ctrl+c</code>). لنصلح ذلك باستخدام دوال المكتبة المطلوبة في integration test.</p>
+<h3 id="kml-khtbr-ltkml"><a class="zola-anchor" href="#kml-khtbr-ltkml" aria-label="Anchor link for: kml-khtbr-ltkml">🔗</a>إكمال اختبار التكامل</h3>
+<p>مثل <code>src/main.rs</code>، يمكن لـ executable <code>tests/basic_boot.rs</code> استيراد أنواع من مكتبتنا الجديدة. هذا يسمح لنا باستيراد المكونات المفقودة لإكمال اختبارنا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/basic_boot.rs
+</span><span>
+</span><span>#![test_runner(blog_os::test_runner)]
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    blog_os::test_panic_handler(info)
+</span><span>}
+</span></code></pre>
+<p>بدلاً من إعادة تنفيذ test runner، نستخدم دالة <code>test_runner</code> من مكتبتنا بتغيير السمة <code>#![test_runner(crate::test_runner)]</code> إلى <code>#![test_runner(blog_os::test_runner)]</code>. ثم لم نعد بحاجة إلى دالة <code>test_runner</code> الـ stub في <code>basic_boot.rs</code>، لذلك يمكننا إزالتها. لمعالج <code>panic</code>، نستدعي دالة <code>blog_os::test_panic_handler</code> كما فعلنا في <code>main.rs</code>.</p>
+<p>الآن <code>cargo test</code> يخرج بشكل طبيعي مرة أخرى. عندما تشغله، سترى أنه يبني ويشغل الاختبارات لـ <code>lib.rs</code> و <code>main.rs</code> و <code>basic_boot.rs</code> بشكل منفصل واحدًا تلو الآخر. بالنسبة لـ <code>main.rs</code> و <code>basic_boot</code> integration tests، يُبلّغ “Running 0 tests” لأن هذه الملفات ليس لديها أي دوال موسومة بـ <code>#[test_case]</code>.</p>
+<p>يمكننا الآن إضافة اختبارات إلى <code>basic_boot.rs</code>. على سبيل المثال، يمكننا اختبار أن <code>println</code> يعمل دون panic، كما فعلنا في اختبارات VGA buffer:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/basic_boot.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::println;
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println() {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;test_println output&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>عندما نشغّل <code>cargo test</code> الآن، نرى أنه يجد وينفذ دالة الاختبار.</p>
+<p>قد يبدو الاختبار غير مفيد بعض الشيء الآن لأنه متطابق تقريبًا مع أحد اختبارات VGA buffer. ومع ذلك، في المستقبل، قد تنمو دوال <code>_start</code> في <code>main.rs</code> و <code>lib.rs</code> وتستدعي routines تهيئة مختلفة قبل تشغيل <code>test_main</code>، بحيث يُنفّذ الاختباران في بيئات مختلفة جدًا.</p>
+<p>باختبار <code>println</code> في بيئة <code>basic_boot</code> دون استدعاء routines تهيئة في <code>_start</code>، يمكننا التأكد من أن <code>println</code> يعمل مباشرة بعد الإقلاع. هذا مهم لأننا نعتمد عليه، على سبيل المثال، لطباعة رسائل panic.</p>
+<h3 id="lkhtbrt-lmstqbly"><a class="zola-anchor" href="#lkhtbrt-lmstqbly" aria-label="Anchor link for: lkhtbrt-lmstqbly">🔗</a>الاختبارات المستقبلية</h3>
+<p>قوة integration tests هي أنها تُعامل كـ executables completely منفصلة. هذا يمنحها تحكمًا كاملًا في البيئة، مما يجعل من الممكن اختبار أن الكود يتفاعل بشكل صحيح مع وحدة المعالجة المركزية أو أجهزة الأجهزة.</p>
+<p>اختبار <code>basic_boot</code> هو مثال بسيط جدًا على integration test. في المستقبل، سيصبح نواتنا أكثر غنى بالميزات ويتفاعل مع الأجهزة بطرق مختلفة. بإضافة integration tests، يمكننا ضمان أن هذه التفاعلات تعمل (وتستمر في العمل) كما هو متوقع. بعض الأفكار لاختبارات مستقبلية محتملة:</p>
+<ul>
+<li><strong>CPU Exceptions</strong>: عندما ينفذ الكود عمليات غير صالحة (مثل القسمة على صفر)، يرمي وحدة المعالجة المركزية exception. يمكن للنواة تسجيل دوال معالجة لهذه exceptions. يمكن لـ integration test التحقق من أن معالج exception الصحيح يُستدعى عند حدوث CPU exception أو أن التنفيذ يستمر بشكل صحيح بعد exception قابل للحل.</li>
+<li><strong>Page Tables</strong>: تحدد page tables أي مناطق ذاكرة صالحة وقابلة للوصول. بتعديل page tables، يمكن تخصيص مناطق ذاكرة جديدة، على سبيل المثال عند إطلاق برامج. يمكن لـ integration test تعديل page tables في دالة <code>_start</code> والتحقق من أن التعديلات لها التأثيرات المطلوبة في دوال <code>#[test_case]</code>.</li>
+<li><strong>Userspace Programs</strong>: برامج Userspace هي برامج لها وصول محدود إلى موارد النظام. على سبيل المثال، ليس لديها وصول إلى هياكل بيانات النواة أو ذاكرة البرامج الأخرى. يمكن لـ integration test إطلاق برامج userspace تُنفّذ عمليات محظورة والتحقق من أن النواة تمنعها جميعًا.</li>
+</ul>
+<p>كما يمكنك التخيل، هناك العديد من الاختبارات الأخرى الممكنة. بإضافة مثل هذه الاختبارات، يمكننا ضمان عدم كسرها عن طريق الخطأ عند إضافة ميزات جديدة إلى نواتنا أو refactor الكود. هذا مهم بشكل خاص عندما تصبح نواتنا أكبر وأكثر تعقيدًا.</p>
+<h3 id="lkhtbrt-lty-yjb-n-tusyb-bl-panic"><a class="zola-anchor" href="#lkhtbrt-lty-yjb-n-tusyb-bl-panic" aria-label="Anchor link for: lkhtbrt-lty-yjb-n-tusyb-bl-panic">🔗</a>الاختبارات التي يجب أن تُصيب بالـ panic</h3>
+<p>يدعم test framework في مكتبة القياسية <a href="https://doc.rust-lang.org/rust-by-example/testing/unit_testing.html#testing-panics">سمة <code>#[should_panic]</code></a> التي تسمح بإنشاء اختبارات يجب أن تفشل. هذا مفيد، على سبيل المثال، للتحقق من أن دالة تفشل عند تمرير وسيطة غير صالحة. لسوء الحظ، هذه السمة غير مدعومة في crates <code>#[no_std]</code> لأنها تتطلب دعمًا من مكتبة القياسية.</p>
+<p>بينما لا نستطيع استخدام السمة <code>#[should_panic]</code> في نواتنا، يمكننا الحصول على سلوك مماثل بإنشاء integration test يخرج بـ exit code نجاح من panic handler. لنبدأ بإنشاء مثل هذا الاختبار باسم <code>should_panic</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/should_panic.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span style="color:#569cd6;">use </span><span>blog_os::{QemuExitCode, exit_qemu, serial_println};
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>هذا الاختبار لا يزال غير مكتمل لأنه لا يحدد دالة <code>_start</code> أو أيًا من سمات custom test runner بعد. لنضف الأجزاء المفقودة:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/should_panic.rs
+</span><span>
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(test_runner)]
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    test_main();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test();
+</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[test did not panic]&quot;</span><span>);
+</span><span>        exit_qemu(QemuExitCode::Failed);
+</span><span>    }
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>}
+</span></code></pre>
+<p>بدلاً من إعادة استخدام <code>test_runner</code> من <code>lib.rs</code>، يحدد الاختبار دالة <code>test_runner</code> خاصة به تخرج بـ exit code فشل عندما يعود اختبار دون panic (نريد اختباراتنا أن تُ panic). إذا لم تُحدد دالة اختبار، يخرج الـ runner بـ exit code نجاح. بما أن الـ runner يخرج دائمًا بعد تشغيل اختبار واحد، لا معنى لتحديد أكثر من دالة <code>#[test_case]</code>.</p>
+<p>الآن يمكننا إنشاء اختبار يجب أن يفشل:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/should_panic.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::serial_print;
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>should_fail() {
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">0</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>}
+</span></code></pre>
+<p>الاختبار يستخدم <code>assert_eq</code> للادعاء بأن <code>0</code> و <code>1</code> متساويان. بالطبع، هذا يفشل، لذلك يُ panic اختبارنا كما هو مرغوب. لاحظ أننا نحتاج إلى طباعة اسم الدالة يدويًا باستخدام <code>serial_print!</code> هنا لأننا لا نستخدم trait <code>Testable</code>.</p>
+<p>عندما نشغّل الاختبار عبر <code>cargo test --test should_panic</code> نرى أنه ناجح لأن الاختبار يُ panic كما هو متوقع. عندما نعلّق على assertion ونشغّل الاختبار مرة أخرى، نرى أنه يفشل فعليًا برسالة <em>“test did not panic”</em>.</p>
+<p>عيب كبير لهذا النهج هو أنه يعمل فقط لدالة اختبار واحدة. مع عدة دوال <code>#[test_case]</code>، تُنفّذ الدالة الأولى فقط لأن التنفيذ لا يمكن أن يستمر بعد استدعاء panic handler. لا أعرف حاليًا طريقة جيدة لحل هذه المشكلة، لذلك أخبرني إذا كانت لديك فكرة!</p>
+<h3 id="lkhtbrt-bdwn-harness"><a class="zola-anchor" href="#lkhtbrt-bdwn-harness" aria-label="Anchor link for: lkhtbrt-bdwn-harness">🔗</a>الاختبارات بدون harness</h3>
+<p>لـ integration tests التي لديها دالة اختبار واحدة فقط (مثل اختبار <code>should_panic</code>)، لا يكون الـ test runner مطلوبًا فعليًا. لحالات كهذه، يمكننا تعطيل test runner completely وتشغيل اختبارنا مباشرة في دالة <code>_start</code>.</p>
+<p>المفتاح لذلك هو تعطيل علم <code>harness</code> للاختبار في <code>Cargo.toml</code>، الذي يحدد ما إذا كان test runner يُستخدم لـ integration test. عندما يُعيّن إلى <code>false</code>، يُعطل كلاً من test runner الافتراضي وميزة custom test runner، بحيث يُعامل الاختبار كـ executable عادي.</p>
+<p>لنعطل علم <code>harness</code> لاختبار <code>should_panic</code>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
+</span><span>
+</span><span>[[</span><span style="color:#808080;">test</span><span>]]
+</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;should_panic&quot;
+</span><span style="color:#569cd6;">harness </span><span>= </span><span style="color:#569cd6;">false
+</span></code></pre>
+<p>الآن نبسّط بشكل كبير اختبار <code>should_panic</code> بإزالة الكود المتعلق بـ <code>test_runner</code>. النتيجة تبدو كالتالي:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/should_panic.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span style="color:#569cd6;">use </span><span>blog_os::{exit_qemu, serial_print, serial_println, QemuExitCode};
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    should_fail();
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[test did not panic]&quot;</span><span>);
+</span><span>    exit_qemu(QemuExitCode::Failed);
+</span><span>    </span><span style="color:#569cd6;">loop</span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>should_fail() {
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">0</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>}
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>نستدعي الآن دالة <code>should_fail</code> مباشرة من دالة <code>_start</code> ونخرج بـ exit code فشل إذا عادت. عندما نشغّل <code>cargo test --test should_panic</code> الآن، نرى أن الاختبار يتصرف بالضبط كما كان من قبل.</p>
+<p>بالإضافة إلى إنشاء اختبارات <code>should_panic</code>، يمكن تعطيل السمة <code>harness</code> أن يكون مفيدًا أيضًا لـ integration tests المعقدة، على سبيل المثال، عندما يكون لدوال الاختبار الفردية side effects وتحتاج إلى أن تُنفّذ بترتيب محدد.</p>
+<h2 id="lkhls"><a class="zola-anchor" href="#lkhls" aria-label="Anchor link for: lkhls">🔗</a>الخلاصة</h2>
+<p>الاختبار تقنية مفيدة جدًا لضمان أن مكونات معينة لها السلوك المرغوب. حتى لو لم تكن قادرة على إظهار عدم وجود bugs، فهي لا تزال أداة مفيدة للعثور عليها و بشكل خاص لتجنب الانحدارات.</p>
+<p>شرح هذا المقال كيفية إعداد test framework لنواتنا Rust. استخدمنا ميزة custom test frameworks في Rust لتنفيذ دعم لسمة <code>#[test_case]</code> بسيطة في بيئة bare metal الخاصة بنا. باستخدام جهاز <code>isa-debug-exit</code> في QEMU، يمكن لـ test runner الخروج من QEMU بعد تشغيل الاختبارات وreport حالة الاختبار. لطباعة رسائل الخطأ إلى console بدلاً من VGA buffer، أنشأنا driver أساسي لـ serial port.</p>
+<p>بعد إنشاء بعض الاختبارات لـ macro <code>println</code>، استكشفنا integration tests في النصف الثاني من المقال. تعلمنا أنها تعيش في دليل <code>tests</code> وتُعامل كـ executables completely منفصلة. لإعطائها الوصول إلى دالة <code>exit_qemu</code> و macro <code>serial_println</code>، نقلنا معظم كودنا إلى مكتبة يمكن استيرادها من جميع executables و integration tests. بما أن integration tests تعمل في بيئة منفصلة خاصة بها، تجعل من الممكن اختبار التفاعلات مع الأجهزة أو إنشاء اختبارات يجب أن تُ panic.</p>
+<p>الآن لدينا test framework يعمل في بيئة واقعية داخل QEMU. بإنشاء المزيد من الاختبارات في المقالات المستقبلية، يمكننا الحفاظ على نواتنا قابلة للصيانة عندما تصبح أكثر تعقيدًا.</p>
+<h2 id="m-ltly"><a class="zola-anchor" href="#m-ltly" aria-label="Anchor link for: m-ltly">🔗</a>ما التالي؟</h2>
+<p>في المقال التالي، سنستكشف <em>CPU exceptions</em>. هذه exceptions تُرمى من قبل وحدة المعالجة المركزية عندما يحدث شيء غير قانوني، مثل القسمة على صفر أو الوصول إلى صفحة ذاكرة غير مُعيّنة (ما يسمى “page fault”). القدرة على catch وفحص هذه exceptions مهمة جدًا لتصحيح الأخطاء المستقبلية. معالجة exceptions مشابهة جدًا لمعالجة hardware interrupts، المطلوبة لدعم لوحة المفاتيح.</p>
+
+    </div>
+
+    <div class="post-footer-support right-to-left">
+        <h2>ادعمني</h2>
+<p>إنشاء وصيانة هذه المدونة والمكتبات المرتبطة بها يتطلب جهدًا كبيرًا، لكنني أستمتع حقًا بذلك. بدعمك لي، يمكنني تخصيص وقت أكثر لإنشاء محتوى جديد وميزات جديدة والصيانة المستمرة. أفضل طريقة لدعمي هي <a href="https://github.com/sponsors/phil-opp"><em>رعايتي على GitHub</em></a>. شكرًا لك!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/ar/vga-text-mode/">&laquo; وضع نص VGA</a>
+        
+        
+            <a class="next" href="/ar/cpu-exceptions/">استثناءات وحدة المعالجة المركزية &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="right-to-left">التعليقات</h2>
+
+        
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+    
+
+    <p class="comment-note">
+        هل لديك مشكلة، أو تريد مشاركة ملاحظات، أو مناقشة أفكار إضافية؟ لا تتردد في ترك تعليق هنا! يرجى الالتزام باللغة الإنجليزية واتباع <a href="https://www.rust-lang.org/policies/code-of-conduct">مدونة سلوك Rust</a>. يتم ربط هذا الخيط من التعليقات مباشرة بـ <a href="https://github.com/phil-opp/blog_os/discussions/1009"><em>نقاش على GitHub</em></a>، لذا يمكنك التعليق هناك أيضًا إذا أردت.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="number"
+    
+        data-term="1009"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="ar"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/1009"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="right-to-left">
+            يفضل كتابة التعليقات باللغة الإنجليزية إن أمكن.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/testing/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/testing/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/testing/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/testing/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/testing/">
+                        Korean
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/testing/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/testing/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

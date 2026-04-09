@@ -1,0 +1,586 @@
+<!doctype html>
+
+<html lang="ar">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="تحدث CPU exceptions في حالات خاطئة مختلفة، على سبيل المثال، عند الوصول إلى عنوان ذاكرة غير صالح أو عند القسمة على صفر. للتفاعل معها، يجب علينا إعداد i…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/ar/cpu-exceptions/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>استثناءات وحدة المعالجة المركزية | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/ar" title="All Posts">« كل المقالات</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="right-to-left">
+        <h2>جدول المحتويات</h2>
+    <ol>
+        <li>
+            <a href="#nzr-m">نظرة عامة</a>
+            <ol>
+                <li>
+                    <a href="#jdwl-wsf-lmqt-t">جدول واصف المقاطعات</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#nw-idt">نوع IDT</a>
+            
+        </li><li>
+            <a href="#tfqy-std-lmqt-t">اتفاقية استدعاء المقاطعات</a>
+            <ol>
+                <li>
+                    <a href="#lsjlt-lmhfwz-wlmw-qt">السجلات المحفوظة والمؤقتة</a>
+                </li><li>
+                    <a href="#hfz-jmy-lsjlt">حفظ جميع السجلات</a>
+                </li><li>
+                    <a href="#tr-mqt-lmqt-t">إطار مقطع المقاطعات</a>
+                </li><li>
+                    <a href="#khlf-lkwlys">خلف الكواليس</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ltnfydh">التنفيذ</a>
+            <ol>
+                <li>
+                    <a href="#thmyl-idt">تحميل IDT</a>
+                </li><li>
+                    <a href="#ltshgyl">التشغيل</a>
+                </li><li>
+                    <a href="#adding-a-test">Adding a Test</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#too-much-magic">Too much Magic?</a>
+            
+        </li><li>
+            <a href="#what-s-next">What’s next?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="right-to-left">
+    <h1>استثناءات وحدة المعالجة المركزية</h1>
+    <time datetime="2018-06-17" class="post-date">
+        Jun 17, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning right-to-left">
+            
+            
+            <p>
+            <b>المحتوى المترجم:</b>
+            هذه ترجمة مجتمعية لمقالة <strong><a href="https://os.phil-opp.com/cpu-exceptions/">CPU Exceptions</a></strong>. قد تكون غير مكتملة أو قديمة أو تحتوي على أخطاء. يرجى الإبلاغ عن أي مشاكل!
+            </p>
+            <p>
+                ترجمة بواسطة <a href="https://github.com/mindfreq">@mindfreq</a>.</p>
+            </div>
+    
+
+    <div class="right-to-left">
+    <p>تحدث CPU exceptions في حالات خاطئة مختلفة، على سبيل المثال، عند الوصول إلى عنوان ذاكرة غير صالح أو عند القسمة على صفر. للتفاعل معها، يجب علينا إعداد <em>interrupt descriptor table</em> يوفر دوال معالجة. في نهاية هذا المقال، ستتمكن نواتنا من catch <a href="https://wiki.osdev.org/Exceptions#Breakpoint">breakpoint exceptions</a> واستئناف التنفيذ العادي بعدها.</p>
+<span id="continue-reading"></span>
+<p>هذا المدونة مطوّرة بشكل مفتوح على <a href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/cpu-exceptions/#comments">في الأسفل</a>. يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a href="https://github.com/phil-opp/blog_os/tree/post-05"><code>post-05</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>جدول المحتويات</b></summary>
+        <ul>
+            <li>
+                <a href="#nzr-m">نظرة عامة</a>
+                <ul>
+                    <li>
+                        <a href="#jdwl-wsf-lmqt-t">جدول واصف المقاطعات</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#nw-idt">نوع IDT</a>
+                
+            </li><li>
+                <a href="#tfqy-std-lmqt-t">اتفاقية استدعاء المقاطعات</a>
+                <ul>
+                    <li>
+                        <a href="#lsjlt-lmhfwz-wlmw-qt">السجلات المحفوظة والمؤقتة</a>
+                    </li><li>
+                        <a href="#hfz-jmy-lsjlt">حفظ جميع السجلات</a>
+                    </li><li>
+                        <a href="#tr-mqt-lmqt-t">إطار مقطع المقاطعات</a>
+                    </li><li>
+                        <a href="#khlf-lkwlys">خلف الكواليس</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ltnfydh">التنفيذ</a>
+                <ul>
+                    <li>
+                        <a href="#thmyl-idt">تحميل IDT</a>
+                    </li><li>
+                        <a href="#ltshgyl">التشغيل</a>
+                    </li><li>
+                        <a href="#adding-a-test">Adding a Test</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#too-much-magic">Too much Magic?</a>
+                
+            </li><li>
+                <a href="#what-s-next">What’s next?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+        </ul>
+    </details>
+
+<h2 id="nzr-m"><a class="zola-anchor" href="#nzr-m" aria-label="Anchor link for: nzr-m">🔗</a>نظرة عامة</h2>
+<p>تشير exception إلى أن شيئًا ما خاطئ في التعليمات الحالية. على سبيل المثال، يصدر وحدة المعالجة المركزية exception إذا كانت التعليمات الحالية تحاول القسمة على 0. عندما تحدث exception، تقطع وحدة المعالجة المركزية عملها الحالي وتستدعي فورًا دالة معالجة exception محددة، حسب نوع exception.</p>
+<p>على x86، هناك حوالي 20 نوعًا مختلفًا من CPU exceptions. أهمها:</p>
+<ul>
+<li><strong>Page Fault</strong>: يحدث page fault عند الوصول غير القانوني للذاكرة. على سبيل المثال، إذا كانت التعليمات الحالية تحاول القراءة من صفحة غير مُعيّنة أو تحاول الكتابة إلى صفحة للقراءة فقط.</li>
+<li><strong>Invalid Opcode</strong>: تحدث هذه exception عندما تكون التعليمات الحالية غير صالحة، على سبيل المثال، عندما نحاول استخدام <a href="https://en.wikipedia.org/wiki/Streaming_SIMD_Extensions">SSE instructions</a> جديدة على CPU قديم لا يدعمها.</li>
+<li><strong>General Protection Fault</strong>: هذه هي exception ذات النطاق الأوسع للأسباب. تحدث في أنواع مختلفة من انتهاكات الوصول، مثل محاولة تنفيذ تعليمة خاصة في كود مستوى المستخدم أو كتابة حقول محجوزة في سجلات التكوين.</li>
+<li><strong>Double Fault</strong>: عندما تحدث exception، يحاول وحدة المعالجة المركزية استدعاء دالة المعالجة المقابلة. إذا حدثت exception أخرى <em>أثناء استدعاء معالج exception</em>، يرفع وحدة المعالجة المركزية double fault exception. تحدث هذه exception أيضًا عندما لا توجد دالة معالجة مسجلة لـ exception.</li>
+<li><strong>Triple Fault</strong>: إذا حدثت exception بينما يحاول وحدة المعالجة المركزية استدعاء دالة double fault handler، يصدر <em>triple fault</em> قاتلة. لا يمكننا catch أو handle triple fault. تتفاعل معظم المعالجات بإعادة ضبط نفسها وإعادة إقلاع نظام التشغيل.</li>
+</ul>
+<p>للقائمة الكاملة للـ exceptions، راجع <a href="https://wiki.osdev.org/Exceptions">OSDev wiki</a>.</p>
+<h3 id="jdwl-wsf-lmqt-t"><a class="zola-anchor" href="#jdwl-wsf-lmqt-t" aria-label="Anchor link for: jdwl-wsf-lmqt-t">🔗</a>جدول واصف المقاطعات</h3>
+<p>لـ catch و handle exceptions، يجب علينا إعداد ما يسمى <em>Interrupt Descriptor Table</em> (IDT). في هذا الجدول، يمكننا تحديد دالة معالجة لكل CPU exception. يستخدم الجهاز هذا الجدول مباشرة، لذلك نحتاج إلى اتباع تنسيق محدد مسبقًا. يجب أن يكون لكل entry البنية التالية من 16 byte:</p>
+<table><thead><tr><th>Type</th><th>Name</th><th>Description</th></tr></thead><tbody>
+<tr><td>u16</td><td>Function Pointer [0:15]</td><td>البتات الأقل من المؤشر إلى دالة المعالجة.</td></tr>
+<tr><td>u16</td><td>GDT selector</td><td>محدد لsegment كود في <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table">global descriptor table</a>.</td></tr>
+<tr><td>u16</td><td>Options</td><td>(انظر أدناه)</td></tr>
+<tr><td>u16</td><td>Function Pointer [16:31]</td><td>البتات الوسطى من المؤشر إلى دالة المعالجة.</td></tr>
+<tr><td>u32</td><td>Function Pointer [32:63]</td><td>البتات المتبقية من المؤشر إلى دالة المعالجة.</td></tr>
+<tr><td>u32</td><td>Reserved</td><td></td></tr>
+</tbody></table>
+<p>حقل options له التنسيق التالي:</p>
+<table><thead><tr><th>Bits</th><th>Name</th><th>Description</th></tr></thead><tbody>
+<tr><td>0-2</td><td>Interrupt Stack Table Index</td><td>0: لا تبدل stacks، 1-7: انتقل إلى الـ n في Interrupt Stack Table عند استدعاء هذا المعالج.</td></tr>
+<tr><td>3-7</td><td>Reserved</td><td></td></tr>
+<tr><td>8</td><td>0: Interrupt Gate, 1: Trap Gate</td><td>إذا كانت هذه البتة 0، يتم تعطيل المقاطعات عند استدعاء هذا المعالج.</td></tr>
+<tr><td>9-11</td><td>must be one</td><td></td></tr>
+<tr><td>12</td><td>must be zero</td><td></td></tr>
+<tr><td>13‑14</td><td>Descriptor Privilege Level (DPL)</td><td>الحد الأدنى من مستوى الامتياز المطلوب لاستدعاء هذا المعالج.</td></tr>
+<tr><td>15</td><td>Present</td><td></td></tr>
+</tbody></table>
+<p>لكل exception فهرس IDT محدد مسبقًا. على سبيل المثال، invalid opcode exception لها فهرس جدول 6 و page fault exception لها فهرس جدول 14. بذلك، يمكن للجهاز تحميل IDT entry المقابل لكل exception تلقائيًا. يُظهر <a href="https://wiki.osdev.org/Exceptions">Exception Table</a> في OSDev wiki فهارس IDT لجميع exceptions في عمود “Vector nr.”.</p>
+<p>عندما تحدث exception، يفعل وحدة المعالجة المركزية تقريبًا ما يلي:</p>
+<ol>
+<li>يدفع بعض السجلات على stack، بما في ذلك instruction pointer وسجل <a href="https://en.wikipedia.org/wiki/FLAGS_register">RFLAGS</a>. (سنستخدم هذه القيم لاحقًا في هذا المقال.)</li>
+<li>يقرأ entry المقابل من Interrupt Descriptor Table (IDT). على سبيل المثال، يقرأ وحدة المعالجة المركزية entry الرابع عشر عند حدوث page fault.</li>
+<li>يتحقق مما إذا كان entry موجودًا وإذا لم يكن كذلك، يرفع double fault.</li>
+<li>يعطل hardware interrupts إذا كان entry interrupt gate (البتة 8 غير محددة).</li>
+<li>يحمل <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table">GDT</a> selector المحدد في CS (code segment).</li>
+<li>يقفز إلى دالة المعالجة المحددة.</li>
+</ol>
+<p>لا تقلق بشأن الخطوتين 4 و5 الآن؛ سنتعلم عن global descriptor table و hardware interrupts في مقالات مستقبلية.</p>
+<h2 id="nw-idt"><a class="zola-anchor" href="#nw-idt" aria-label="Anchor link for: nw-idt">🔗</a>نوع IDT</h2>
+<p>بدلاً من إنشاء نوع IDT خاص بنا، سنستخدم <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code> struct</a> من مكتبة <code>x86_64</code>، التي تبدو كالتالي:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[repr(C)]
+</span><span style="color:#569cd6;">pub struct </span><span>InterruptDescriptorTable {
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>divide_by_zero: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>debug: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>non_maskable_interrupt: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>breakpoint: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>overflow: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>bound_range_exceeded: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>invalid_opcode: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>device_not_available: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>double_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>invalid_tss: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>segment_not_present: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>stack_segment_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>general_protection_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>page_fault: Entry&lt;PageFaultHandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>x87_floating_point: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>alignment_check: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>machine_check: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>simd_floating_point: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>virtualization: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>security_exception: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#608b4e;">// some fields omitted
+</span><span>}
+</span></code></pre>
+<p>الحقول لها النوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.Entry.html"><code>idt::Entry&lt;F&gt;</code></a>، وهو struct يمثل حقول IDT entry (انظر الجدول أعلاه). يحدد parameter النوع <code>F</code> نوع دالة المعالجة المتوقعة. نرى أن بعض entries تتطلب <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFunc.html"><code>HandlerFunc</code></a> وبعضها تتطلب <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>. حتى page fault لها نوعها الخاص: <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.PageFaultHandlerFunc.html"><code>PageFaultHandlerFunc</code></a>.</p>
+<p>لننظر في نوع <code>HandlerFunc</code> أولاً:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">HandlerFunc </span><span>= </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn</span><span>(</span><span style="color:#569cd6;">_</span><span>: InterruptStackFrame);
+</span></code></pre>
+<p>إنه <a href="https://doc.rust-lang.org/book/ch20-03-advanced-types.html#creating-type-synonyms-with-type-aliases">type alias</a> لنوع <code>extern "x86-interrupt" fn</code>. كلمة <code>extern</code> تحدد دالة بـ <a href="https://doc.rust-lang.org/nomicon/ffi.html#foreign-calling-conventions">calling convention أجنبية</a> وتُستخدم غالبًا للتواصل مع كود C (<code>extern "C" fn</code>). لكن ما هو calling convention <code>x86-interrupt</code>؟</p>
+<h2 id="tfqy-std-lmqt-t"><a class="zola-anchor" href="#tfqy-std-lmqt-t" aria-label="Anchor link for: tfqy-std-lmqt-t">🔗</a>اتفاقية استدعاء المقاطعات</h2>
+<p>Exceptions مشابهة جدًا لاستدعاءات الدوال: يقفز وحدة المعالجة المركزية إلى أول تعليمة لدالة المُستدعاة وينفذها. بعد ذلك، يقفز وحدة المعالجة المركزية إلى عنوان العودة ويستمر في تنفيذ الدالة الأصل.</p>
+<p>ومع ذلك، هناك فرق رئيسي بين exceptions واستدعاءات الدوال: استدعاء الدالة يُستدعى طواعية بواسطة تعليمة <code>call</code> مُدرجة من المترجم، بينما قد تحدث exception عند <em>أي</em> تعليمة. لفهم عواقب هذا الفرق، نحتاج إلى فحص استدعاءات الدوال بمزيد من التفصيل.</p>
+<p>تحدد <a href="https://en.wikipedia.org/wiki/Calling_convention">Calling conventions</a> تفاصيل استدعاء الدالة. على سبيل المثال، تحدد أين توضع معاملات الدالة (مثل في السجلات أو على stack) وكيف تُعاد النتائج. على x86_64 Linux، تنطبق القواعد التالية لدوال C (محددة في <a href="https://refspecs.linuxbase.org/elf/x86_64-abi-0.99.pdf">System V ABI</a>):</p>
+<ul>
+<li>تمرر أول ستة معاملات صحيحة في السجلات <code>rdi</code> و <code>rsi</code> و <code>rdx</code> و <code>rcx</code> و <code>r8</code> و <code>r9</code></li>
+<li>تمرر المعاملات الإضافية على stack</li>
+<li>تُعاد النتائج في <code>rax</code> و <code>rdx</code></li>
+</ul>
+<p>لاحظ أن Rust لا يتبع C ABI (في الواقع، <a href="https://github.com/rust-lang/rfcs/issues/600">لا يوجد حتى Rust ABI بعد</a>)، لذلك تنطبق هذه القواعد فقط على الدوال المعلنة كـ <code>extern "C" fn</code>.</p>
+<h3 id="lsjlt-lmhfwz-wlmw-qt"><a class="zola-anchor" href="#lsjlt-lmhfwz-wlmw-qt" aria-label="Anchor link for: lsjlt-lmhfwz-wlmw-qt">🔗</a>السجلات المحفوظة والمؤقتة</h3>
+<p>يقسم calling convention السجلات إلى جزأين: <em>preserved</em> و <em>scratch</em> registers.</p>
+<p>يجب أن تبقى قيم <em>preserved</em> registers دون تغيير عبر استدعاءات الدوال. لذلك يُسمح فقط للدالة المُستدعاة (<em>“callee”</em>) بالكتابة فوق هذه السجلات إذا استعادت قيمها الأصلية قبل العودة. لذلك، تُسمى هذه السجلات <em>“callee-saved”</em>. النمط الشائع هو حفظ هذه السجلات إلى stack في بداية الدالة واستعادتها مباشرة قبل العودة.</p>
+<p>على النقيض، يُسمح للدالة المُستدعاة بالكتابة فوق <em>scratch</em> registers دون قيود. إذا أراد المستدعي الحفاظ على قيمة scratch register عبر استدعاء دالة، يحتاج إلى نسخ احتياطي واستعادة قبل استدعاء الدالة (بدفعه إلى stack). لذلك scratch registers هي <em>caller-saved</em>.</p>
+<p>على x86_64، يحدد calling convention C preserved و scratch registers التالية:</p>
+<table><thead><tr><th>preserved registers</th><th>scratch registers</th></tr></thead><tbody>
+<tr><td><code>rbp</code>, <code>rbx</code>, <code>rsp</code>, <code>r12</code>, <code>r13</code>, <code>r14</code>, <code>r15</code></td><td><code>rax</code>, <code>rcx</code>, <code>rdx</code>, <code>rsi</code>, <code>rdi</code>, <code>r8</code>, <code>r9</code>, <code>r10</code>, <code>r11</code></td></tr>
+<tr><td><em>callee-saved</em></td><td><em>caller-saved</em></td></tr>
+</tbody></table>
+<p>يعرف المترجم هذه القواعد، لذلك يولّد الكود وفقًا لذلك. على سبيل المثال، تبدأ معظم الدوال بـ <code>push rbp</code>، الذي ينسخ احتياطي <code>rbp</code> على stack (لأنه callee-saved register).</p>
+<h3 id="hfz-jmy-lsjlt"><a class="zola-anchor" href="#hfz-jmy-lsjlt" aria-label="Anchor link for: hfz-jmy-lsjlt">🔗</a>حفظ جميع السجلات</h3>
+<p>على عكس استدعاءات الدوال، يمكن أن تحدث exceptions عند <em>أي</em> تعليمة. في معظم الحالات، لا نعرف حتى وقت التجميع إذا كان الكود المولّد سيسبب exception. على سبيل المثال، لا يمكن للمترجم معرفة إذا كانت تعليمة تسبب stack overflow أو page fault.</p>
+<p>بما أننا لا نعرف متى تحدث exception، لا يمكننا نسخ أي سجلات احتياطيًا قبل ذلك. هذا يعني أننا لا نستطيع استخدام calling convention يعتمد على caller-saved registers لمعالجي exceptions. بدلاً من ذلك، نحتاج إلى calling convention يحافظ على <em>جميع السجلات</em>. calling convention <code>x86-interrupt</code> هو مثل هذا الـ calling convention، لذلك يضمن أن جميع قيم السجلات تُستعاد إلى قيمها الأصلية عند عودة الدالة.</p>
+<p>لاحظ أن هذا لا يعني أن جميع السجلات تُحفظ على stack عند دخول الدالة. بدلاً من ذلك، ينسخ المترجم احتياطيًا فقط السجلات التي تُكتب فوقها من قبل الدالة. بهذه الطريقة، يمكن توليد كود فعال جدًا للدوال القصيرة التي تستخدم عددًا قليلًا من السجلات.</p>
+<h3 id="tr-mqt-lmqt-t"><a class="zola-anchor" href="#tr-mqt-lmqt-t" aria-label="Anchor link for: tr-mqt-lmqt-t">🔗</a>إطار مقطع المقاطعات</h3>
+<p>عند استدعاء دالة عادية (باستخدام تعليمة <code>call</code>)، يدفع وحدة المعالجة المركزية عنوان العودة قبل القفز إلى الدالة المستهدفة. عند عودة الدالة (باستخدام تعليمة <code>ret</code>)، يسحب وحدة المعالجة المركزية عنوان العودة هذا وتقفز إليه. لذلك stack frame لاستدعاء دالة عادية يبدو كالتالي:</p>
+<p><img src="https://os.phil-opp.com/ar/cpu-exceptions/function-stack-frame.svg" alt="function stack frame" /></p>
+<p>بالنسبة لمعالجي exceptions و interrupts، لن يكفي دفع عنوان عودة، لأن معالجي interrupts يعملون غالبًا في سياق مختلف (مؤشر stack، أعلام CPU، إلخ). بدلاً من ذلك، ينفذ وحدة المعالجة المركزية الخطوات التالية عند حدوث interrupt:</p>
+<ol start="0">
+<li><strong>حفظ مؤشر stack القديم</strong>: يقرأ وحدة المعالجة مركزية مؤشر stack (<code>rsp</code>) وسجل stack segment (<code>ss</code>) ويتذكرها في buffer داخلي.</li>
+<li><strong>محاذاة مؤشر Stack</strong>: يمكن أن يحدث interrupt عند أي تعليمة، لذلك يمكن أن يكون لمؤشر stack أي قيمة أيضًا. ومع ذلك، بعض تعليمات CPU (مثل بعض تعليمات SSE) تتطلب أن يكون مؤشر Stack محاذاً على حدود 16 byte، لذلك ينفذ وحدة المعالجة المركزية مثل هذه المحاذاة مباشرة بعد interrupt.</li>
+<li><strong>تبديل stacks</strong> (في بعض الحالات): يحدث تبديل stack عندما يتغير مستوى امتياز وحدة المعالجة المركزية، على سبيل المثال، عندما تحدث CPU exception في برنامج وضع المستخدم. من الممكن أيضًا تكوين تبديل stacks لـ interrupts محددة باستخدام ما يسمى <em>Interrupt Stack Table</em> (موضح في المقال التالي).</li>
+<li><strong>دفع مؤشر Stack القديم</strong>: يدفع وحدة المعالجة المركزية قيم <code>rsp</code> و <code>ss</code> من الخطوة 0 إلى stack. هذا يجعل من الممكن استعادة مؤشر Stack الأصلي عند العودة من interrupt handler.</li>
+<li><strong>دفع وتحديث سجل <code>RFLAGS</code></strong>: يحتوي سجل <a href="https://en.wikipedia.org/wiki/FLAGS_register"><code>RFLAGS</code></a> على various control and status bits. عند دخول interrupt، يغير وحدة المعالجة المركزية بعض البتات ويدفع القيمة القديمة.</li>
+<li><strong>دفع instruction pointer</strong>: قبل القفز إلى دالة interrupt handler، يدفع وحدة المعالجة المركزية instruction pointer (<code>rip</code>) و code segment (<code>cs</code>). هذا يعادل دفع عنوان العودة لاستدعاء دالة عادية.</li>
+<li><strong>دفع error code</strong> (لبعض exceptions): لبعض exceptions المحددة، مثل page faults، يدفع وحدة المعالجة المركزية error code، الذي يصف سبب exception.</li>
+<li><strong>استدعاء interrupt handler</strong>: يقرأ وحدة المعالجة مركزية عنوان و segment descriptor لدالة interrupt handler من الحقل المقابل في IDT. ثم يستدعي هذا المعالج بتحميل القيم في سجلات <code>rip</code> و <code>cs</code>.</li>
+</ol>
+<p>لذلك <em>interrupt stack frame</em> يبدو كالتالي:</p>
+<p><img src="https://os.phil-opp.com/ar/cpu-exceptions/exception-stack-frame.svg" alt="interrupt stack frame" /></p>
+<p>في مكتبة <code>x86_64</code>، يُمثَّل interrupt stack frame بـ <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptStackFrame.html"><code>InterruptStackFrame</code></a> struct. يُمرر إلى معالجي interrupts كـ <code>&amp;mut</code> ويمكن استخدامه لاسترداد معلومات إضافية عن سبب exception. لا يحتوي struct على حقل error code، لأن عددًا قليلًا من exceptions يدفع error code. تستخدم هذه exceptions نوع الدالة المنفصل <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>، الذي لديه وسيطة <code>error_code</code> إضافية.</p>
+<h3 id="khlf-lkwlys"><a class="zola-anchor" href="#khlf-lkwlys" aria-label="Anchor link for: khlf-lkwlys">🔗</a>خلف الكواليس</h3>
+<p>calling convention <code>x86-interrupt</code> هو تجريد قوي يخفي جميع التفاصيل المعقدة لعملية معالجة exceptions. ومع ذلك، أحيانًا يكون من المفيد معرفة ما يحدث خلف الكواليس. إليك نظرة عامة قصيرة على الأشياء التي يعتني بها calling convention <code>x86-interrupt</code>:</p>
+<ul>
+<li><strong>استرداد الوسائط</strong>: تتوقع معظم calling conventions أن الوسائط تُمرر في السجلات. هذا غير ممكن لمعالجي exceptions لأننا يجب ألا نكتب فوق أي قيم سجلات قبل نسخها احتياطيًا على stack. بدلاً من ذلك، calling convention <code>x86-interrupt</code> يدرك أن الوسائط موجودة بالفعل على stack عند offset محدد.</li>
+<li><strong>العودة باستخدام <code>iretq</code></strong>: بما أن interrupt stack frame يختلف completely عن stack frames لاستدعاءات الدوال العادية، لا يمكننا العودة من دوال المعالجة عبر تعليمة <code>ret</code> العادية. لذلك بدلاً من ذلك، يجب استخدام تعليمة <code>iretq</code>.</li>
+<li><strong>معالجة error code</strong>: error code، الذي يُدفع لبعض exceptions، يجعل الأمور أكثر تعقيدًا. يغير محاذاة stack (انظر النقطة التالية) وينبغي أن يُسحب من stack قبل العودة. calling convention <code>x86-interrupt</code> يعالج كل هذا التعقيد. ومع ذلك، لا يعرف أي دالة معالجة تُستخدم لأي exception، لذلك يحتاج إلى استنتاج تلك المعلومات من عدد معاملات الدالة. هذا يعني أن المبرمج لا يزال مسؤولًا عن استخدام نوع الدالة الصحيح لكل exception. لحسن الحظ، يضمن نوع <code>InterruptDescriptorTable</code> المحدد من مكتبة <code>x86_64</code> استخدام أنواع الدوال الصحيحة.</li>
+<li><strong>محاذاة stack</strong>: بعض التعليمات (خاصة تعليمات SSE) تتطلب محاذاة 16 byte لـ stack. يضمن وحدة المعالجة المركزية هذه المحاذاة whenever يحدث exception، لكن لبعض exceptions يدمرها مرة أخرى عندما يدفع error code. calling convention <code>x86-interrupt</code> يعتني بهذا بإعادة محاذاة stack في هذه الحالة.</li>
+</ul>
+<p>إذا كنت مهتمًا بمزيد من التفاصيل، لدينا أيضًا سلسلة مقالات تشرح معالجة exceptions باستخدام <a href="https://github.com/rust-lang/rfcs/blob/master/text/1201-naked-fns.md">naked functions</a> مرتبطة <a href="https://os.phil-opp.com/ar/cpu-exceptions/#too-much-magic">في نهاية هذا المقال</a>.</p>
+<h2 id="ltnfydh"><a class="zola-anchor" href="#ltnfydh" aria-label="Anchor link for: ltnfydh">🔗</a>التنفيذ</h2>
+<p>الآن بعد أن فهمنا النظرية، حان الوقت لمعالجة CPU exceptions في نواتنا. سنبدأ بإنشاء interrupts module جديد في <code>src/interrupts.rs</code>، ينشئ أولاً دالة <code>init_idt</code> تنشئ <code>InterruptDescriptorTable</code> جديد:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>interrupts;
+</span><span>
+</span><span style="color:#608b4e;">// in src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::InterruptDescriptorTable;
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>}
+</span></code></pre>
+<p>الآن يمكننا إضافة دوال المعالجة. سنبدأ بإضافة معالج لـ <a href="https://wiki.osdev.org/Exceptions#Breakpoint">breakpoint exception</a>. breakpoint exception هي exception المثالية لاختبار معالجة exceptions. غرضها الوحيد هو إيقاف البرنامج مؤقتًا عند تنفيذ تعليمة breakpoint <code>int3</code>.</p>
+<p>breakpoint exception تُستخدم عادة في debuggers: عندما يحدد المستخدم breakpoint، يحل debugger محل التعليمة المقابلة بتعليمة <code>int3</code> بحيث يرمي وحدة المعالجة المركزية breakpoint exception عندما يصل إلى ذلك السطر. عندما يريد المستخدم استئناف البرنامج، يحل debugger محل تعليمة <code>int3</code> بالتعليمة الأصلية ويستمر البرنامج. لمزيد من التفاصيل، انظر سلسلة <a href="https://eli.thegreenplace.net/2011/01/27/how-debuggers-work-part-2-breakpoints">“<em>How debuggers work</em>”</a>.</p>
+<p>لحالتنا، لا نحتاج إلى استبدال أي تعليمات. بدلاً من ذلك، نريد فقط طباعة رسالة عند تنفيذ تعليمة breakpoint ثم استئناف البرنامج. لننشئ دالة <code>breakpoint_handler</code> بسيطة ونضيفها إلى IDT:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+</span><span style="color:#569cd6;">use crate</span><span>::println;
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>    idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>breakpoint_handler(
+</span><span>    stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: BREAKPOINT</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span>, stack_frame);
+</span><span>}
+</span></code></pre>
+<p>المعالج يخرج فقط رسالة ويطبع interrupt stack frame بشكل جميل.</p>
+<p>عندما نحاول تجميعه، يحدث الخطأ التالي:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0658]: x86-interrupt ABI is experimental and subject to change (see issue #40180)
+</span><span>  --&gt; src/main.rs:53:1
+</span><span>   |
+</span><span>53 | / extern &quot;x86-interrupt&quot; fn breakpoint_handler(stack_frame: InterruptStackFrame) {
+</span><span>54 | |     println!(&quot;EXCEPTION: BREAKPOINT\n{:#?}&quot;, stack_frame);
+</span><span>55 | | }
+</span><span>   | |_^
+</span><span>   |
+</span><span>   = help: add #![feature(abi_x86_interrupt)] to the crate attributes to enable
+</span></code></pre>
+<p>هذا الخطأ يحدث لأن calling convention <code>x86-interrupt</code> لا يزال غير مستقر. لاستخدامه على أي حال، يجب علينا تفعيله صراحة بإضافة <code>#![feature(abi_x86_interrupt)]</code> في أعلى <code>lib.rs</code>.</p>
+<h3 id="thmyl-idt"><a class="zola-anchor" href="#thmyl-idt" aria-label="Anchor link for: thmyl-idt">🔗</a>تحميل IDT</h3>
+<p>لكي يستخدم وحدة المعالجة المركزية interrupt descriptor table الجديد، نحتاج إلى تحميله باستخدام تعليمة <a href="https://www.felixcloutier.com/x86/lgdt:lidt"><code>lidt</code></a>. يوفر struct <code>InterruptDescriptorTable</code> من مكتبة <code>x86_64</code> دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html#method.load"><code>load</code></a> لذلك. لنحاول استخدامها:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>    idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>    idt.load();
+</span><span>}
+</span></code></pre>
+<p>عندما نحاول تجميعه الآن، يحدث الخطأ التالي:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: `idt` does not live long enough
+</span><span>  --&gt; src/interrupts/mod.rs:43:5
+</span><span>   |
+</span><span>43 |     idt.load();
+</span><span>   |     ^^^ does not live long enough
+</span><span>44 | }
+</span><span>   | - borrowed value only lives until here
+</span><span>   |
+</span><span>   = note: borrowed value must be valid for the static lifetime...
+</span></code></pre>
+<p>لذلك دالة <code>load</code> تتوقع <code>&amp;'static self</code>، أي مرجع صالح لفترة التشغيل الكاملة للبرنامج. السبب هو أن وحدة المعالجة المركزية ستصل إلى هذا الجدول في كل interrupt حتى نحمل IDT مختلف. لذلك استخدام lifetime أقصر من <code>'static</code> قد يؤدي إلى use-after-free bugs.</p>
+<p>في الواقع، هذا بالضبط ما يحدث هنا. يُنشأ <code>idt</code> على stack، لذلك هو صالح فقط داخل دالة <code>init</code>. بعد ذلك، تُعاد استخدام ذاكرة stack لدوال أخرى، لذلك قد يفسر وحدة المعالجة المركزية ذاكرة stack عشوائية كـ IDT. لحسن الحظ، ترمي دالة <code>InterruptDescriptorTable::load</code> هذا المتطلب في تعريف الدالة، بحيث يمكن لـ Rust compiler منع هذا الـ bug المحتمل وقت التجميع.</p>
+<p>لحل هذه المشكلة، نحتاج إلى تخزين <code>idt</code> في مكان يكون له lifetime <code>'static</code>. لتحقيق ذلك، يمكننا تخصيص IDT على heap باستخدام <a href="https://doc.rust-lang.org/std/boxed/struct.Box.html"><code>Box</code></a> ثم تحويله إلى مرجع <code>'static</code>، لكننا نكتب OS kernel وبالتالي ليس لدينا heap (بعد).</p>
+<p>كبدائل، يمكننا محاولة تخزين IDT كـ <code>static</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = InterruptDescriptorTable::new();
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>}
+</span></code></pre>
+<p>ومع ذلك، هناك مشكلة: Statics غير قابلة للتغيير، لذلك لا يمكننا تعديل breakpoint entry من دالة <code>init</code>. يمكننا حل هذه المشكلة باستخدام <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#accessing-or-modifying-a-mutable-static-variable"><code>static mut</code></a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = InterruptDescriptorTable::new();
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">IDT</span><span>.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>هذا النموذج يتجمع بدون أخطاء لكنه بعيد عن أن يكون idiomatic. <code>static mut</code>s عرضة جدًا لـ data races، لذلك نحتاج إلى كتلة [<code>unsafe</code>] عند كل وصول.</p>
+<h4 id="lazy-statics-to-the-rescue"><a class="zola-anchor" href="#lazy-statics-to-the-rescue" aria-label="Anchor link for: lazy-statics-to-the-rescue">🔗</a>Lazy Statics to the Rescue</h4>
+<p>لحسن الحظ، يوجد macro <code>lazy_static</code>. بدلاً من تقييم <code>static</code> وقت التجميع، ينفذ macro التهيئة عند أول إشارة إلى <code>static</code>. بذلك، يمكننا فعل كل شيء تقريبًا في كتلة التهيئة وحتى قراءة قيم وقت التشغيل.</p>
+<p>لقد استوردنا بالفعل مكتبة <code>lazy_static</code> عندما <a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">أنشأنا تجريدًا لـ VGA text buffer</a>. لذلك يمكننا استخدام macro <code>lazy_static!</code> مباشرة لإنشاء static IDT:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>}
+</span></code></pre>
+<p>لاحظ كيف لا تتطلب هذه الحل أي كتل <code>unsafe</code>. يستخدم macro <code>lazy_static!</code> <code>unsafe</code> خلف الكواليس، لكنه يُتجسد في واجهة آمنة.</p>
+<h3 id="ltshgyl"><a class="zola-anchor" href="#ltshgyl" aria-label="Anchor link for: ltshgyl">🔗</a>التشغيل</h3>
+<p>الخطوة الأخيرة لجعل exceptions تعمل في نواتنا هي استدعاء دالة <code>init_idt</code> من <code>main.rs</code>. بدلاً من استدعائها مباشرة، نقدم دالة <code>init</code> عامة في <code>lib.rs</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    interrupts::init_idt();
+</span><span>}
+</span></code></pre>
+<p>مع هذه الدالة، لدينا الآن مكان مركزي لـ routines التهيئة التي يمكن مشاركتها بين دوال <code>_start</code> المختلفة في <code>main.rs</code> و <code>lib.rs</code> و integration tests.</p>
+<p>الآن يمكننا تحديث دالة <code>_start</code> في <code>main.rs</code> لاستدعاء <code>init</code> ثم إثارة breakpoint exception:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init(); </span><span style="color:#608b4e;">// new
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// invoke a breakpoint exception
+</span><span>    x86_64::instructions::interrupts::int3(); </span><span style="color:#608b4e;">// new
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// as before
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>عندما نشغّله في QEMU الآن (باستخدام <code>cargo run</code>)، نرى ما يلي:</p>
+<p><img src="https://os.phil-opp.com/ar/cpu-exceptions/qemu-breakpoint-exception.png" alt="QEMU printing EXCEPTION: BREAKPOINT and the interrupt stack frame" /></p>
+<p>لقد نجح! يستدعي وحدة المعالجة المركزية breakpoint handler بنجاح، الذي يطبع الرسالة، ثم يعود إلى دالة <code>_start</code>، حيث تُطبع رسالة <code>It did not crash!</code>.</p>
+<p>نرى أن interrupt stack frame يخبرنا بعنوان التعليمات ومؤشرات Stack عند وقت حدوث exception. هذه المعلومات مفيدة جدًا عند تصحيح exceptions غير متوقعة.</p>
+<h3 id="adding-a-test"><a class="zola-anchor" href="#adding-a-test" aria-label="Anchor link for: adding-a-test">🔗</a>Adding a Test</h3>
+<p>لننشئ اختبارًا يضمن أن ما سبق يستمر في العمل. أولاً، نحدّث دالة <code>_start</code> لتستدعي أيضًا <code>init</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
+</span><span>
+</span><span style="color:#608b4e;">/// Entry point for `cargo test`
+</span><span>#[cfg(test)]
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    init();      </span><span style="color:#608b4e;">// new
+</span><span>    test_main();
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>تذكر، تُستخدم دالة <code>_start</code> هذه عند تشغيل <code>cargo test --lib</code>، لأن Rust يختبر <code>lib.rs</code> completely بشكل مستقل عن <code>main.rs</code>. نحتاج إلى استدعاء <code>init</code> هنا لإعداد IDT قبل تشغيل الاختبارات.</p>
+<p>الآن يمكننا إنشاء اختبار <code>test_breakpoint_exception</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_breakpoint_exception() {
+</span><span>    </span><span style="color:#608b4e;">// invoke a breakpoint exception
+</span><span>    x86_64::instructions::interrupts::int3();
+</span><span>}
+</span></code></pre>
+<p>الاختبار يستدعي دالة <code>int3</code> لإثارة breakpoint exception. بالتحقق من أن التنفيذ يستمر بعده، نتحقق من أن breakpoint handler يعمل بشكل صحيح.</p>
+<p>يمكنك تجربة هذا الاختبار الجديد بتشغيل <code>cargo test</code> (جميع الاختبارات) أو <code>cargo test --lib</code> (فقط اختبارات <code>lib.rs</code> و modules). يجب أن ترى ما يلي في الإخراج:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>blog_os::interrupts::test_breakpoint_exception...	[ok]
+</span></code></pre>
+<h2 id="too-much-magic"><a class="zola-anchor" href="#too-much-magic" aria-label="Anchor link for: too-much-magic">🔗</a>Too much Magic?</h2>
+<p>calling convention <code>x86-interrupt</code> ونوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> جعل عملية معالجة exceptions مباشرة وخالية من الألم. إذا كان هذا سحرًا كبيرًا عليك وتعلم جميع التفاصيل المعقدة لمعالجة exceptions، فقد غطينا ذلك لك: سلسلة <a href="https://os.phil-opp.com/edition-1/extra/naked-exceptions/">“Handling Exceptions with Naked Functions”</a> الخاصة بنا تظهر كيفية معالجة exceptions بدون calling convention <code>x86-interrupt</code> وتُنشئ أيضًا نوع IDT خاص بها. تاريخيًا، كانت هذه المقالات مقالات معالجة exceptions الرئيسية قبل وجود calling convention <code>x86-interrupt</code> ومكتبة <code>x86_64</code>. لاحظ أن هذه المقالات مبنية على <a href="https://os.phil-opp.com/edition-1/">الإصدار الأول</a> من هذه المدونة وقد تكون قديمة.</p>
+<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What’s next?</h2>
+<p>لقد التقطنا أول exception وعدنا منها بنجاح! الخطوة التالية هي ضمان التقاط جميع exceptions لأن exception غير ملتقط يسبب <a href="https://wiki.osdev.org/Triple_Fault">triple fault</a> قاتلة، التي تؤدي إلى إعادة ضبط النظام. المقال التالي يشرح كيف نتجنب ذلك بـ catch صحيح لـ <a href="https://wiki.osdev.org/Double_Fault#Double_Fault">double faults</a>.</p>
+
+    </div>
+
+    <div class="post-footer-support right-to-left">
+        <h2>ادعمني</h2>
+<p>إنشاء وصيانة هذه المدونة والمكتبات المرتبطة بها يتطلب جهدًا كبيرًا، لكنني أستمتع حقًا بذلك. بدعمك لي، يمكنني تخصيص وقت أكثر لإنشاء محتوى جديد وميزات جديدة والصيانة المستمرة. أفضل طريقة لدعمي هي <a href="https://github.com/sponsors/phil-opp"><em>رعايتي على GitHub</em></a>. شكرًا لك!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/ar/testing/">&laquo; الاختبار</a>
+        
+        
+            <a class="next" href="/ar/double-fault-exceptions/">الأخطاء المزدوجة &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="right-to-left">التعليقات</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        هل لديك مشكلة، أو تريد مشاركة ملاحظات، أو مناقشة أفكار إضافية؟ لا تتردد في ترك تعليق هنا! يرجى الالتزام باللغة الإنجليزية واتباع <a href="https://www.rust-lang.org/policies/code-of-conduct">مدونة سلوك Rust</a>. يتم ربط هذا الخيط من التعليقات مباشرة بـ <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22CPU%20Exceptions%20%28ar%29%22%20in%3Atitle"><em>نقاش على GitHub</em></a>، لذا يمكنك التعليق هناك أيضًا إذا أردت.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="CPU Exceptions (ar)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="ar"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22CPU%20Exceptions%20%28ar%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="right-to-left">
+            يفضل كتابة التعليقات باللغة الإنجليزية إن أمكن.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/cpu-exceptions/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/cpu-exceptions/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/cpu-exceptions/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/cpu-exceptions/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/cpu-exceptions/">
+                        Korean
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/cpu-exceptions/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/cpu-exceptions/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

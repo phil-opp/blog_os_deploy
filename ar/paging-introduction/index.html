@@ -1,0 +1,537 @@
+<!doctype html>
+
+<html lang="ar">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="يقدم هذا المقال paging، مخطط إدارة ذاكرة شائع جدًا سنستخدمه أيضًا لنظام التشغيل الخاص بنا. يشرح لماذا نحتاج إلى عزل الذاكرة، كيف تعمل segmentation، ما ه…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/ar/paging-introduction/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>مقدمة إلى Paging | Writing an OS in Rust</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Writing an OS in Rust</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/ar" title="All Posts">« كل المقالات</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="right-to-left">
+        <h2>جدول المحتويات</h2>
+    <ol>
+        <li>
+            <a href="#hmy-ldhkr">حماية الذاكرة</a>
+            
+        </li><li>
+            <a href="#ltjzy-segmentation">التجزئة (Segmentation)</a>
+            <ol>
+                <li>
+                    <a href="#ldhkr-lftrdy">الذاكرة الافتراضية</a>
+                </li><li>
+                    <a href="#ltjzy">التجزئة</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ltsfh-paging">التصفح (Paging)</a>
+            <ol>
+                <li>
+                    <a href="#ltjzy-lmkhfy">التجزئة المخفية</a>
+                </li><li>
+                    <a href="#jdwl-ltsfh">جداول التصفح</a>
+                </li><li>
+                    <a href="#jdwl-ltsfh-mt-dd-lmstwyt">جداول التصفح متعددة المستويات</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ltsfh-l-x86-64">التصفح على x86_64</a>
+            <ol>
+                <li>
+                    <a href="#mthl-l-ltrjm">مثال على الترجمة</a>
+                </li><li>
+                    <a href="#page-table-format">Page Table Format</a>
+                </li><li>
+                    <a href="#the-translation-lookaside-buffer">The Translation Lookaside Buffer</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#implementation">Implementation</a>
+            <ol>
+                <li>
+                    <a href="#page-faults">Page Faults</a>
+                </li><li>
+                    <a href="#accessing-the-page-tables">Accessing the Page Tables</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#summary">Summary</a>
+            
+        </li><li>
+            <a href="#what-s-next">What’s next?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="right-to-left">
+    <h1>مقدمة إلى Paging</h1>
+    <time datetime="2019-01-14" class="post-date">
+        Jan 14, 2019
+        
+    </time>
+    </div>
+
+    
+        <div class="warning right-to-left">
+            
+            
+            <p>
+            <b>المحتوى المترجم:</b>
+            هذه ترجمة مجتمعية لمقالة <strong><a href="https://os.phil-opp.com/paging-introduction/">Introduction to Paging</a></strong>. قد تكون غير مكتملة أو قديمة أو تحتوي على أخطاء. يرجى الإبلاغ عن أي مشاكل!
+            </p>
+            <p>
+                ترجمة بواسطة <a href="https://github.com/mindfreq">@mindfreq</a>.</p>
+            </div>
+    
+
+    <div class="right-to-left">
+    <p>يقدم هذا المقال <em>paging</em>، مخطط إدارة ذاكرة شائع جدًا سنستخدمه أيضًا لنظام التشغيل الخاص بنا. يشرح لماذا نحتاج إلى عزل الذاكرة، كيف تعمل <em>segmentation</em>، ما هي <em>virtual memory</em>، وكيف يحل paging مشكلة تجزئة الذاكرة. يستكشف أيضًا تخطيط multilevel page tables على معمارية x86_64.</p>
+<span id="continue-reading"></span>
+<p>هذا المدونة مطوّرة بشكل مفتوح على <a href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/paging-introduction/#comments">في الأسفل</a>.  يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a href="https://github.com/phil-opp/blog_os/tree/post-08"><code>post-08</code></a>.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>جدول المحتويات</b></summary>
+        <ul>
+            <li>
+                <a href="#hmy-ldhkr">حماية الذاكرة</a>
+                
+            </li><li>
+                <a href="#ltjzy-segmentation">التجزئة (Segmentation)</a>
+                <ul>
+                    <li>
+                        <a href="#ldhkr-lftrdy">الذاكرة الافتراضية</a>
+                    </li><li>
+                        <a href="#ltjzy">التجزئة</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ltsfh-paging">التصفح (Paging)</a>
+                <ul>
+                    <li>
+                        <a href="#ltjzy-lmkhfy">التجزئة المخفية</a>
+                    </li><li>
+                        <a href="#jdwl-ltsfh">جداول التصفح</a>
+                    </li><li>
+                        <a href="#jdwl-ltsfh-mt-dd-lmstwyt">جداول التصفح متعددة المستويات</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ltsfh-l-x86-64">التصفح على x86_64</a>
+                <ul>
+                    <li>
+                        <a href="#mthl-l-ltrjm">مثال على الترجمة</a>
+                    </li><li>
+                        <a href="#page-table-format">Page Table Format</a>
+                    </li><li>
+                        <a href="#the-translation-lookaside-buffer">The Translation Lookaside Buffer</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#implementation">Implementation</a>
+                <ul>
+                    <li>
+                        <a href="#page-faults">Page Faults</a>
+                    </li><li>
+                        <a href="#accessing-the-page-tables">Accessing the Page Tables</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#summary">Summary</a>
+                
+            </li><li>
+                <a href="#what-s-next">What’s next?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">التعليقات</a></li>
+        </ul>
+    </details>
+
+<h2 id="hmy-ldhkr"><a class="zola-anchor" href="#hmy-ldhkr" aria-label="Anchor link for: hmy-ldhkr">🔗</a>حماية الذاكرة</h2>
+<p>واحدة من المهام الرئيسية لنظام التشغيل هي عزل البرامج عن بعضها. متصفح الويب الخاص بك يجب ألا يتمكن من التدخل في محرر النصوص، على سبيل المثال. لتحقيق هذا الهدف، تستفيد أنظمة التشغيل من وظائف الأجهزة لضمان أن مناطق ذاكرة عملية واحدة غير قابلة للوصول من قبل عمليات أخرى. هناك نهج مختلفة حسب الأجهزة وتنفيذ نظام التشغيل.</p>
+<p>كمثال، بعض معالجات ARM Cortex-M (المستخدمة في الأنظمة المدمجة) لديها <a href="https://developer.arm.com/docs/ddi0337/e/memory-protection-unit/about-the-mpu"><em>Memory Protection Unit</em></a> (MPU)، التي تسمح لك بتحديد عدد صغير (مثل 8) من مناطق الذاكرة مع أذونات وصول مختلفة (مثل عدم الوصول، للقراءة فقط، قراءة وكتابة). في كل وصول للذاكرة، يضمن MPU أن العنوان في منطقة بأذونات وصول صحيحة ويرمي exception بخلاف ذلك. بتغيير المناطق وأذونات الوصول في كل تبديل عملية، يمكن لنظام التشغيل ضمان أن كل عملية تصل فقط إلى ذاكرتها الخاصة وبالتالي يعزل العمليات عن بعضها.</p>
+<p>على x86، تدعم الأجهزة نهجين مختلفين لحماية الذاكرة: <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation">segmentation</a> و <a href="https://en.wikipedia.org/wiki/Virtual_memory#Paged_virtual_memory">paging</a>.</p>
+<h2 id="ltjzy-segmentation"><a class="zola-anchor" href="#ltjzy-segmentation" aria-label="Anchor link for: ltjzy-segmentation">🔗</a>التجزئة (Segmentation)</h2>
+<p>طُرحت Segmentation بالفعل في عام 1978، أصلًا لزيادة مقدار الذاكرة القابلة للعنونة. كان الوضع آنذاك أن CPUs تستخدم فقط عناوين 16-bit، التي حددت مقدار الذاكرة القابلة للعنونة بـ 64 KiB. لجعل أكثر من هذه الـ 64 KiB قابلة للوصول، أُدخلت segment registers إضافية، كل منها يحتوي على عنوان offset. أضاف وحدة المعالجة المركزية هذا offset تلقائيًا في كل وصول للذاكرة، حتى يمكن الوصول إلى ما يصل إلى 1 MiB من الذاكرة.</p>
+<p>يتم اختيار segment register تلقائيًا من قبل وحدة المعالجة المركزية بناءً على نوع الوصول للذاكرة: لجلب التعليمات، يُستخدم code segment <code>CS</code>، ولعمليات Stack (push/pop)، يُستخدم stack segment <code>SS</code>. التعليمات الأخرى تستخدم data segment <code>DS</code> أو extra segment <code>ES</code>. لاحقًا، أُضيفت segment register إضافيتان، <code>FS</code> و <code>GS</code>، يمكن استخدامهما بحرية.</p>
+<p>في الإصدار الأول من segmentation، كانت segment registers تحتوي مباشرة على offset ولم يتم إجراء تحكم في الوصول. تغير هذا لاحقًا مع إدخال <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation#Protected_mode"><em>protected mode</em></a>. عندما يعمل وحدة المعالجة المركزية في هذا الوضع، تحتوي segment descriptors على فهرس في <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table"><em>descriptor table</em></a> محلي أو عالمي، الذي يحتوي – بالإضافة إلى عنوان offset – على حجم segment وأذونات الوصول. بتحميل descriptor tables عالمية/محلية منفصلة لكل عملية، التي تقيد الوصول إلى الذاكرة في مناطق ذاكرة العملية الخاصة بها، يمكن لنظام التشغيل عزل العمليات عن بعضها.</p>
+<p>بتعديل عناوين الذاكرة قبل الوصول الفعلي، استخدمت segmentation بالفعل تقنية تُستخدم الآن في كل مكان تقريبًا: <em>virtual memory</em>.</p>
+<h3 id="ldhkr-lftrdy"><a class="zola-anchor" href="#ldhkr-lftrdy" aria-label="Anchor link for: ldhkr-lftrdy">🔗</a>الذاكرة الافتراضية</h3>
+<p>فكرة virtual memory هي تجريد عناوين الذاكرة عن جهاز التخزين الأساسي. بدلاً من الوصول مباشرة إلى جهاز التخزين، تُنفّذ خطوة ترجمة أولاً. لـ segmentation، خطوة الترجمة هي إضافة عنوان offset للsegment النشط. تخيل برنامج يصل إلى عنوان ذاكرة <code>0x1234000</code> في segment بـ offset <code>0x1111000</code>: العنوان الذي يصل إليه فعلًا هو <code>0x2345000</code>.</p>
+<p>للتمييز بين نوعي العنوان، تُسمى العناوين قبل الترجمة <em>virtual</em>، والعناوين بعد الترجمة <em>physical</em>. فرق مهم بين هذين النوعين من العناوين هو أن العناوين الفيزيائية فريدة وتشير دائمًا إلى نفس موقع الذاكرة المميز. العناوين الافتراضية، من ناحية أخرى، تعتمد على دالة الترجمة. من الممكن تمامًا أن يشير عنوانان افتراضيان مختلفان إلى نفس العنوان الفيزيائي. أيضًا، يمكن لعناوين افتراضية متطابقة أن تشير إلى عناوين فيزيائية مختلفة عندما تستخدم دوال ترجمة مختلفة.</p>
+<p>مثال حيث تكون هذه الخاصية مفيدة هو تشغيل نفس البرنامج مرتين بالتوازي:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/segmentation-same-program-twice.svg" alt="Two virtual address spaces with address 0–150, one translated to 100–250, the other to 300–450" /></p>
+<p>هنا نفس البرنامج يعمل مرتين، لكن بدوال ترجمة مختلفة. النسخة الأولى لها segment offset 100، لذلك عناوينها الافتراضية 0–150 تُترجم إلى العناوين الفيزيائية 100–250. النسخة الثانية لها offset 300، الذي يترجم عناوينها الافتراضية 0–150 إلى العناوين الفيزيائية 300–450. هذا يسمح لكلا البرنامجين بتشغيل نفس الكود واستخدام نفس العناوين الافتراضية دون التداخل مع بعضهما.</p>
+<p>ميزة أخرى هي أن البرامج يمكن الآن وضعها في مواقع ذاكرة فيزيائية عشوائية، حتى لو تستخدم عناوين افتراضية completely مختلفة. لذلك، يمكن لنظام التشغيل استخدام كامل الذاكرة المتاحة دون الحاجة لإعادة تجميع البرامج.</p>
+<h3 id="ltjzy"><a class="zola-anchor" href="#ltjzy" aria-label="Anchor link for: ltjzy">🔗</a>التجزئة</h3>
+<p>التمييز بين العناوين الافتراضية والفيزيائية يجعل segmentation قوية حقًا. ومع ذلك، لها مشكلة التجزئة. كمثال، تخيل أننا نريد تشغيل نسخة ثالثة من البرنامج الذي رأيناه أعلاه:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/segmentation-fragmentation.svg" alt="Three virtual address spaces, but there is not enough continuous space for the third" /></p>
+<p>لا توجد طريقة لتعيين النسخة الثالثة من البرنامج إلى ذاكرة افتراضية دون التداخل، حتى لو كان هناك أكثر من ذاكرة حرة كافية. المشكلة هي أننا نحتاج إلى ذاكرة <em>مستمرة</em> ولا نستطيع استخدام القطع الصغيرة الحرة.</p>
+<p>طريقة واحدة لمكافحة هذه التجزئة هي إيقاف التنفيذ، نقل أجزاء الذاكرة المستخدمة أقرب معًا، تحديث الترجمة، ثم استئناف التنفيذ:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/segmentation-fragmentation-compacted.svg" alt="Three virtual address spaces after defragmentation" /></p>
+<p>الآن هناك مساحة مستمرة كافية لبدء النسخة الثالثة من برنامجنا.</p>
+<p>عيب عملية إزالة التجزئة هذه هي أنها تحتاج إلى نسخ كميات كبيرة من الذاكرة، الذي يقلل الأداء. تحتاج أيضًا إلى أن تُنفّذ بانتظام قبل أن تصبح الذاكرة مجزأة جدًا. هذا يجعل الأداء غير متوقع لأن البرامج تُوقف في أوقات عشوائية وقد تصبح غير مستجيبة.</p>
+<p>مشكلة التجزئة هي واحدة من الأسباب التي لم تعد segmentation تُستخدم من قبل معظم الأنظمة. في الواقع، لم تعد segmentation مدعومة حتى في وضع 64-bit على x86 بعد الآن. بدلاً من ذلك، يُستخدم <em>paging</em>، الذي يتجنب مشكلة التجزئة completely.</p>
+<h2 id="ltsfh-paging"><a class="zola-anchor" href="#ltsfh-paging" aria-label="Anchor link for: ltsfh-paging">🔗</a>التصفح (Paging)</h2>
+<p>الفكرة هي تقسيم كل من ذاكرة الافتراضية والفيزيائية إلى كتل صغيرة ذات حجم ثابت. كتل ذاكرة الافتراضية تسمى <em>pages</em>، وكتل العنونة الفيزيائية تسمى <em>frames</em>. يمكن تعيين كل page إلى frame بشكل فردي، مما يجعل من الممكن تقسيم مناطق ذاكرة أكبر عبر physical frames غير متصلة.</p>
+<p>ميزة ذلك تصبح مرئية إذا أعدنا مراجعة مثال مساحة الذاكرة المجزأة، لكننا نستخدم paging بدلاً من segmentation هذه المرة:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/paging-fragmentation.svg" alt="With paging, the third program instance can be split across many smaller physical areas." /></p>
+<p>في هذا المثال، لدينا حجم page 50 byte، مما يعني أن كل منطقة ذاكرة لدينا مقسمة عبر ثلاث pages. كل page مُعيّنة إلى frame بشكل فردي، لذلك يمكن لمنطقة ذاكرة افتراضية مستمرة أن تُعيّن إلى physical frames غير متصلة. هذا يسمح لنا ببدء النسخة الثالثة من البرنامج دون إجراء أي إزالة تجزئة قبل ذلك.</p>
+<h3 id="ltjzy-lmkhfy"><a class="zola-anchor" href="#ltjzy-lmkhfy" aria-label="Anchor link for: ltjzy-lmkhfy">🔗</a>التجزئة المخفية</h3>
+<p>مقارنة بـ segmentation، يستخدم paging العديد من مناطق الذاكرة الصغيرة ذات الأحجام الثابتة بدلاً من عدد قليل من المناطق الكبيرة ذات الأحجام المتغيرة. بما أن كل frame لها نفس الحجم، لا توجد frames صغيرة جدًا للاستخدام، لذلك لا تحدث تجزئة.</p>
+<p>أو <em>تبدو</em> وكأنها لا تحدث تجزئة. لا تزال هناك نوع خفي من التجزئة، ما يسمى <em>internal fragmentation</em>. تحدث internal fragmentation لأن ليس كل منطقة ذاكرة مضاعف دقيق لحجم page. تخيل برنامج بحجم 101 في المثال أعلاه: سيحتاج إلى ثلاث pages بحجم 50، لذلك سيشغل 49 byte أكثر من المطلوب. للتمييز بين النوعين من التجزئة، يُسمى نوع التجزئة الذي يحدث عند استخدام segmentation <em>external fragmentation</em>.</p>
+<p>internal fragmentation مؤسفة لكنها غالبًا أفضل من external fragmentation التي تحدث مع segmentation. لا تزال تُهدر ذاكرة، لكنها لا تتطلب إزالة تجزئة وتجعل مقدار التجزئة متوقعًا (في المتوسط نصف page لكل منطقة ذاكرة).</p>
+<h3 id="jdwl-ltsfh"><a class="zola-anchor" href="#jdwl-ltsfh" aria-label="Anchor link for: jdwl-ltsfh">🔗</a>جداول التصفح</h3>
+<p>رأينا أن كل page من الملايين المحتملة مُعيّنة بشكل فردي إلى frame. معلومات التعيين هذه تحتاج إلى التخزين في مكان ما. تستخدم segmentation segment selector register فردي لكل منطقة ذاكرة نشطة، الذي ليس ممكنًا لـ paging لأن هناك عددًا أكبر بكثير من pages من registers. بدلاً من ذلك، يستخدم paging بنية جدول تسمى <em>page table</em> لتخزين معلومات التعيين.</p>
+<p>لمثالنا أعلاه، ستبدو page tables كالتالي:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/paging-page-tables.svg" alt="Three page tables, one for each program instance. For instance 1, the mapping is 0-&gt;100, 50-&gt;150, 100-&gt;200. For instance 2, it is 0-&gt;300, 50-&gt;350, 100-&gt;400. For instance 3, it is 0-&gt;250, 50-&gt;450, 100-&gt;500." /></p>
+<p>نرى أن كل instance للبرنامج لها page table خاصة بها. مؤشر إلى table النشطة حاليًا مخزن في register خاص بـ وحدة المعالجة المركزية. على <code>x86</code>، يسمى هذا register <code>CR3</code>. وظيفة نظام التشغيل هي تحميل هذا register بمؤشر إلى page table الصحيحة قبل تشغيل كل instance للبرنامج.</p>
+<p>في كل وصول للذاكرة، يقرأ وحدة المعالجة مركزية مؤشر الجدول من register ويبحث عن frame المُعيّنة للصفحة المُتصلة في الجدول. هذا يتم completely في الأجهزة و completely غير مرئي للبرنامج الذي يعمل. لتسريع عملية الترجمة، لدي العديد من معماريات CPU cache خاص يتذكر نتائج الترجمات الأخيرة.</p>
+<p>حسب المعمارية، يمكن لـ page table entries أيضًا تخزين سمات مثل أذونات الوصول في حقل flags. في المثال أعلاه، يتيح flag “r/w” الصفحة للقراءة والكتابة.</p>
+<h3 id="jdwl-ltsfh-mt-dd-lmstwyt"><a class="zola-anchor" href="#jdwl-ltsfh-mt-dd-lmstwyt" aria-label="Anchor link for: jdwl-ltsfh-mt-dd-lmstwyt">🔗</a>جداول التصفح متعددة المستويات</h3>
+<p>الـ page tables البسيطة التي رأيناها للتو لها مشكلة في مساحات العنونة الأكبر: تُهدر ذاكرة. على سبيل المثال، تخيل برنامج يستخدم الصفحات الافتراضية الأربع <code>0</code> و <code>1_000_000</code> و <code>1_000_050</code> و <code>1_000_100</code> (نستخدم <code>_</code> كفاصل آلاف):</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/single-level-page-table.svg" alt="Page 0 mapped to frame 0 and pages 1_000_000–1_000_150 mapped to frames 100–250" /></p>
+<p>يحتاج فقط إلى 4 physical frames، لكن page table لها أكثر من مليون entry. لا يمكننا تجاهل entries الفارغة لأن وحدة المعالجة المركزية لن تكون قادرة بعد ذلك على القفز مباشرة إلى entry الصحيحة في عملية الترجمة (مثلًا، لم يعد مضمونًا أن الصفحة الرابعة تستخدم entry الرابعة).</p>
+<p>لتقليل الذاكرة المُهدرة، يمكننا استخدام <strong>two-level page table</strong>. الفكرة هي أننا نستخدم page tables مختلفة لمناطق العنونة المختلفة. جدول إضافي يسمى <em>level 2</em> page table يحتوي على التعيين بين مناطق العنونة و page tables (المستوى 1).</p>
+<p>يُشرح هذا بشكل أفضل بمثال. لنحدد أن كل level 1 page table مسؤولة عن منطقة بحجم <code>10_000</code>. ثم ستكون الجداول التالية موجودة لتعيين المثال أعلاه:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/multilevel-page-table.svg" alt="Page 0 points to entry 0 of the level 2 page table, which points to the level 1 page table T1. The first entry of T1 points to frame 0; the other entries are empty. Pages 1_000_000–1_000_150 point to the 100th entry of the level 2 page table, which points to a different level 1 page table T2. The first three entries of T2 point to frames 100–250; the other entries are empty." /></p>
+<p>الصفحة 0 تقع في أول <code>10_000</code> byte region، لذلك تستخدم أول entry من level 2 page table. هذا entry يشير إلى level 1 page table T1، التي تحدد أن الصفحة <code>0</code> تشير إلى frame <code>0</code>.</p>
+<p>الصفحات <code>1_000_000</code> و <code>1_000_050</code> و <code>1_000_100</code> جميعها تقع في الـ 100 <code>10_000</code> byte region، لذلك تستخدم entry الـ 100 من level 2 page table. هذا entry يشير إلى level 1 page table مختلفة T2، التي تُعيّن الصفحات الثلاث إلى frames <code>100</code> و <code>150</code> و <code>200</code>. لاحظ أن عنوان الصفحة في level 1 tables لا يشمل region offset. على سبيل المثال، entry للصفحة <code>1_000_050</code> هو فقط <code>50</code>.</p>
+<p>لا نزال لدينا 100 entry فارغة في level 2 table، لكن أقل بكثير من مليون entry فارغة قبل. سبب هذه التوفيرات هو أننا لا نحتاج إلى إنشاء level 1 page tables لمناطق الذاكرة غير المُعيّنة بين <code>10_000</code> و <code>1_000_000</code>.</p>
+<p>مبدأ two-level page tables يمكن تمديده إلى ثلاثة أو أربعة أو مستويات أكثر. ثم يشير page table register إلى table المستوى الأعلى، الذي يشير إلى table المستوى الأدنى التالي، الذي يشير إلى المستوى الأدنى التالي، وما إلى ذلك. level 1 page table تشير بعد ذلك إلى frame المُعيّنة. المبدأ العام يسمى <em>multilevel</em> أو <em>hierarchical</em> page table.</p>
+<p>الآن بعد أن نعرف كيف تعمل paging و multilevel page tables، يمكننا النظر في كيفية تنفيذ paging في معمارية x86_64 (نفترض في ما يلي أن وحدة المعالجة المركزية تعمل في وضع 64-bit).</p>
+<h2 id="ltsfh-l-x86-64"><a class="zola-anchor" href="#ltsfh-l-x86-64" aria-label="Anchor link for: ltsfh-l-x86-64">🔗</a>التصفح على x86_64</h2>
+<p>تستخدم معمارية x86_64 4-level page table و حجم page 4 KiB. كل page table، بغض النظر عن المستوى، لها حجم ثابت 512 entries. كل entry لها حجم 8 bytes، لذلك كل table بحجم 512 * 8 B = 4 KiB وبالتالي تتناسب تمامًا في صفحة واحدة.</p>
+<p>page table index لكل مستوى مشتق مباشرة من العنوان الافتراضي:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/x86_64-table-indices-from-address.svg" alt="Bits 0–12 are the page offset, bits 12–21 the level 1 index, bits 21–30 the level 2 index, bits 30–39 the level 3 index, and bits 39–48 the level 4 index" /></p>
+<p>نرى أن كل table index يتكون من 9 bits، مما منطقي لأن كل table لها 2^9 = 512 entries. أدنى 12 bits هي offset في page من 4 KiB (2^12 bytes = 4 KiB). البتات 48 إلى 64 مُهملة، مما يعني أن x86_64 ليس 64-bit فعليًا لأنه يدعم فقط عناوين 48-bit.</p>
+<p>حتى لو أن البتات 48 إلى 64 مُهملة، لا يمكن تعيينها بقيم عشوائية. بدلاً من ذلك، يجب أن تكون جميع البتات في هذا النطاق نسخًا من البت 47 للحفاظ على العناوين فريدة والسماح بتوسيعات مستقبلية مثل 5-level page table. هذا يسمى <em>sign-extension</em> لأنه مشابه جدًا لـ <a href="https://en.wikipedia.org/wiki/Two&#x27;s_complement#Sign_extension">sign extension in two’s complement</a>. عندما لا يكون العنوان مُمتدًا بالإشارة بشكل صحيح، يرمي وحدة المعالجة المركزية exception.</p>
+<p>من الجدير بالذكر أن معالجات Intel “Ice Lake” الحديثة تدعم اختياريًا <a href="https://en.wikipedia.org/wiki/Intel_5-level_paging">5-level page tables</a> لتوسيع العناوين الافتراضية من 48-bit إلى 57-bit. بالنظر إلى أن تحسين نواتنا لمعالج محدد لا معنى له في هذه المرحلة، سنعمل فقط مع 4-level page tables القياسية في هذا المقال.</p>
+<h3 id="mthl-l-ltrjm"><a class="zola-anchor" href="#mthl-l-ltrjm" aria-label="Anchor link for: mthl-l-ltrjm">🔗</a>مثال على الترجمة</h3>
+<p>لنمر عبر مثال لفهم كيفية عمل عملية الترجمة بالتفصيل:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/x86_64-page-table-translation.svg" alt="An example of a 4-level page hierarchy with each page table shown in physical memory" /></p>
+<p>العنوان الفيزيائي لـ level 4 page table النشطة حاليًا، التي هي جذر 4-level page table، مخزن في register <code>CR3</code>. كل page table entry يشير بعد ذلك إلى physical frame لـ table المستوى التالي. entry لـ level 1 table تشير بعد ذلك إلى frame المُعيّنة. لاحظ أن جميع العناوين في page tables فيزيائية بدلاً من افتراضية، لأن وحدة المعالجة المركزية ستحتاج إلى ترجمة تلك العناوين أيضًا (وقد يسبب recursion لا نهائي).</p>
+<p>page table hierarchy أعلاه تُعيّن صفحاتين (باللون الأزرق). من page table indices، يمكننا استنتاج أن العناوين الافتراضية لهاتين الصفحتين هما <code>0x803FE7F000</code> و <code>0x803FE00000</code>. لنرى ماذا يحدث عندما يحاول البرنامج القراءة من العنوان <code>0x803FE7F5CE</code>. أولاً، نحول العنوان إلى binary ونحدد page table indices و page offset للعنوان:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/x86_64-page-table-translation-addresses.png" alt="The sign extension bits are all 0, the level 4 index is 1, the level 3 index is 0, the level 2 index is 511, the level 1 index is 127, and the page offset is 0x5ce" /></p>
+<p>مع هذه الفهارس، يمكننا الآن السير عبر page table hierarchy لتحديد frame المُعيّنة للعنوان:</p>
+<ul>
+<li>نبدأ بقراءة عنوان level 4 table من register <code>CR3</code>.</li>
+<li>فهرس level 4 هو 1، لذلك ننظر إلى entry برقم 1 من تلك table، الذي يخبرنا أن level 3 table مخزنة في العنوان 16 KiB.</li>
+<li>نحمّل level 3 table من ذلك العنوان وننظر إلى entry برقم 0، الذي يشير إلى level 2 table في 24 KiB.</li>
+<li>فهرس level 2 هو 511، لذلك ننظر إلى entry الأخيرة من تلك الصفحة لإيجاد عنوان level 1 table.</li>
+<li>عبر entry برقم 127 من level 1 table، أخيرًا نجد أن الصفحة مُعيّنة إلى frame 12 KiB، أو 0x3000 في hexadecimal.</li>
+<li>الخطوة الأخيرة هي إضافة page offset إلى عنوان frame للحصول على العنوان الفيزيائي 0x3000 + 0x5ce = 0x35ce.</li>
+</ul>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/x86_64-page-table-translation-steps.svg" alt="The same example 4-level page hierarchy with 5 additional arrows: “Step 0” from the CR3 register to the level 4 table, “Step 1” from the level 4 entry to the level 3 table, “Step 2” from the level 3 entry to the level 2 table, “Step 3” from the level 2 entry to the level 1 table, and “Step 4” from the level 1 table to the mapped frames." /></p>
+<p>أذونات الصفحة في level 1 table هي <code>r</code>، مما يعني للقراءة فقط. تفرض الأجهزة هذه الأذونات وترمي exception إذا حاولنا الكتابة إلى تلك الصفحة. الأذونات في المستويات الأعلى تقيد الأذونات الممكنة في المستويات الأدنى، لذلك إذا عيّننا level 3 entry إلى read-only، لن تكون أي صفحات تستخدم هذا entry قابلة للكتابة، حتى لو حددت المستويات الأدنى أذونات read/write.</p>
+<p>من المهم ملاحظة أنه حتى لو استخدم هذا المثال نسخة واحدة فقط من كل table، عادةً ما توجد نسخ متعددة من كل مستوى في كل مساحة عنونة. كحد أقصى، هناك:</p>
+<ul>
+<li>one level 4 table,</li>
+<li>512 level 3 tables (لأن level 4 table لها 512 entries),</li>
+<li>512 * 512 level 2 tables (لأن كل من 512 level 3 tables لها 512 entries), و</li>
+<li>512 * 512 * 512 level 1 tables (512 entries لكل level 2 table).</li>
+</ul>
+<h3 id="page-table-format"><a class="zola-anchor" href="#page-table-format" aria-label="Anchor link for: page-table-format">🔗</a>Page Table Format</h3>
+<p>page tables على معمارية x86_64 هي أساسًا مصفوفة من 512 entries. في صياغة Rust:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[repr(align(4096))]
+</span><span style="color:#569cd6;">pub struct </span><span>PageTable {
+</span><span>    entries: [PageTableEntry; 512],
+</span><span>}
+</span></code></pre>
+<p>كما هو موضح بـ attribute <code>repr</code>، تحتاج page tables إلى page-aligned، أي محاذاة على حدود 4 KiB. يضمن هذا المتطلب أن page table تملأ دائمًا صفحة كاملة ويسمح بتحسين يجعل entries مدمجة جدًا.</p>
+<p>كل entry بحجم 8 bytes (64 bits) لها التنسيق التالي:</p>
+<table><thead><tr><th>Bit(s)</th><th>Name</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>0</td><td>present</td><td>الصفحة حاليًا في الذاكرة</td></tr>
+<tr><td>1</td><td>writable</td><td>يُسمح بالكتابة إلى هذه الصفحة</td></tr>
+<tr><td>2</td><td>user accessible</td><td>إذا لم تكن محددة، فقط كود وضع kernel يمكنه الوصول إلى هذه الصفحة</td></tr>
+<tr><td>3</td><td>write-through caching</td><td>الكتابات تذهب مباشرة إلى الذاكرة</td></tr>
+<tr><td>4</td><td>disable cache</td><td>لا يُستخدم cache لهذه الصفحة</td></tr>
+<tr><td>5</td><td>accessed</td><td>يحدد وحدة المعالجة المركزية هذه البتة عند استخدام هذه الصفحة</td></tr>
+<tr><td>6</td><td>dirty</td><td>يحدد وحدة المعالجة المركزية هذه البتة عند كتابة إلى هذه الصفحة</td></tr>
+<tr><td>7</td><td>huge page/null</td><td>يجب أن تكون 0 في P1 و P4، تُنشئ صفحة 1 GiB في P3، تُنشئ صفحة 2 MiB في P2</td></tr>
+<tr><td>8</td><td>global</td><td>الصفحة لا تُمسح من caches عند تبديل مساحة العنونة (يجب تعيين PGE bit في سجل CR4)</td></tr>
+<tr><td>9-11</td><td>available</td><td>يمكن استخدامها بحرية من قبل نظام التشغيل</td></tr>
+<tr><td>12-51</td><td>physical address</td><td>العنوان الفيزيائي page-aligned من 52bit لـ frame أو page table التالية</td></tr>
+<tr><td>52-62</td><td>available</td><td>يمكن استخدامها بحرية من قبل نظام التشغيل</td></tr>
+<tr><td>63</td><td>no execute</td><td>منع تنفيذ الكود على هذه الصفحة (يجب تعيين NXE bit في سجل EFER)</td></tr>
+</tbody></table>
+<p>نرى أن البتات 12–51 فقط تُستخدم لتخزين عنوان physical frame. البتات المتبقية تُستخدم كـ flags أو يمكن لنظام التشغيل استخدامها بحرية. هذا ممكن لأننا نشير دائمًا إلى عنوان مُحاذاً على 4096 byte، إما إلى page table page-aligned أو إلى بداية frame المُعيّنة. هذا يعني أن البتات 0–11 دائمًا صفر، لذلك لا يوجد سبب لتخزين هذه البتات لأن الأجهزة يمكنها تعيينها إلى صفر قبل استخدام العنوان. نفس الشيء صحيح للبتات 52–63، لأن معمارية x86_64 تدعم فقط عناوين فيزيائية 52-bit (مشابه لكيفية دعمها فقط عناوين افتراضية 48-bit).</p>
+<p>لننظر عن كثب في flags المتاحة:</p>
+<ul>
+<li>يميز flag <code>present</code> بين الصفحات المُعيّنة وغير المُعيّنة. يمكن استخدامه للتبديل المؤقت للصفحات إلى القرص عندما تمتلئ الذاكرة الرئيسية. عندما تُتصل الصفحة لاحقًا، تحدث exception خاصة تسمى <em>page fault</em>، التي يمكن لنظام التشغيل التفاعل معها بإعادة تحميل الصفحة المفقودة من القرص ثم استئناف البرنامج.</li>
+<li>flags <code>writable</code> و <code>no execute</code> تتحكم في ما إذا كانت محتويات الصفحة قابلة للكتابة أو تحتوي على تعليمات قابلة للتنفيذ، على التوالي.</li>
+<li>flags <code>accessed</code> و <code>dirty</code> تُعيّن تلقائيًا من قبل وحدة المعالجة المركزية عند قراءة أو كتابة إلى الصفحة. يمكن لنظام التشغيل الاستفادة من هذه المعلومات، مثلًا، لتحديد أي صفحات تُبدّل أو ما إذا كانت محتويات الصفحة قد تغيرت منذ آخر حفظ إلى القرص.</li>
+<li>flags <code>write-through caching</code> و <code>disable cache</code> تسمح بالتحكم في caches لكل صفحة بشكل فردي.</li>
+<li>flag <code>user accessible</code> يجعل الصفحة متاحة لـ userspace code، وإلا، تكون قابلة للوصول فقط عندما يكون وحدة المعالجة المركزية في وضع kernel. يمكن استخدام هذه الميزة لجعل <a href="https://en.wikipedia.org/wiki/System_call">system calls</a> أسرع بإبقاء kernel مُعيّنة بينما يعمل برنامج userspace. ومع ذلك، يمكن لـ <a href="https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)">Spectre</a> vulnerability أن تسمح لبرامج userspace بقراءة هذه الصفحات على أي حال.</li>
+<li>flag <code>global</code> يُشير إلى الأجهزة أن الصفحة متاحة في جميع مساحات العنونة وبالتالي لا تحتاج إلى إزالتها من translation cache (انظر القسم حول TLB أدناه) عند تبديل مساحات العنونة. يُستخدم هذا flag عادة مع flag <code>user accessible</code> المُمسح لتعيين kernel code إلى جميع مساحات العنونة.</li>
+<li>flag <code>huge page</code> يسمح بإنشاء أحجام صفحات أكبر بترك entries من level 2 أو level 3 page tables تشير مباشرة إلى frame مُعيّنة. مع تعيين هذه البتة، يزيد حجم الصفحة بعامل 512 إلى إما 2 MiB = 512 * 4 KiB لـ level 2 entries أو حتى 1 GiB = 512 * 2 MiB لـ level 3 entries. ميزة استخدام صفحات أكبر هي الحاجة إلى عدد أقل من سطور translation cache وعدد أقل من page tables.</li>
+</ul>
+<p>توفر مكتبة <code>x86_64</code> أنواعًا لـ <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTable.html">page tables</a> و <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html">entries</a> الخاصة بها، لذلك لا نحتاج إلى إنشاء هذه الهياكل بأنفسنا.</p>
+<h3 id="the-translation-lookaside-buffer"><a class="zola-anchor" href="#the-translation-lookaside-buffer" aria-label="Anchor link for: the-translation-lookaside-buffer">🔗</a>The Translation Lookaside Buffer</h3>
+<p>تجعل 4-level page table ترجمة العناوين الافتراضية مكلفة لأن كل ترجمة تحتاج إلى أربع وصولات ذاكرة. لتحسين الأداء، تخزن معمارية x86_64 آخر ترجمات قليلة في ما يسمى <em>translation lookaside buffer</em> (TLB). هذا يسمح بتجاوز الترجمة عندما تكون لا تزال مخزنة.</p>
+<p>على عكس caches الأخرى لـ وحدة المعالجة المركزية، ليس TLB transparent بالكامل ولا يحدّث أو يزيل الترجمات عندما تتغير محتويات page tables. هذا يعني أن النواة يجب أن تحدّث TLB يدويًا whenever تعديل page table. لذلك، هناك تعليمة CPU خاصة تسمى <a href="https://www.felixcloutier.com/x86/INVLPG.html"><code>invlpg</code></a> (“invalidate page”) التي تزيل الترجمة للصفحة المحددة من TLB، حتى تُحمّل مرة أخرى من page table عند الوصول التالي. يمكن أيضًا مسح TLB completely بإعادة تحميل register <code>CR3</code>، الذي يحاكي تبديل مساحة العنونة. توفر مكتبة <code>x86_64</code> دوال Rust لكلا الخيارين في <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/tlb/index.html"><code>tlb</code> module</a>.</p>
+<p>من المهم تذكر مسح TLB عند كل تعديل page table لأن وحدة المعالجة المركزية قد تستمر في استخدام الترجمة القديمة، الذي قد يؤدي إلى bugs non-deterministic صعبة جدًا في التصحيح.</p>
+<h2 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h2>
+<p>شيء واحد لم نذكره بعد: <strong>نواتنا تعمل بالفعل على paging</strong>. الـ bootloader الذي أضفناه في مقال <a href="https://os.phil-opp.com/minimal-rust-kernel/#creating-a-bootimage">“A minimal Rust Kernel”</a> قد أعد بالفعل 4-level paging hierarchy تُعيّن كل صفحة من نواتنا إلى physical frame. يفعل bootloader هذا لأن paging إلزامي في وضع 64-bit على x86_64.</p>
+<p>هذا يعني أن كل عنوان ذاكرة استخدمناه في نواتنا كان عنوانًا افتراضيًا. الوصول إلى VGA buffer في العنوان <code>0xb8000</code> عمل فقط لأن bootloader <em>identity mapped</em> تلك صفحة الذاكرة، الذي يعني أنه عيّن الصفحة الافتراضية <code>0xb8000</code> إلى physical frame <code>0xb8000</code>.</p>
+<p>يجعل paging نواتنا relatively safe بالفعل، لأن كل وصول ذاكرة خارج الحدود يسبب page fault exception بدلاً من الكتابة إلى ذاكرة فيزيائية عشوائية. يُعيّن bootloader حتى أذونات الوصول الصحيحة لكل صفحة، مما يعني أن فقط الصفحات التي تحتوي على كود قابلة للتنفيذ وفقط صفحات البيانات قابلة للكتابة.</p>
+<h3 id="page-faults"><a class="zola-anchor" href="#page-faults" aria-label="Anchor link for: page-faults">🔗</a>Page Faults</h3>
+<p>لنحاول إثارة page fault بالوصول إلى بعض الذاكرة خارج نواتنا. أولاً، نُنشئ page fault handler ونُسجّله في IDT، حتى نرى page fault exception بدلاً من <a href="https://os.phil-opp.com/double-fault-exceptions/">double fault</a> العام:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>
+</span><span>        […]
+</span><span>
+</span><span>        idt.page_fault.set_handler_fn(page_fault_handler); </span><span style="color:#608b4e;">// new
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::PageFaultErrorCode;
+</span><span style="color:#569cd6;">use crate</span><span>::hlt_loop;
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>page_fault_handler(
+</span><span>    stack_frame: InterruptStackFrame,
+</span><span>    error_code: PageFaultErrorCode,
+</span><span>) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr2;
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: PAGE FAULT&quot;</span><span>);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Accessed Address: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, Cr2::read());
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Error Code: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, error_code);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span>, stack_frame);
+</span><span>    hlt_loop();
+</span><span>}
+</span></code></pre>
+<p>register <a href="https://en.wikipedia.org/wiki/Control_register#CR2"><code>CR2</code></a> يُعيّن تلقائيًا من قبل وحدة المعالجة المركزية عند page fault ويحتوي على العنوان الافتراضي الذي تسبب في page fault. نستخدم دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr2.html#method.read"><code>Cr2::read</code></a> من مكتبة <code>x86_64</code> لقراءة وطباعته. نوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html"><code>PageFaultErrorCode</code></a> يوفر مزيدًا من المعلومات حول نوع الوصول للذاكرة الذي تسبب في page fault، على سبيل المثال، ما إذا كان بسبب عملية قراءة أو كتابة. لهذا السبب، نطبعه أيضًا. لا نستطيع استئناف التنفيذ دون حل page fault، لذلك ندخل <a href="https://os.phil-opp.com/hardware-interrupts/#the-hlt-instruction"><code>hlt_loop</code></a> في النهاية.</p>
+<p>الآن يمكننا محاولة الوصول إلى بعض الذاكرة خارج نواتنا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// new
+</span><span>    </span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u8</span><span>;
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ *ptr = </span><span style="color:#b5cea8;">42</span><span>; }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// as before
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
+</span><span>    blog_os::hlt_loop();
+</span><span>}
+</span></code></pre>
+<p>عندما نشغّله، نرى أن page fault handler يُستدعى:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/qemu-page-fault.png" alt="EXCEPTION: Page Fault, Accessed Address: VirtAddr(0xdeadbeaf), Error Code: CAUSED_BY_WRITE, InterruptStackFrame: {…}" /></p>
+<p>register <code>CR2</code> يحتوي بالفعل على <code>0xdeadbeaf</code>، العنوان الذي حاولنا الوصول إليه. error code يخبرنا عبر <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> أن fault حدث أثناء محاولة تنفيذ عملية كتابة. يخبرنا حتى أكثر عبر <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html">البتات التي <em>ليست</em> مُعيّنة</a>. على سبيل المثال، حقيقة أن flag <code>PROTECTION_VIOLATION</code> غير مُعيّنة تعني أن page fault حدث لأن الصفحة المستهدفة لم تكن موجودة.</p>
+<p>نرى أن instruction pointer الحالي هو <code>0x2031b2</code>، لذلك نعرف أن هذا العنوان يشير إلى code page. code pages مُعيّنة read-only من قبل bootloader، لذلك القراءة من هذا العنوان تعمل لكن الكتابة تسبب page fault. يمكنك تجربة هذا بتغيير المؤشر <code>0xdeadbeaf</code> إلى <code>0x2031b2</code>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Note: The actual address might be different for you. Use the address that
+</span><span style="color:#608b4e;">// your page fault handler reports.
+</span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#b5cea8;">0x2031b2 </span><span style="color:#569cd6;">as *mut u8</span><span>;
+</span><span>
+</span><span style="color:#608b4e;">// read from a code page
+</span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">let</span><span> x = *ptr; }
+</span><span>println!(</span><span style="color:#d69d85;">&quot;read worked&quot;</span><span>);
+</span><span>
+</span><span style="color:#608b4e;">// write to a code page
+</span><span style="color:#569cd6;">unsafe </span><span>{ *ptr = </span><span style="color:#b5cea8;">42</span><span>; }
+</span><span>println!(</span><span style="color:#d69d85;">&quot;write worked&quot;</span><span>);
+</span></code></pre>
+<p>بتعليق السطر الأخير، نرى أن read access تعمل، لكن write access تسبب page fault:</p>
+<p><img src="https://os.phil-opp.com/ar/paging-introduction/qemu-page-fault-protection.png" alt="QEMU with output: “read worked, EXCEPTION: Page Fault, Accessed Address: VirtAddr(0x2031b2), Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE, InterruptStackFrame: {…}”" /></p>
+<p>نرى أن رسالة <em>“read worked”</em> مطبوعة، التي تشير إلى أن read operation لم تسبب أي أخطاء. ومع ذلك، بدلاً من رسالة <em>“write worked”</em>، تحدث page fault. هذه المرة flag <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.PROTECTION_VIOLATION"><code>PROTECTION_VIOLATION</code></a> مُعيّنة بالإضافة إلى flag <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a>، التي تشير إلى أن الصفحة كانت موجودة، لكن العملية لم تكن مسموحة عليها. في هذه الحالة، الكتابة إلى الصفحة غير مسموحة لأن code pages مُعيّنة read-only.</p>
+<h3 id="accessing-the-page-tables"><a class="zola-anchor" href="#accessing-the-page-tables" aria-label="Anchor link for: accessing-the-page-tables">🔗</a>Accessing the Page Tables</h3>
+<p>لنحاول إلقاء نظرة على page tables التي تحدد كيف تُعيّن نواتنا:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr3;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let </span><span>(level_4_page_table, </span><span style="color:#569cd6;">_</span><span>) = Cr3::read();
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Level 4 page table at: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, level_4_page_table.start_address());
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// test_main(), println(…), and hlt_loop()
+</span><span>}
+</span></code></pre>
+<p>دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3.html#method.read"><code>Cr3::read</code></a> من <code>x86_64</code> تُعيد level 4 page table النشطة حاليًا من register <code>CR3</code>. تُعيد tuple من نوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/frame/struct.PhysFrame.html"><code>PhysFrame</code></a> ونوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3Flags.html"><code>Cr3Flags</code></a>. نحن مهتمون فقط بالframe، لذلك نتجاهل العنصر الثاني من tuple.</p>
+<p>عندما نشغّله، نرى الإخراج التالي:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>Level 4 page table at: PhysAddr(0x1000)
+</span></code></pre>
+<p>level 4 page table النشطة حاليًا مخزنة في العنوان <code>0x1000</code> في الذاكرة <em>الفزيائية</em>، كما يشير نوع wrapper <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.PhysAddr.html"><code>PhysAddr</code></a>. السؤال الآن: كيف نصل إلى هذه table من نواتنا؟</p>
+<p>الوصول إلى الذاكرة الفزيائية مباشرة غير ممكن عندما يكون paging مُفعّل، لأن البرامج يمكنها بسهولة تجاوز حماية الذاكرة والوصول إلى ذاكرة برامج أخرى. لذلك الطريقة الوحيدة للوصول إلى table هي عبر بعض virtual page المُعيّنة إلى physical frame في العنوان <code>0x1000</code>. مشكلة إنشاء تعيينات لـ page table frames هي مشكلة عامة لأن النواة تحتاج إلى الوصول إلى page tables بشكل منتظم، على سبيل المثال، عند تخصيص stack لـ thread جديد.</p>
+<p>تُشرح الحلول لهذه المشكلة بالتفصيل في المقال التالي.</p>
+<h2 id="summary"><a class="zola-anchor" href="#summary" aria-label="Anchor link for: summary">🔗</a>Summary</h2>
+<p>قدم هذا المقال تقنيتي حماية ذاكرة: segmentation و paging. بينما تستخدم الأولى مناطق ذاكرة ذات أحجام متغيرة وتعاني من external fragmentation، تستخدم الثانية pages ذات أحجام ثابتة وتسمح بتحكم أكثر دقة في أذونات الوصول.</p>
+<p>يخزن paging معلومات التعيين لـ pages في page tables بمستوى واحد أو أكثر. تستخدم معمارية x86_64 4-level page tables و حجم page 4 KiB. يمشي الأجهزة تلقائيًا عبر page tables ويُخزن الترجمات الناتجة في translation lookaside buffer (TLB). هذا buffer لا يُحدّث transparently ويجب مسحه يدويًا عند تغييرات page table.</p>
+<p>تعلمنا أن نواتنا تعمل بالفعل على paging وأن الوصول غير القانوني للذاكرة يسبب page fault exceptions. حاولنا الوصول إلى page tables النشطة حاليًا، لكن لم نتمكن من ذلك لأن register CR3 يخزن عنوان فيزيائي لا نستطيع الوصول إليه مباشرة من نواتنا.</p>
+<h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What’s next?</h2>
+<p>المقال التالي يشرح كيفية تنفيذ دعم paging في نواتنا. يعرض طرق مختلفة للوصول إلى الذاكرة الفزيائية من نواتنا، الذي يجعل من الممكن الوصول إلى page tables التي تعمل عليها نواتنا. في هذه المرحلة، نحن قادرون على تنفيذ دوال لترجمة العناوين الافتراضية إلى فيزيائية ولإنشاء تعيينات جديدة في page tables.</p>
+
+    </div>
+
+    <div class="post-footer-support right-to-left">
+        <h2>ادعمني</h2>
+<p>إنشاء وصيانة هذه المدونة والمكتبات المرتبطة بها يتطلب جهدًا كبيرًا، لكنني أستمتع حقًا بذلك. بدعمك لي، يمكنني تخصيص وقت أكثر لإنشاء محتوى جديد وميزات جديدة والصيانة المستمرة. أفضل طريقة لدعمي هي <a href="https://github.com/sponsors/phil-opp"><em>رعايتي على GitHub</em></a>. شكرًا لك!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/ar/hardware-interrupts/">&laquo; مقاطعات العتاد</a>
+        
+        
+            <a class="next" href="/ar/paging-implementation/">تنفيذ Paging &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="right-to-left">التعليقات</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        هل لديك مشكلة، أو تريد مشاركة ملاحظات، أو مناقشة أفكار إضافية؟ لا تتردد في ترك تعليق هنا! يرجى الالتزام باللغة الإنجليزية واتباع <a href="https://www.rust-lang.org/policies/code-of-conduct">مدونة سلوك Rust</a>. يتم ربط هذا الخيط من التعليقات مباشرة بـ <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Introduction%20to%20Paging%20%28ar%29%22%20in%3Atitle"><em>نقاش على GitHub</em></a>، لذا يمكنك التعليق هناك أيضًا إذا أردت.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Introduction to Paging (ar)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="ar"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Introduction%20to%20Paging%20%28ar%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="right-to-left">
+            يفضل كتابة التعليقات باللغة الإنجليزية إن أمكن.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/paging-introduction/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/paging-introduction/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/paging-introduction/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/paging-introduction/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/paging-introduction/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/paging-introduction/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>
