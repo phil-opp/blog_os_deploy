@@ -375,29 +375,28 @@
 <pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
 </span><span>
 </span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.2.0&quot;
+</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.6.0&quot;
 </span></code></pre>
-<p><code>uart_16550</code> 크레이트는 UART 레지스터를 나타내는 <code>SerialPort</code> 구조체 타입을 제공합니다. 이 구조체 타입의 인스턴스를 생성하기 위해 아래와 같이 새 모듈 <code>serial</code>을 작성합니다.</p>
+<p><code>uart_16550</code> 크레이트는 UART를 <a href="https://en.wikipedia.org/wiki/Teleprinter">TTY</a> 모드로 초기화하는 <a href="https://docs.rs/uart_16550/latest/uart_16550/struct.Uart16550Tty.html"><code>Uart16550Tty</code></a> 타입을 제공하여, 텍스트를 쉽게 전송할 수 있게 해줍니다.</p>
+<p>이 타입을 새 모듈 <code>serial</code>에서 사용해 봅시다:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>
 </span><span style="color:#569cd6;">mod </span><span>serial;
 </span></code></pre>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
 </span><span>
-</span><span style="color:#569cd6;">use </span><span>uart_16550::SerialPort;
+</span><span style="color:#569cd6;">use </span><span>uart_16550::{Config, Uart16550Tty, backend::PioBackend};
 </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
 </span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
 </span><span>
 </span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;SerialPort&gt; = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> serial_port = </span><span style="color:#569cd6;">unsafe </span><span>{ SerialPort::new(</span><span style="color:#b5cea8;">0x3F8</span><span>) };
-</span><span>        serial_port.init();
-</span><span>        Mutex::new(serial_port)
-</span><span>    };
+</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;Uart16550Tty&lt;PioBackend&gt;&gt; = Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        Uart16550Tty::new_port(</span><span style="color:#b5cea8;">0x3F8</span><span>, Config::default()).expect(</span><span style="color:#d69d85;">&quot;failed to initialize UART&quot;</span><span>)
+</span><span>    });
 </span><span>}
 </span></code></pre>
-<p><a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGA 텍스트 버퍼</a>를 구현할 때와 마찬가지로 <code>lazy_static</code> 매크로와 스핀 락을 사용해 정적 변수 <code>SERIAL1</code>을 생성했습니다. <code>lazy_static</code>을 사용함으로써 <code>SERIAL1</code>이 최초로 사용되는 시점에 단 한 번만 <code>init</code> 함수가 호출됩니다.</p>
-<p><code>isa-debug-exit</code> 장치와 마찬가지로 UART 또한 포트 입출력을 통해 프로그래밍 됩니다. UART는 좀 더 복잡해서 장치의 레지스터 여러 개를 이용하기 위해 여러 개의 입출력 포트를 사용합니다. unsafe 함수 <code>SerialPort::new</code>는 첫 번째 입출력 포트의 주소를 인자로 받고 그것을 통해 필요한 모든 포트들의 주소들을 알아냅니다. 첫 번째 시리얼 통신 인터페이스의 표준 포트 번호인 <code>0x3F8</code>을 인자로 전달합니다.</p>
+<p><a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGA 텍스트 버퍼</a>를 구현할 때와 마찬가지로 <code>lazy_static</code> 매크로와 스핀 락을 사용해 정적 변수 <code>SERIAL1</code>을 생성했습니다. <code>lazy_static</code>을 사용함으로써 <code>SERIAL1</code>이 최초로 사용되는 시점에 UART가 단 한 번만 초기화됩니다.</p>
+<p><code>isa-debug-exit</code> 장치와 마찬가지로 UART 또한 포트 입출력을 통해 프로그래밍 되며, 이는 <a href="https://docs.rs/uart_16550/latest/uart_16550/backend/struct.PioBackend.html"><code>PioBackend</code></a> 매개변수로 표현됩니다. UART는 좀 더 복잡해서 장치의 레지스터 여러 개를 이용하기 위해 여러 개의 입출력 포트를 사용합니다. unsafe 함수 <code>Uart16550Tty::new_port</code>는 첫 번째 입출력 포트의 주소를 인자로 받고 그것을 통해 필요한 모든 포트들의 주소들을 알아냅니다. 첫 번째 시리얼 통신 인터페이스의 표준 포트 번호인 <code>0x3F8</code>을 인자로 전달합니다.</p>
 <p>직렬 포트를 쉽게 사용할 수 있도록 <code>serial_print!</code> 및 <code>serial_println!</code> 매크로를 추가해줍니다.</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
 </span><span>
@@ -424,7 +423,7 @@
 </span><span>        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>), </span><span style="color:#569cd6;">$</span><span>($arg)*));
 </span><span>}
 </span></code></pre>
-<p>구현은 이전 포스트에서 작성했던 <code>print</code> 및 <code>println</code> 매크로와 매우 유사합니다. <code>SerialPort</code> 타입은 이미 <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> 트레이트를 구현하기에 우리가 새로 구현할 필요가 없습니다.</p>
+<p>구현은 이전 포스트에서 작성했던 <code>print</code> 및 <code>println</code> 매크로와 매우 유사합니다. <code>Uart16550Tty</code> 타입은 이미 <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> 트레이트를 구현하기에 우리가 새로 구현할 필요가 없습니다.</p>
 <p>이제 VGA 텍스트 버퍼가 아닌 직렬 통신 인터페이스로 메시지를 출력할 수 있습니다.</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>

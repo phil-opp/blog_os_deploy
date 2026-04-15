@@ -384,29 +384,28 @@
 <pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
 </span><span>
 </span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.2.0&quot;
+</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.6.0&quot;
 </span></code></pre>
-<p><code>uart_16550</code> crate包含了一个代表UART寄存器的 <code>SerialPort</code> 结构体，但是我们仍然需要自己来创建一个相应的实例。我们使用以下代码来创建一个新的串口模块 <code>serial</code>:</p>
+<p><code>uart_16550</code> crate包含了一个 <a href="https://docs.rs/uart_16550/latest/uart_16550/struct.Uart16550Tty.html"><code>Uart16550Tty</code></a> 类型，它以 <a href="https://en.wikipedia.org/wiki/Teleprinter">TTY</a> 模式初始化 UART，使我们能够轻松地发送文本。</p>
+<p>让我们在新的 <code>serial</code> 模块中使用这个类型:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>
 </span><span style="color:#569cd6;">mod </span><span>serial;
 </span></code></pre>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
 </span><span>
-</span><span style="color:#569cd6;">use </span><span>uart_16550::SerialPort;
+</span><span style="color:#569cd6;">use </span><span>uart_16550::{Config, Uart16550Tty, backend::PioBackend};
 </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
 </span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
 </span><span>
 </span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;SerialPort&gt; = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> serial_port = </span><span style="color:#569cd6;">unsafe </span><span>{ SerialPort::new(</span><span style="color:#b5cea8;">0x3F8</span><span>) };
-</span><span>        serial_port.init();
-</span><span>        Mutex::new(serial_port)
-</span><span>    };
+</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;Uart16550Tty&lt;PioBackend&gt;&gt; = Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        Uart16550Tty::new_port(</span><span style="color:#b5cea8;">0x3F8</span><span>, Config::default()).expect(</span><span style="color:#d69d85;">&quot;failed to initialize UART&quot;</span><span>)
+</span><span>    });
 </span><span>}
 </span></code></pre>
-<p>就像<a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGA文本缓冲区</a>一样，我们使用 <code>lazy_static</code> 和一个自旋锁来创建一个 <code>static</code> writer实例。通过使用 <code>lazy_static</code> ，我们可以保证 <code>init</code> 方法只会在该示例第一次被使用使被调用。</p>
-<p>和 <code>isa-debug-exit</code> 设备一样，UART也是通过I/O端口进行编程的。由于UART相对来讲更加复杂，它使用多个I/O端口来对不同的设备寄存器进行编程。<code>unsafe</code> 的 <code>SerialPort::new</code> 函数需要UART的第一个I/O端口的地址作为参数，从该地址中可以计算出所有所需端口的地址。我们传递的端口地址为 <code>0x3F8</code> ，该地址是第一个串行接口的标准端口号。</p>
+<p>就像<a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGA文本缓冲区</a>一样，我们使用 <code>lazy_static</code> 和一个自旋锁来创建一个 <code>static</code> writer实例。通过使用 <code>lazy_static</code> ，我们可以保证 UART 只会在第一次被使用时初始化。</p>
+<p>和 <code>isa-debug-exit</code> 设备一样，UART也是通过I/O端口进行编程的，这由 <a href="https://docs.rs/uart_16550/latest/uart_16550/backend/struct.PioBackend.html"><code>PioBackend</code></a> 参数表示。由于UART相对来讲更加复杂，它使用多个I/O端口来对不同的设备寄存器进行编程。<code>unsafe</code> 的 <code>Uart16550Tty::new_port</code> 函数需要UART的第一个I/O端口的地址作为参数，从该地址中可以计算出所有所需端口的地址。我们传递的端口地址为 <code>0x3F8</code> ，该地址是第一个串行接口的标准端口号。</p>
 <p>为了使串口更加易用，我们添加了 <code>serial_print!</code> 和 <code>serial_println!</code>宏:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
 </span><span>
@@ -433,7 +432,7 @@
 </span><span>        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>), </span><span style="color:#569cd6;">$</span><span>($arg)*));
 </span><span>}
 </span></code></pre>
-<p>该实现和我们此前的 <code>print</code> 和 <code>println</code> 宏的实现非常类似。 由于 <code>SerialPort</code> 类型已经实现了 <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> trait，所以我们不需要提供我们自己的实现了。</p>
+<p>该实现和我们此前的 <code>print</code> 和 <code>println</code> 宏的实现非常类似。 由于 <code>Uart16550Tty</code> 类型已经实现了 <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> trait，所以我们不需要提供我们自己的实现了。</p>
 <p>现在我们可以从测试代码里向串行接口打印而不是向VGA文本缓冲区打印了:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>

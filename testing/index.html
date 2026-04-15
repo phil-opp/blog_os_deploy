@@ -368,29 +368,28 @@ We set <code>test = false</code> in the first post to <a href="https://os.phil-o
 <pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
 </span><span>
 </span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.2.0&quot;
+</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.6.0&quot;
 </span></code></pre>
-<p>The <code>uart_16550</code> crate contains a <code>SerialPort</code> struct that represents the UART registers, but we still need to construct an instance of it ourselves. For that, we create a new <code>serial</code> module with the following content:</p>
+<p>The <code>uart_16550</code> crate contains a <a href="https://docs.rs/uart_16550/latest/uart_16550/struct.Uart16550Tty.html"><code>Uart16550Tty</code></a> type that initializes the UART in <a href="https://en.wikipedia.org/wiki/Teleprinter">TTY</a> mode, which allows us to send text easily.</p>
+<p>Let’s use the type in a new <code>serial</code> module:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>
 </span><span style="color:#569cd6;">mod </span><span>serial;
 </span></code></pre>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
 </span><span>
-</span><span style="color:#569cd6;">use </span><span>uart_16550::SerialPort;
+</span><span style="color:#569cd6;">use </span><span>uart_16550::{Config, Uart16550Tty, backend::PioBackend};
 </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
 </span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
 </span><span>
 </span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;SerialPort&gt; = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> serial_port = </span><span style="color:#569cd6;">unsafe </span><span>{ SerialPort::new(</span><span style="color:#b5cea8;">0x3F8</span><span>) };
-</span><span>        serial_port.init();
-</span><span>        Mutex::new(serial_port)
-</span><span>    };
+</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;Uart16550Tty&lt;PioBackend&gt;&gt; = Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        Uart16550Tty::new_port(</span><span style="color:#b5cea8;">0x3F8</span><span>, Config::default()).expect(</span><span style="color:#d69d85;">&quot;failed to initialize UART&quot;</span><span>)
+</span><span>    });
 </span><span>}
 </span></code></pre>
-<p>Like with the <a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGA text buffer</a>, we use <code>lazy_static</code> and a spinlock to create a <code>static</code> writer instance. By using <code>lazy_static</code> we can ensure that the <code>init</code> method is called exactly once on its first use.</p>
-<p>Like the <code>isa-debug-exit</code> device, the UART is programmed using port I/O. Since the UART is more complex, it uses multiple I/O ports for programming different device registers. The unsafe <code>SerialPort::new</code> function expects the address of the first I/O port of the UART as an argument, from which it can calculate the addresses of all needed ports. We’re passing the port address <code>0x3F8</code>, which is the standard port number for the first serial interface.</p>
+<p>Like with the <a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGA text buffer</a>, we use <code>lazy_static</code> and a spinlock to create a <code>static</code> writer instance. By using <code>lazy_static</code> we can ensure that the UART is initialized exactly once on its first use.</p>
+<p>Like the <code>isa-debug-exit</code> device, the UART is programmed using port I/O, which is indicated by the <a href="https://docs.rs/uart_16550/latest/uart_16550/backend/struct.PioBackend.html"><code>PioBackend</code></a> parameter. Since the UART is more complex, it uses multiple I/O ports for programming different device registers. The unsafe <code>Uart16550Tty::new_port</code> function expects the address of the first I/O port of the UART as an argument, from which it can calculate the addresses of all needed ports. We’re passing the port address <code>0x3F8</code>, which is the standard port number for the first serial interface.</p>
 <p>To make the serial port easily usable, we add <code>serial_print!</code> and <code>serial_println!</code> macros:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
 </span><span>
@@ -417,7 +416,7 @@ We set <code>test = false</code> in the first post to <a href="https://os.phil-o
 </span><span>        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>), </span><span style="color:#569cd6;">$</span><span>($arg)*));
 </span><span>}
 </span></code></pre>
-<p>The implementation is very similar to the implementation of our <code>print</code> and <code>println</code> macros. Since the <code>SerialPort</code> type already implements the <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> trait, we don’t need to provide our own implementation.</p>
+<p>The implementation is very similar to the implementation of our <code>print</code> and <code>println</code> macros. Since the <code>Uart16550Tty</code> type already implements the <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> trait, we don’t need to provide our own implementation.</p>
 <p>Now we can print to the serial interface instead of the VGA text buffer in our test code:</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>

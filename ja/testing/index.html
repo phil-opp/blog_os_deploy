@@ -378,29 +378,28 @@
 <pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
 </span><span>
 </span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.2.0&quot;
+</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.6.0&quot;
 </span></code></pre>
-<p><code>uart_16550</code>クレートにはUARTレジスタを表現する<code>SerialPort</code>構造体が含まれていますが、これのインスタンスは私達自身で作らなくてはいけません。そのため、以下の内容で新しい<code>serial</code>モジュールを作りましょう：</p>
+<p><code>uart_16550</code>クレートには、UARTを<a href="https://en.wikipedia.org/wiki/Teleprinter">TTY</a>モードで初期化する<a href="https://docs.rs/uart_16550/latest/uart_16550/struct.Uart16550Tty.html"><code>Uart16550Tty</code></a>型が含まれており、これによりテキストを簡単に送信できます。</p>
+<p>この型を新しい<code>serial</code>モジュールで使ってみましょう：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>
 </span><span style="color:#569cd6;">mod </span><span>serial;
 </span></code></pre>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
 </span><span>
-</span><span style="color:#569cd6;">use </span><span>uart_16550::SerialPort;
+</span><span style="color:#569cd6;">use </span><span>uart_16550::{Config, Uart16550Tty, backend::PioBackend};
 </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
 </span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
 </span><span>
 </span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;SerialPort&gt; = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> serial_port = </span><span style="color:#569cd6;">unsafe </span><span>{ SerialPort::new(</span><span style="color:#b5cea8;">0x3F8</span><span>) };
-</span><span>        serial_port.init();
-</span><span>        Mutex::new(serial_port)
-</span><span>    };
+</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;Uart16550Tty&lt;PioBackend&gt;&gt; = Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        Uart16550Tty::new_port(</span><span style="color:#b5cea8;">0x3F8</span><span>, Config::default()).expect(</span><span style="color:#d69d85;">&quot;failed to initialize UART&quot;</span><span>)
+</span><span>    });
 </span><span>}
 </span></code></pre>
-<p><a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGAテキストバッファ</a>のときのように、<code>lazy_static</code>とスピンロックを使って<code>static</code>なwriterインスタンスを作ります。<code>lazy_static</code>を使うことで、<code>init</code>メソッドが初回使用時にのみ呼び出されることを保証できます。</p>
-<p><code>isa-debug-exit</code>デバイスのときと同じように、UARTはport I/Oを使ってプログラムされています。UARTはより複雑で、様々なデバイスレジスタ群をプログラムするために複数のI/Oポートを使います。unsafeな<code>SerialPort::new</code>関数はUARTの最初のI/Oポートを引数とします。この引数から、すべての必要なポートのアドレスを計算することができます。ポートアドレス<code>0x3F8</code>を渡していますが、これは最初のシリアルインターフェースの標準のポート番号です。</p>
+<p><a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">VGAテキストバッファ</a>のときのように、<code>lazy_static</code>とスピンロックを使って<code>static</code>なwriterインスタンスを作ります。<code>lazy_static</code>を使うことで、UARTが初回使用時にのみ初期化されることを保証できます。</p>
+<p><code>isa-debug-exit</code>デバイスのときと同じように、UARTはport I/Oを使ってプログラムされており、それは<a href="https://docs.rs/uart_16550/latest/uart_16550/backend/struct.PioBackend.html"><code>PioBackend</code></a>パラメータによって示されています。UARTはより複雑で、様々なデバイスレジスタ群をプログラムするために複数のI/Oポートを使います。unsafeな<code>Uart16550Tty::new_port</code>関数はUARTの最初のI/Oポートを引数とします。この引数から、すべての必要なポートのアドレスを計算することができます。ポートアドレス<code>0x3F8</code>を渡していますが、これは最初のシリアルインターフェースの標準のポート番号です。</p>
 <p>シリアルポートを簡単に使えるようにするために、<code>serial_print!</code>と<code>serial_println!</code>マクロを追加します：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[doc(hidden)]
 </span><span style="color:#569cd6;">pub fn </span><span>_print(args: ::core::fmt::Arguments) {
@@ -425,7 +424,7 @@
 </span><span>        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>), </span><span style="color:#569cd6;">$</span><span>($arg)*));
 </span><span>}
 </span></code></pre>
-<p>この実装は私達の<code>print</code>および<code>println</code>マクロとよく似ています。<code>SerialPort</code>型はすでに<a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a>トレイトを実装しているので、自前の実装を提供する必要はありません。</p>
+<p>この実装は私達の<code>print</code>および<code>println</code>マクロとよく似ています。<code>Uart16550Tty</code>型はすでに<a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a>トレイトを実装しているので、自前の実装を提供する必要はありません。</p>
 <p>これで、テストコードにおいてVGAテキストバッファの代わりにシリアルインターフェースに出力することができます：</p>
 <pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
 </span><span>
