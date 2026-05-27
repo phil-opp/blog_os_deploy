@@ -650,12 +650,12 @@
 </span><span>    </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
 </span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
 </span><span>
-</span><span>    lazy_static! {
-</span><span>        </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
-</span><span>            Mutex::new(Keyboard::new(ScancodeSet1::new(),
-</span><span>                layouts::Us104Key, HandleControl::Ignore)
-</span><span>            );
-</span><span>    }
+</span><span>    </span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
+</span><span>        Mutex::new(Keyboard::new(
+</span><span>            ScancodeSet1::new(),
+</span><span>            layouts::Us104Key,
+</span><span>            HandleControl::Ignore,
+</span><span>        ));
 </span><span>
 </span><span>    </span><span style="color:#569cd6;">let mut</span><span> keyboard = </span><span style="color:#b4cea8;">KEYBOARD</span><span>.lock();
 </span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
@@ -676,7 +676,7 @@
 </span><span>    }
 </span><span>}
 </span></code></pre>
-<p>نستخدم macro <code>lazy_static</code> لإنشاء object <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> ثابت محمي بـ Mutex. نُهيئة <code>Keyboard</code> بـ US keyboard layout و scancode set 1. parameter <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> يسمح بتعيين <code>ctrl+[a-z]</code> إلى Unicode characters <code>U+0001</code> إلى <code>U+001A</code>. لا نريد فعل ذلك، لذلك نستخدم خيار <code>Ignore</code> للتعامل مع <code>ctrl</code> كمفاتيح عادية.</p>
+<p>نُنشئ object <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> ثابت محمي بـ Mutex. وبما أن الدالتين <code>Keyboard::new</code> و <code>ScancodeSet1::new</code> هما <code>const fn</code>، يمكن تهيئة الـ static المسمى <code>KEYBOARD</code> في وقت الترجمة (compile time)، لذلك لا نحتاج إلى macro <code>lazy_static</code> هنا. نُهيئة <code>Keyboard</code> بـ US keyboard layout و scancode set 1. parameter <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> يسمح بتعيين <code>ctrl+[a-z]</code> إلى Unicode characters <code>U+0001</code> إلى <code>U+001A</code>. لا نريد فعل ذلك، لذلك نستخدم خيار <code>Ignore</code> للتعامل مع <code>ctrl</code> كمفاتيح عادية.</p>
 <p>في كل interrupt، نقفل Mutex، نقرأ scancode من keyboard controller، ونمرره إلى دالة <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a>، التي تترجم scancode إلى <code>Option&lt;KeyEvent&gt;</code>. يحتوي <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> على المفتاح الذي تسبب في الحدث وما إذا كان حدث ضغط أو إطلاق.</p>
 <p>لتفسير هذا key event، نمرره إلى دالة <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a>، التي تترجم key event إلى حرف، إذا كان ممكنًا. على سبيل المثال، تترجم حدث ضغط مفتاح <code>A</code> إلى حرف <code>a</code> صغير أو حرف <code>A</code> كبير، بناءً على ما إذا كان مفتاح shift مضغوطًا.</p>
 <p>مع interrupt handler المعدّل، يمكننا الآن كتابة نص:</p>

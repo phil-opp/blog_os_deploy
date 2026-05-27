@@ -656,12 +656,12 @@
 </span><span>    </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
 </span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
 </span><span>
-</span><span>    lazy_static! {
-</span><span>        </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
-</span><span>            Mutex::new(Keyboard::new(ScancodeSet1::new(),
-</span><span>                layouts::Us104Key, HandleControl::Ignore)
-</span><span>            );
-</span><span>    }
+</span><span>    </span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
+</span><span>        Mutex::new(Keyboard::new(
+</span><span>            ScancodeSet1::new(),
+</span><span>            layouts::Us104Key,
+</span><span>            HandleControl::Ignore,
+</span><span>        ));
 </span><span>
 </span><span>    </span><span style="color:#569cd6;">let mut</span><span> keyboard = </span><span style="color:#b4cea8;">KEYBOARD</span><span>.lock();
 </span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
@@ -682,7 +682,7 @@
 </span><span>    }
 </span><span>}
 </span></code></pre>
-<p>首先我们使用 <code>lazy_static</code> 宏创建一个受到Mutex同步锁保护的 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> 对象，初始化参数为美式键盘布局以及Set-1。至于 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a>，它可以设定为将 <code>ctrl+[a-z]</code> 映射为Unicode字符 <code>U+0001</code> 至 <code>U+001A</code>，但我们不想这样，所以使用了 <code>Ignore</code> 选项让 <code>ctrl</code> 仅仅表现为一个正常键位。</p>
+<p>首先我们创建一个受到Mutex同步锁保护的 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> 对象，初始化参数为美式键盘布局以及Set-1。由于 <code>Keyboard::new</code> 和 <code>ScancodeSet1::new</code> 都是 <code>const fn</code>，<code>KEYBOARD</code> 这个 static 可以在编译期初始化，因此这里不再需要 <code>lazy_static</code> 宏。至于 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a>，它可以设定为将 <code>ctrl+[a-z]</code> 映射为Unicode字符 <code>U+0001</code> 至 <code>U+001A</code>，但我们不想这样，所以使用了 <code>Ignore</code> 选项让 <code>ctrl</code> 仅仅表现为一个正常键位。</p>
 <p>对于每一个中断，我们都会为 KEYBOARD 加锁，从键盘控制器获取扫描码并将其传入 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> 函数，并将其转化为 <code>Option&lt;KeyEvent&gt;</code> 结构。<a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> 包括了触发本次中断的按键信息，以及子动作是按下还是释放。</p>
 <p>要处理KeyEvent，我们还需要将其传入 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> 函数，将其转换为人类可读的字符，若果有必要，也会对字符进行一些处理。典型例子就是，要判断 <code>A</code> 键按下后输入的是小写 <code>a</code> 还是大写 <code>A</code>，这要取决于shift键是否同时被按下。</p>
 <p>进行这些修改之后，我们就可以正常输入英文了：</p>
