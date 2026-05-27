@@ -1,0 +1,539 @@
+<!doctype html>
+
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Bu yazı, işletim sistemimiz için de kullanacağımız çok yaygın bir bellek yönetimi şeması olan paging’i tanıtıyor. Bellek yalıtımının neden gerekli old…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/tr/paging-introduction/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Paging&#x27;e Giriş | Rust ile İşletim Sistemi Yazıyoruz</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Rust ile İşletim Sistemi Yazıyoruz</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/tr" title="All Posts">« Tüm Yazılar</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>İçindekiler</h2>
+    <ol>
+        <li>
+            <a href="#bellek-korumasi">Bellek Koruması</a>
+            
+        </li><li>
+            <a href="#segmentasyon">Segmentasyon</a>
+            <ol>
+                <li>
+                    <a href="#sanal-bellek">Sanal Bellek</a>
+                </li><li>
+                    <a href="#fragmentation">Parçalanma (Fragmentation)</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#paging">Paging</a>
+            <ol>
+                <li>
+                    <a href="#gizli-parcalanma">Gizli Parçalanma</a>
+                </li><li>
+                    <a href="#sayfa-tablolari">Sayfa Tabloları</a>
+                </li><li>
+                    <a href="#cok-seviyeli-sayfa-tablolari">Çok Seviyeli Sayfa Tabloları</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#paging-on-x86-64">x86_64’te Paging</a>
+            <ol>
+                <li>
+                    <a href="#ornek-ceviri">Örnek Çeviri</a>
+                </li><li>
+                    <a href="#page-table-format">Sayfa Tablosu Biçimi</a>
+                </li><li>
+                    <a href="#the-translation-lookaside-buffer">Translation Lookaside Buffer</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#uygulama">Uygulama</a>
+            <ol>
+                <li>
+                    <a href="#page-fault-lar">Page Fault’lar</a>
+                </li><li>
+                    <a href="#accessing-the-page-tables">Sayfa Tablolarına Erişmek</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ozet">Özet</a>
+            
+        </li><li>
+            <a href="#sirada-ne-var">Sırada ne var?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Paging&#x27;e Giriş</h1>
+    <time datetime="2019-01-14" class="post-date">
+        Jan 14, 2019
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Çevrilmiş İçerik:</b>
+            Bu, <strong><a href="https://os.phil-opp.com/paging-introduction/">Introduction to Paging</a></strong> adlı gönderinin topluluk tarafından yapılmış bir çevirisidir. Eksik, güncel olmayan veya hata içeriyor olabilir. Lütfen herhangi bir sorunu bildirin!
+            </p>
+            <p>
+                Translation by <a href="https://github.com/rhotav">@rhotav</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Bu yazı, işletim sistemimiz için de kullanacağımız çok yaygın bir bellek yönetimi şeması olan <em>paging</em>’i tanıtıyor. Bellek yalıtımının neden gerekli olduğunu, <em>segmentasyonun</em> nasıl çalıştığını, <em>sanal belleğin</em> ne olduğunu ve paging’in bellek parçalanması sorunlarını nasıl çözdüğünü açıklıyor. Ayrıca x86_64 mimarisindeki çok seviyeli sayfa tablolarının düzenini de inceliyor.</p>
+<span id="continue-reading"></span>
+<p>Bu blog <a href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/paging-introduction/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a href="https://github.com/phil-opp/blog_os/tree/post-08"><code>post-08</code></a> dalında bulunabilir.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>İçindekiler</b></summary>
+        <ul>
+            <li>
+                <a href="#bellek-korumasi">Bellek Koruması</a>
+                
+            </li><li>
+                <a href="#segmentasyon">Segmentasyon</a>
+                <ul>
+                    <li>
+                        <a href="#sanal-bellek">Sanal Bellek</a>
+                    </li><li>
+                        <a href="#fragmentation">Parçalanma (Fragmentation)</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#paging">Paging</a>
+                <ul>
+                    <li>
+                        <a href="#gizli-parcalanma">Gizli Parçalanma</a>
+                    </li><li>
+                        <a href="#sayfa-tablolari">Sayfa Tabloları</a>
+                    </li><li>
+                        <a href="#cok-seviyeli-sayfa-tablolari">Çok Seviyeli Sayfa Tabloları</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#paging-on-x86-64">x86_64’te Paging</a>
+                <ul>
+                    <li>
+                        <a href="#ornek-ceviri">Örnek Çeviri</a>
+                    </li><li>
+                        <a href="#page-table-format">Sayfa Tablosu Biçimi</a>
+                    </li><li>
+                        <a href="#the-translation-lookaside-buffer">Translation Lookaside Buffer</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#uygulama">Uygulama</a>
+                <ul>
+                    <li>
+                        <a href="#page-fault-lar">Page Fault’lar</a>
+                    </li><li>
+                        <a href="#accessing-the-page-tables">Sayfa Tablolarına Erişmek</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ozet">Özet</a>
+                
+            </li><li>
+                <a href="#sirada-ne-var">Sırada ne var?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+        </ul>
+    </details>
+
+<h2 id="bellek-korumasi"><a class="zola-anchor" href="#bellek-korumasi" aria-label="Anchor link for: bellek-korumasi">🔗</a>Bellek Koruması</h2>
+<p>Bir işletim sisteminin ana görevlerinden biri, programları birbirinden yalıtmaktır. Örneğin, web tarayıcınızın metin düzenleyicinize müdahale edebilmesi gerekmez. Bu hedefe ulaşmak için, işletim sistemleri bir sürecin bellek alanlarına diğer süreçler tarafından erişilememesini sağlamak amacıyla donanım işlevselliğinden yararlanır. Donanıma ve OS uygulamasına bağlı olarak farklı yaklaşımlar vardır.</p>
+<p>Örnek olarak, bazı ARM Cortex-M işlemcilerin (gömülü sistemler için kullanılır) bir <a href="https://developer.arm.com/docs/ddi0337/e/memory-protection-unit/about-the-mpu"><em>Memory Protection Unit</em></a> (MPU) vardır; bu, farklı erişim izinlerine (örneğin erişim yok, salt okunur, okuma-yazma) sahip az sayıda (örneğin 8) bellek bölgesi tanımlamanıza olanak tanır. Her bellek erişiminde, MPU adresin doğru erişim izinlerine sahip bir bölgede olduğundan emin olur ve aksi takdirde bir exception fırlatır. Her süreç değişiminde bölgeleri ve erişim izinlerini değiştirerek, işletim sistemi her sürecin yalnızca kendi belleğine eriştiğinden emin olabilir ve böylece süreçleri birbirinden yalıtır.</p>
+<p>x86’da donanım, bellek korumasına yönelik iki farklı yaklaşımı destekler: <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation">segmentasyon</a> ve <a href="https://en.wikipedia.org/wiki/Virtual_memory#Paged_virtual_memory">paging</a>.</p>
+<h2 id="segmentasyon"><a class="zola-anchor" href="#segmentasyon" aria-label="Anchor link for: segmentasyon">🔗</a>Segmentasyon</h2>
+<p>Segmentasyon, 1978’de, başlangıçta adreslenebilir bellek miktarını artırmak için tanıtıldı. O zamanki durum, CPU’ların yalnızca 16-bit adresler kullanması ve bunun adreslenebilir bellek miktarını 64 KiB ile sınırlamasıydı. Bu 64 KiB’tan fazlasını erişilebilir kılmak için, her biri bir ofset adres içeren ek segment register’ları tanıtıldı. CPU bu ofseti her bellek erişiminde otomatik olarak ekledi; böylece 1 MiB’a kadar bellek erişilebilir oldu.</p>
+<p>Segment register’ı, bellek erişiminin türüne bağlı olarak CPU tarafından otomatik olarak seçilir: Komutları getirmek için kod segmenti <code>CS</code> kullanılır ve stack işlemleri (push/pop) için stack segmenti <code>SS</code> kullanılır. Diğer komutlar veri segmenti <code>DS</code>’yi veya ekstra segment <code>ES</code>’yi kullanır. Daha sonra, serbestçe kullanılabilen iki ek segment register’ı, <code>FS</code> ve <code>GS</code> eklendi.</p>
+<p>Segmentasyonun ilk sürümünde, segment register’ları doğrudan ofseti içeriyordu ve hiçbir erişim denetimi yapılmıyordu. Bu daha sonra <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation#Protected_mode"><em>protected mode</em></a>’un tanıtılmasıyla değiştirildi. CPU bu modda çalıştığında, segment tanımlayıcıları yerel veya global bir <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table"><em>tanımlayıcı tabloya (descriptor table)</em></a> bir indeks içerir; bu tablo da – bir ofset adrese ek olarak – segment boyutunu ve erişim izinlerini içerir. Bellek erişimlerini sürecin kendi bellek alanlarıyla sınırlayan ayrı global/yerel tanımlayıcı tabloları her süreç için yükleyerek, OS süreçleri birbirinden yalıtabilir.</p>
+<p>Bellek adreslerini gerçek erişimden önce değiştirerek, segmentasyon halihazırda artık neredeyse her yerde kullanılan bir tekniği kullanıyordu: <em>sanal bellek</em>.</p>
+<h3 id="sanal-bellek"><a class="zola-anchor" href="#sanal-bellek" aria-label="Anchor link for: sanal-bellek">🔗</a>Sanal Bellek</h3>
+<p>Sanal belleğin arkasındaki fikir, bellek adreslerini alttaki fiziksel depolama cihazından soyutlamaktır. Depolama cihazına doğrudan erişmek yerine, önce bir çeviri adımı gerçekleştirilir. Segmentasyon için çeviri adımı, aktif segmentin ofset adresini eklemektir. Ofseti <code>0x1111000</code> olan bir segmentte <code>0x1234000</code> bellek adresine erişen bir program hayal edin: Gerçekte erişilen adres <code>0x2345000</code>’dir.</p>
+<p>İki adres tipini ayırt etmek için, çeviriden önceki adreslere <em>sanal</em> ve çeviriden sonraki adreslere <em>fiziksel</em> denir. Bu iki tür adres arasındaki önemli bir fark, fiziksel adreslerin benzersiz olması ve her zaman aynı belirgin bellek konumuna atıfta bulunmasıdır. Sanal adresler ise çeviri fonksiyonuna bağlıdır. İki farklı sanal adresin aynı fiziksel adrese atıfta bulunması tamamen mümkündür. Ayrıca, aynı sanal adresler farklı çeviri fonksiyonları kullandıklarında farklı fiziksel adreslere atıfta bulunabilir.</p>
+<p>Bu özelliğin yararlı olduğu bir örnek, aynı programı paralel olarak iki kez çalıştırmaktır:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/segmentation-same-program-twice.svg" alt="0–150 adresli iki sanal adres alanı, biri 100–250’ye, diğeri 300–450’ye çevrilir" /></p>
+<p>Burada aynı program iki kez, ancak farklı çeviri fonksiyonlarıyla çalışır. İlk örneğin segment ofseti 100’dür; böylece 0–150 sanal adresleri 100–250 fiziksel adreslerine çevrilir. İkinci örneğin ofseti 300’dür; bu da 0–150 sanal adreslerini 300–450 fiziksel adreslerine çevirir. Bu, her iki programın da aynı kodu çalıştırmasına ve birbirine müdahale etmeden aynı sanal adresleri kullanmasına olanak tanır.</p>
+<p>Başka bir avantaj, programların artık tamamen farklı sanal adresler kullansalar bile keyfi fiziksel bellek konumlarına yerleştirilebilmesidir. Böylece OS, programları yeniden derlemeye gerek kalmadan mevcut belleğin tamamından yararlanabilir.</p>
+<h3 id="fragmentation"><a class="zola-anchor" href="#fragmentation" aria-label="Anchor link for: fragmentation">🔗</a>Parçalanma (Fragmentation)</h3>
+<p>Sanal ve fiziksel adresler arasındaki ayrım, segmentasyonu gerçekten güçlü kılar. Ancak parçalanma (fragmentation) sorunu vardır. Örnek olarak, yukarıda gördüğümüz programın üçüncü bir kopyasını çalıştırmak istediğimizi hayal edin:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/segmentation-fragmentation.svg" alt="Üç sanal adres alanı, ancak üçüncüsü için yeterli sürekli alan yok" /></p>
+<p>Yeterinden fazla boş bellek mevcut olmasına rağmen, programın üçüncü örneğini sanal belleğe çakışmadan eşlemenin bir yolu yoktur. Sorun, <em>sürekli</em> belleğe ihtiyaç duymamız ve küçük boş parçaları kullanamamamızdır.</p>
+<p>Bu parçalanmayla mücadele etmenin bir yolu, çalıştırmayı duraklatmak, belleğin kullanılan kısımlarını birbirine yaklaştırmak, çeviriyi güncellemek ve ardından çalıştırmaya devam etmektir:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/segmentation-fragmentation-compacted.svg" alt="Birleştirme (defragmentation) sonrası üç sanal adres alanı" /></p>
+<p>Artık programımızın üçüncü örneğini başlatmak için yeterli sürekli alan var.</p>
+<p>Bu birleştirme (defragmentation) sürecinin dezavantajı, performansı düşüren büyük miktarda belleği kopyalaması gerekmesidir. Ayrıca, bellek çok parçalanmadan önce düzenli olarak yapılması gerekir. Bu, programlar rastgele zamanlarda duraklatıldığı ve yanıt vermez hale gelebileceği için performansı öngörülemez kılar.</p>
+<p>Parçalanma sorunu, segmentasyonun çoğu sistem tarafından artık kullanılmamasının nedenlerinden biridir. Aslında, segmentasyon x86’da 64-bit modda artık desteklenmiyor bile. Bunun yerine, parçalanma sorunundan tamamen kaçınan <em>paging</em> kullanılır.</p>
+<h2 id="paging"><a class="zola-anchor" href="#paging" aria-label="Anchor link for: paging">🔗</a>Paging</h2>
+<p>Fikir, hem sanal hem de fiziksel bellek alanını küçük, sabit boyutlu bloklara bölmektir. Sanal bellek alanının bloklarına <em>sayfa (page)</em>, fiziksel adres alanının bloklarına ise <em>frame</em> denir. Her sayfa ayrı ayrı bir frame’e eşlenebilir; bu da daha büyük bellek bölgelerini sürekli olmayan fiziksel frame’lere bölmeyi mümkün kılar.</p>
+<p>Bunun avantajı, parçalanmış bellek alanı örneğini tekrar gözden geçirir, ancak bu kez segmentasyon yerine paging kullanırsak görünür hale gelir:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/paging-fragmentation.svg" alt="Paging ile, üçüncü program örneği birçok küçük fiziksel alana bölünebilir." /></p>
+<p>Bu örnekte 50 baytlık bir sayfa boyutuna sahibiz; bu da bellek bölgelerimizin her birinin üç sayfaya bölündüğü anlamına gelir. Her sayfa ayrı ayrı bir frame’e eşlenir, bu yüzden sürekli bir sanal bellek bölgesi sürekli olmayan fiziksel frame’lere eşlenebilir. Bu, programın üçüncü örneğini öncesinde herhangi bir birleştirme yapmadan başlatmamıza olanak tanır.</p>
+<h3 id="gizli-parcalanma"><a class="zola-anchor" href="#gizli-parcalanma" aria-label="Anchor link for: gizli-parcalanma">🔗</a>Gizli Parçalanma</h3>
+<p>Segmentasyona kıyasla paging, birkaç büyük, değişken boyutlu bölge yerine birçok küçük, sabit boyutlu bellek bölgesi kullanır. Her frame aynı boyuta sahip olduğundan, kullanılamayacak kadar küçük olan hiçbir frame yoktur, bu yüzden hiçbir parçalanma meydana gelmez.</p>
+<p>Ya da hiçbir parçalanma meydana gelmiyor <em>gibi görünür</em>. Hâlâ bir tür gizli parçalanma vardır; <em>iç parçalanma (internal fragmentation)</em> adı verilen şey. İç parçalanma, her bellek bölgesinin sayfa boyutunun tam bir katı olmaması nedeniyle meydana gelir. Yukarıdaki örnekte 101 boyutlu bir program hayal edin: Yine de 50 boyutlu üç sayfaya ihtiyaç duyardı, bu yüzden gerekenden 49 bayt daha fazla yer kaplardı. İki tür parçalanmayı ayırt etmek için, segmentasyon kullanılırken meydana gelen parçalanma türüne <em>dış parçalanma (external fragmentation)</em> denir.</p>
+<p>İç parçalanma talihsiz bir durumdur, ancak genellikle segmentasyonda meydana gelen dış parçalanmadan daha iyidir. Yine de bellek israf eder, ancak birleştirme gerektirmez ve parçalanma miktarını öngörülebilir kılar (ortalama olarak bellek bölgesi başına yarım sayfa).</p>
+<h3 id="sayfa-tablolari"><a class="zola-anchor" href="#sayfa-tablolari" aria-label="Anchor link for: sayfa-tablolari">🔗</a>Sayfa Tabloları</h3>
+<p>Potansiyel olarak milyonlarca sayfanın her birinin ayrı ayrı bir frame’e eşlendiğini gördük. Bu eşleme bilgisinin bir yerde saklanması gerekir. Segmentasyon, her aktif bellek bölgesi için ayrı bir segment seçici register’ı kullanır; bu, register’lardan çok daha fazla sayfa olduğu için paging için mümkün değildir. Bunun yerine paging, eşleme bilgisini saklamak için <em>sayfa tablosu (page table)</em> adı verilen bir tablo yapısı kullanır.</p>
+<p>Yukarıdaki örneğimiz için sayfa tabloları şöyle görünürdü:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/paging-page-tables.svg" alt="Üç sayfa tablosu, her program örneği için bir tane. Örnek 1 için eşleme 0-&gt;100, 50-&gt;150, 100-&gt;200’dür. Örnek 2 için 0-&gt;300, 50-&gt;350, 100-&gt;400’dür. Örnek 3 için 0-&gt;250, 50-&gt;450, 100-&gt;500’dür." /></p>
+<p>Her program örneğinin kendi sayfa tablosuna sahip olduğunu görüyoruz. Şu anda aktif olan tabloya bir işaretçi, özel bir CPU register’ında saklanır. <code>x86</code>’da bu register’ın adı <code>CR3</code>’tür. Her program örneğini çalıştırmadan önce bu register’a doğru sayfa tablosuna işaretçiyi yüklemek işletim sisteminin görevidir.</p>
+<p>Her bellek erişiminde, CPU tablo işaretçisini register’dan okur ve erişilen sayfa için eşlenmiş frame’i tabloda arar. Bu tamamen donanımda yapılır ve çalışan programa tamamen görünmezdir. Çeviri sürecini hızlandırmak için, birçok CPU mimarisinin son çevirilerin sonuçlarını hatırlayan özel bir önbelleği vardır.</p>
+<p>Mimariye bağlı olarak, sayfa tablosu girdileri bir bayraklar (flags) alanında erişim izinleri gibi öznitelikleri de saklayabilir. Yukarıdaki örnekte, “r/w” bayrağı sayfayı hem okunabilir hem yazılabilir kılar.</p>
+<h3 id="cok-seviyeli-sayfa-tablolari"><a class="zola-anchor" href="#cok-seviyeli-sayfa-tablolari" aria-label="Anchor link for: cok-seviyeli-sayfa-tablolari">🔗</a>Çok Seviyeli Sayfa Tabloları</h3>
+<p>Az önce gördüğümüz basit sayfa tablolarının daha büyük adres alanlarında bir sorunu vardır: bellek israf ederler. Örneğin, <code>0</code>, <code>1_000_000</code>, <code>1_000_050</code> ve <code>1_000_100</code> olmak üzere dört sanal sayfa kullanan bir program hayal edin (<code>_</code>’yi binlik ayırıcı olarak kullanıyoruz):</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/single-level-page-table.svg" alt="Sayfa 0 frame 0’a ve 1_000_000–1_000_150 sayfaları frame 100–250’ye eşlenmiş" /></p>
+<p>Yalnızca 4 fiziksel frame’e ihtiyaç duyar, ancak sayfa tablosunun bir milyondan fazla girdisi vardır. Boş girdileri atlayamayız, çünkü o zaman CPU çeviri sürecinde doğru girdiye doğrudan atlayamaz (örneğin, dördüncü sayfanın dördüncü girdiyi kullandığı artık garanti edilmez).</p>
+<p>İsraf edilen belleği azaltmak için bir <strong>iki seviyeli sayfa tablosu</strong> kullanabiliriz. Fikir, farklı adres bölgeleri için farklı sayfa tabloları kullanmamızdır. <em>Seviye 2</em> sayfa tablosu adı verilen ek bir tablo, adres bölgeleri ile (seviye 1) sayfa tabloları arasındaki eşlemeyi içerir.</p>
+<p>Bu en iyi bir örnekle açıklanır. Her seviye 1 sayfa tablosunun <code>10_000</code> boyutunda bir bölgeden sorumlu olduğunu tanımlayalım. O zaman yukarıdaki örnek eşleme için aşağıdaki tablolar var olurdu:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/multilevel-page-table.svg" alt="Sayfa 0, seviye 2 sayfa tablosunun 0. girdisine işaret eder; o da seviye 1 sayfa tablosu T1’e işaret eder. T1’in ilk girdisi frame 0’a işaret eder; diğer girdiler boştur. 1_000_000–1_000_150 sayfaları, seviye 2 sayfa tablosunun 100. girdisine işaret eder; o da farklı bir seviye 1 sayfa tablosu T2’ye işaret eder. T2’nin ilk üç girdisi frame 100–250’ye işaret eder; diğer girdiler boştur." /></p>
+<p>Sayfa 0, ilk <code>10_000</code> baytlık bölgeye düşer, bu yüzden seviye 2 sayfa tablosunun ilk girdisini kullanır. Bu girdi, sayfa <code>0</code>’ın frame <code>0</code>’a işaret ettiğini belirten seviye 1 sayfa tablosu T1’e işaret eder.</p>
+<p><code>1_000_000</code>, <code>1_000_050</code> ve <code>1_000_100</code> sayfalarının hepsi 100. <code>10_000</code> baytlık bölgeye düşer, bu yüzden seviye 2 sayfa tablosunun 100. girdisini kullanırlar. Bu girdi, üç sayfayı frame <code>100</code>, <code>150</code> ve <code>200</code>’e eşleyen farklı bir seviye 1 sayfa tablosu T2’ye işaret eder. Seviye 1 tablolardaki sayfa adresinin bölge ofsetini içermediğine dikkat edin. Örneğin, sayfa <code>1_000_050</code> için girdi yalnızca <code>50</code>’dir.</p>
+<p>Seviye 2 tablosunda hâlâ 100 boş girdimiz var, ancak önceki bir milyon boş girdiden çok daha az. Bu tasarrufun nedeni, <code>10_000</code> ile <code>1_000_000</code> arasındaki eşlenmemiş bellek bölgeleri için seviye 1 sayfa tabloları oluşturmamıza gerek olmamasıdır.</p>
+<p>İki seviyeli sayfa tabloları ilkesi üç, dört veya daha fazla seviyeye genişletilebilir. O zaman sayfa tablosu register’ı en yüksek seviye tabloya işaret eder; o bir sonraki alt seviye tabloya, o bir sonraki alt seviyeye işaret eder ve bu böyle devam eder. Seviye 1 sayfa tablosu ise eşlenmiş frame’e işaret eder. İlke genel olarak <em>çok seviyeli (multilevel)</em> veya <em>hiyerarşik</em> sayfa tablosu olarak adlandırılır.</p>
+<p>Artık paging’in ve çok seviyeli sayfa tablolarının nasıl çalıştığını bildiğimize göre, paging’in x86_64 mimarisinde nasıl uygulandığına bakabiliriz (aşağıda CPU’nun 64-bit modda çalıştığını varsayıyoruz).</p>
+<h2 id="paging-on-x86-64"><a class="zola-anchor" href="#paging-on-x86-64" aria-label="Anchor link for: paging-on-x86-64">🔗</a>x86_64’te Paging</h2>
+<p>x86_64 mimarisi 4 seviyeli bir sayfa tablosu ve 4 KiB’lık bir sayfa boyutu kullanır. Her sayfa tablosu, seviyeden bağımsız olarak, sabit 512 girdi boyutuna sahiptir. Her girdi 8 bayt boyutundadır, bu yüzden her tablo 512 * 8 B = 4 KiB büyüklüğündedir ve böylece tam olarak bir sayfaya sığar.</p>
+<p>Her seviye için sayfa tablosu indeksi doğrudan sanal adresten türetilir:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/x86_64-table-indices-from-address.svg" alt="0–12 bitleri sayfa ofseti, 12–21 bitleri seviye 1 indeksi, 21–30 bitleri seviye 2 indeksi, 30–39 bitleri seviye 3 indeksi ve 39–48 bitleri seviye 4 indeksidir" /></p>
+<p>Her tablo indeksinin 9 bitten oluştuğunu görüyoruz; bu mantıklıdır, çünkü her tablonun 2^9 = 512 girdisi vardır. En düşük 12 bit, 4 KiB sayfadaki ofsettir (2^12 bayt = 4 KiB). 48’den 64’e kadar olan bitler atılır; bu da x86_64’ün yalnızca 48-bit adresleri desteklediği için aslında gerçekten 64-bit olmadığı anlamına gelir.</p>
+<p>48’den 64’e kadar olan bitler atılsa da, keyfi değerlere ayarlanamazlar. Bunun yerine, adresleri benzersiz tutmak ve 5 seviyeli sayfa tablosu gibi gelecekteki genişletmelere izin vermek için bu aralıktaki tüm bitler 47. bitin kopyaları olmalıdır. Buna <em>işaret genişletme (sign-extension)</em> denir, çünkü <a href="https://en.wikipedia.org/wiki/Two&#x27;s_complement#Sign_extension">iki’ye tümleyendeki işaret genişletmeye</a> çok benzer. Bir adres doğru şekilde işaret genişletilmediğinde, CPU bir exception fırlatır.</p>
+<p>Yakın tarihli “Ice Lake” Intel CPU’larının, sanal adresleri 48-bit’ten 57-bit’e genişletmek için isteğe bağlı olarak <a href="https://en.wikipedia.org/wiki/Intel_5-level_paging">5 seviyeli sayfa tablolarını</a> desteklediğini belirtmekte fayda var. Kernel’imizi belirli bir CPU için optimize etmenin bu aşamada anlamlı olmadığı düşünüldüğünde, bu yazıda yalnızca standart 4 seviyeli sayfa tablolarıyla çalışacağız.</p>
+<h3 id="ornek-ceviri"><a class="zola-anchor" href="#ornek-ceviri" aria-label="Anchor link for: ornek-ceviri">🔗</a>Örnek Çeviri</h3>
+<p>Çeviri sürecinin ayrıntılı olarak nasıl çalıştığını anlamak için bir örnek üzerinden gidelim:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/x86_64-page-table-translation.svg" alt="Her sayfa tablosu fiziksel bellekte gösterilen 4 seviyeli bir sayfa hiyerarşisi örneği" /></p>
+<p>4 seviyeli sayfa tablosunun kökü olan, şu anda aktif olan seviye 4 sayfa tablosunun fiziksel adresi <code>CR3</code> register’ında saklanır. Her sayfa tablosu girdisi daha sonra bir sonraki seviye tablonun fiziksel frame’ine işaret eder. Seviye 1 tablosunun girdisi ise eşlenmiş frame’e işaret eder. Sayfa tablolarındaki tüm adreslerin sanal değil fiziksel olduğuna dikkat edin; çünkü aksi takdirde CPU’nun bu adresleri de çevirmesi gerekirdi (bu da bitmeyen bir özyinelemeye neden olabilir).</p>
+<p>Yukarıdaki sayfa tablosu hiyerarşisi iki sayfayı (mavi renkte) eşler. Sayfa tablosu indekslerinden, bu iki sayfanın sanal adreslerinin <code>0x803FE7F000</code> ve <code>0x803FE00000</code> olduğunu çıkarabiliriz. Program <code>0x803FE7F5CE</code> adresinden okumaya çalıştığında ne olduğunu görelim. Önce adresi ikiliye çeviriyor ve adres için sayfa tablosu indekslerini ve sayfa ofsetini belirliyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/x86_64-page-table-translation-addresses.png" alt="İşaret genişletme bitlerinin hepsi 0, seviye 4 indeksi 1, seviye 3 indeksi 0, seviye 2 indeksi 511, seviye 1 indeksi 127 ve sayfa ofseti 0x5ce’dir" /></p>
+<p>Bu indekslerle, artık adres için eşlenmiş frame’i belirlemek üzere sayfa tablosu hiyerarşisinde yürüyebiliriz:</p>
+<ul>
+<li>Seviye 4 tablosunun adresini <code>CR3</code> register’ından okuyarak başlıyoruz.</li>
+<li>Seviye 4 indeksi 1’dir, bu yüzden o tablonun 1 indeksli girdisine bakarız; bu da bize seviye 3 tablosunun 16 KiB adresinde saklandığını söyler.</li>
+<li>Seviye 3 tablosunu o adresten yükler ve 0 indeksli girdiye bakarız; bu da bizi 24 KiB’taki seviye 2 tablosuna yönlendirir.</li>
+<li>Seviye 2 indeksi 511’dir, bu yüzden seviye 1 tablosunun adresini öğrenmek için o sayfanın son girdisine bakarız.</li>
+<li>Seviye 1 tablosunun 127 indeksli girdisi aracılığıyla, sonunda sayfanın 12 KiB’lık frame’e, ya da onaltılıkta 0x3000’e eşlendiğini öğreniriz.</li>
+<li>Son adım, fiziksel adresi elde etmek için sayfa ofsetini frame adresine eklemektir: 0x3000 + 0x5ce = 0x35ce.</li>
+</ul>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/x86_64-page-table-translation-steps.svg" alt="5 ek ok içeren aynı örnek 4 seviyeli sayfa hiyerarşisi: CR3 register’ından seviye 4 tablosuna “Adım 0”, seviye 4 girdisinden seviye 3 tablosuna “Adım 1”, seviye 3 girdisinden seviye 2 tablosuna “Adım 2”, seviye 2 girdisinden seviye 1 tablosuna “Adım 3” ve seviye 1 tablosundan eşlenmiş frame’lere “Adım 4”." /></p>
+<p>Seviye 1 tablosundaki sayfanın izinleri <code>r</code>’dir; bu da salt okunur anlamına gelir. Donanım bu izinleri zorunlu kılar ve o sayfaya yazmaya çalışırsak bir exception fırlatırdı. Daha yüksek seviye sayfalardaki izinler, daha düşük seviyelerdeki olası izinleri kısıtlar; yani seviye 3 girdisini salt okunur olarak ayarlarsak, alt seviyeler okuma/yazma izinleri belirtse bile bu girdiyi kullanan hiçbir sayfa yazılabilir olamaz.</p>
+<p>Bu örnekte her tablonun yalnızca tek bir örneği kullanılmış olsa da, her adres alanında tipik olarak her seviyeden birden çok örnek olduğunu belirtmek önemlidir. En fazla şunlar vardır:</p>
+<ul>
+<li>bir seviye 4 tablosu,</li>
+<li>512 seviye 3 tablosu (çünkü seviye 4 tablosunun 512 girdisi vardır),</li>
+<li>512 * 512 seviye 2 tablosu (çünkü 512 seviye 3 tablosunun her birinin 512 girdisi vardır) ve</li>
+<li>512 * 512 * 512 seviye 1 tablosu (her seviye 2 tablosu için 512 girdi).</li>
+</ul>
+<h3 id="page-table-format"><a class="zola-anchor" href="#page-table-format" aria-label="Anchor link for: page-table-format">🔗</a>Sayfa Tablosu Biçimi</h3>
+<p>x86_64 mimarisindeki sayfa tabloları temelde 512 girdiden oluşan bir dizidir. Rust söz dizimiyle:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[repr(align(4096))]
+</span><span style="color:#569cd6;">pub struct </span><span>PageTable {
+</span><span>    entries: [PageTableEntry; 512],
+</span><span>}
+</span></code></pre>
+<p><code>repr</code> özniteliğinin belirttiği gibi, sayfa tablolarının sayfa hizalı olması, yani 4 KiB’lık bir sınırda hizalanması gerekir. Bu gereksinim, bir sayfa tablosunun her zaman tam bir sayfayı doldurmasını garanti eder ve girdileri çok kompakt kılan bir optimizasyona olanak tanır.</p>
+<p>Her girdi 8 bayt (64 bit) büyüklüğündedir ve aşağıdaki biçime sahiptir:</p>
+<table><thead><tr><th>Bit(ler)</th><th>Ad</th><th>Anlam</th></tr></thead><tbody>
+<tr><td>0</td><td>present</td><td>sayfa şu anda bellekte</td></tr>
+<tr><td>1</td><td>writable</td><td>bu sayfaya yazmaya izin verilir</td></tr>
+<tr><td>2</td><td>user accessible</td><td>ayarlanmamışsa, bu sayfaya yalnızca kernel modu kodu erişebilir</td></tr>
+<tr><td>3</td><td>write-through caching</td><td>yazmalar doğrudan belleğe gider</td></tr>
+<tr><td>4</td><td>disable cache</td><td>bu sayfa için önbellek kullanılmaz</td></tr>
+<tr><td>5</td><td>accessed</td><td>bu sayfa kullanıldığında CPU bu biti ayarlar</td></tr>
+<tr><td>6</td><td>dirty</td><td>bu sayfaya bir yazma gerçekleştiğinde CPU bu biti ayarlar</td></tr>
+<tr><td>7</td><td>huge page/null</td><td>P1 ve P4’te 0 olmalıdır, P3’te 1 GiB’lık bir sayfa oluşturur, P2’de 2 MiB’lık bir sayfa oluşturur</td></tr>
+<tr><td>8</td><td>global</td><td>adres alanı değişiminde sayfa önbelleklerden temizlenmez (CR4 register’ının PGE biti ayarlı olmalıdır)</td></tr>
+<tr><td>9-11</td><td>available</td><td>OS tarafından serbestçe kullanılabilir</td></tr>
+<tr><td>12-51</td><td>physical address</td><td>frame’in veya bir sonraki sayfa tablosunun sayfa hizalı 52 bitlik fiziksel adresi</td></tr>
+<tr><td>52-62</td><td>available</td><td>OS tarafından serbestçe kullanılabilir</td></tr>
+<tr><td>63</td><td>no execute</td><td>bu sayfada kod çalıştırmayı yasakla (EFER register’ındaki NXE biti ayarlı olmalıdır)</td></tr>
+</tbody></table>
+<p>Fiziksel frame adresini saklamak için yalnızca 12–51 bitlerinin kullanıldığını görüyoruz. Kalan bitler bayrak olarak kullanılır veya işletim sistemi tarafından serbestçe kullanılabilir. Bu mümkündür, çünkü her zaman 4096 baytlık hizalı bir adrese işaret ederiz; ya sayfa hizalı bir sayfa tablosuna ya da eşlenmiş bir frame’in başlangıcına. Bu, 0–11 bitlerinin her zaman sıfır olduğu anlamına gelir, bu yüzden bu bitleri saklamak için bir neden yoktur; çünkü donanım, adresi kullanmadan önce onları sıfıra ayarlayabilir. Aynı şey 52–63 bitleri için de geçerlidir, çünkü x86_64 mimarisi yalnızca 52-bit fiziksel adresleri destekler (yalnızca 48-bit sanal adresleri desteklemesine benzer şekilde).</p>
+<p>Mevcut bayraklara daha yakından bakalım:</p>
+<ul>
+<li><code>present</code> bayrağı, eşlenmiş sayfaları eşlenmemiş olanlardan ayırır. Ana bellek dolduğunda sayfaları geçici olarak diske takas etmek (swap out) için kullanılabilir. Sayfaya sonradan erişildiğinde, <em>page fault</em> adı verilen özel bir exception meydana gelir; işletim sistemi buna eksik sayfayı diskten yeniden yükleyerek ve ardından programa devam ederek tepki verebilir.</li>
+<li><code>writable</code> ve <code>no execute</code> bayrakları, sırasıyla sayfanın içeriğinin yazılabilir olup olmadığını veya çalıştırılabilir komutlar içerip içermediğini kontrol eder.</li>
+<li><code>accessed</code> ve <code>dirty</code> bayrakları, sayfaya bir okuma veya yazma gerçekleştiğinde CPU tarafından otomatik olarak ayarlanır. Bu bilgiden işletim sistemi yararlanabilir; örneğin hangi sayfaların takas edileceğine veya sayfa içeriğinin son disk kaydından bu yana değiştirilip değiştirilmediğine karar vermek için.</li>
+<li><code>write-through caching</code> ve <code>disable cache</code> bayrakları, her sayfa için önbelleklerin ayrı ayrı kontrol edilmesine olanak tanır.</li>
+<li><code>user accessible</code> bayrağı, bir sayfayı kullanıcı alanı (userspace) koduna kullanılabilir kılar; aksi takdirde yalnızca CPU kernel modundayken erişilebilir. Bu özellik, bir kullanıcı alanı programı çalışırken kernel’i eşlenmiş tutarak <a href="https://en.wikipedia.org/wiki/System_call">sistem çağrılarını (system calls)</a> daha hızlı yapmak için kullanılabilir. Ancak <a href="https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)">Spectre</a> güvenlik açığı, kullanıcı alanı programlarının yine de bu sayfaları okumasına olanak tanıyabilir.</li>
+<li><code>global</code> bayrağı, donanıma bir sayfanın tüm adres alanlarında kullanılabilir olduğunu ve bu yüzden adres alanı değişimlerinde çeviri önbelleğinden (aşağıdaki TLB hakkındaki bölüme bakın) kaldırılmasına gerek olmadığını bildirir. Bu bayrak, kernel kodunu tüm adres alanlarına eşlemek için genellikle temizlenmiş bir <code>user accessible</code> bayrağıyla birlikte kullanılır.</li>
+<li><code>huge page</code> bayrağı, seviye 2 veya seviye 3 sayfa tablolarının girdilerinin doğrudan eşlenmiş bir frame’e işaret etmesine izin vererek daha büyük boyutlu sayfaların oluşturulmasına olanak tanır. Bu bit ayarlıyken, sayfa boyutu 512 faktörüyle artar: seviye 2 girdileri için ya 2 MiB = 512 * 4 KiB ya da seviye 3 girdileri için hatta 1 GiB = 512 * 2 MiB olur. Daha büyük sayfalar kullanmanın avantajı, çeviri önbelleğinin daha az satırına ve daha az sayfa tablosuna ihtiyaç duyulmasıdır.</li>
+</ul>
+<p><code>x86_64</code> crate’i <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTable.html">sayfa tabloları</a> ve <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html">girdileri</a> için tipler sağlar, bu yüzden bu yapıları kendimiz oluşturmamıza gerek yok.</p>
+<h3 id="the-translation-lookaside-buffer"><a class="zola-anchor" href="#the-translation-lookaside-buffer" aria-label="Anchor link for: the-translation-lookaside-buffer">🔗</a>Translation Lookaside Buffer</h3>
+<p>4 seviyeli bir sayfa tablosu, sanal adreslerin çevirisini pahalı kılar; çünkü her çeviri dört bellek erişimi gerektirir. Performansı iyileştirmek için, x86_64 mimarisi son birkaç çeviriyi <em>translation lookaside buffer</em> (TLB) adı verilen şeyde önbelleğe alır. Bu, çeviri hâlâ önbellekteyken çeviriyi atlamaya olanak tanır.</p>
+<p>Diğer CPU önbelleklerinin aksine, TLB tamamen şeffaf değildir ve sayfa tablolarının içeriği değiştiğinde çevirileri güncellemez veya kaldırmaz. Bu, kernel’in bir sayfa tablosunu her değiştirdiğinde TLB’yi elle güncellemesi gerektiği anlamına gelir. Bunu yapmak için, belirtilen sayfanın çevirisini TLB’den kaldıran <a href="https://www.felixcloutier.com/x86/INVLPG.html"><code>invlpg</code></a> (“invalidate page”) adı verilen özel bir CPU komutu vardır; böylece çeviri bir sonraki erişimde sayfa tablosundan yeniden yüklenir. TLB, bir adres alanı değişimini taklit eden <code>CR3</code> register’ı yeniden yüklenerek de tamamen temizlenebilir (flush). <code>x86_64</code> crate’i, her iki varyant için de <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/tlb/index.html"><code>tlb</code> modülünde</a> Rust fonksiyonları sağlar.</p>
+<p>Her sayfa tablosu değişikliğinde TLB’yi temizlemeyi (flush) hatırlamak önemlidir; çünkü aksi takdirde CPU eski çeviriyi kullanmaya devam edebilir, bu da hata ayıklaması çok zor olan belirsiz (non-deterministic) hatalara yol açabilir.</p>
+<h2 id="uygulama"><a class="zola-anchor" href="#uygulama" aria-label="Anchor link for: uygulama">🔗</a>Uygulama</h2>
+<p>Henüz değinmediğimiz bir şey: <strong>Kernel’imiz zaten paging üzerinde çalışıyor</strong>. <a href="https://os.phil-opp.com/tr/minimal-rust-kernel/#creating-a-bootimage">“Minimal Bir Rust Kernel’i”</a> yazısında eklediğimiz bootloader, kernel’imizin her sayfasını bir fiziksel frame’e eşleyen 4 seviyeli bir paging hiyerarşisini zaten kurmuştu. Bootloader bunu yapar, çünkü paging x86_64’te 64-bit modda zorunludur.</p>
+<p>Bu, kernel’imizde kullandığımız her bellek adresinin bir sanal adres olduğu anlamına gelir. VGA arabelleğine <code>0xb8000</code> adresinde erişmek yalnızca, bootloader o bellek sayfasını <em>kimlik eşlediği (identity mapped)</em> için çalıştı; bu da <code>0xb8000</code> sanal sayfasını <code>0xb8000</code> fiziksel frame’ine eşlediği anlamına gelir.</p>
+<p>Paging, kernel’imizi şimdiden nispeten güvenli kılar; çünkü sınırların dışındaki her bellek erişimi, rastgele fiziksel belleğe yazmak yerine bir page fault exception’ına neden olur. Bootloader, her sayfa için doğru erişim izinlerini bile ayarlar; bu da yalnızca kod içeren sayfaların çalıştırılabilir ve yalnızca veri sayfalarının yazılabilir olduğu anlamına gelir.</p>
+<h3 id="page-fault-lar"><a class="zola-anchor" href="#page-fault-lar" aria-label="Anchor link for: page-fault-lar">🔗</a>Page Fault’lar</h3>
+<p>Kernel’imizin dışındaki bir belleğe erişerek bir page fault’a neden olmaya çalışalım. İlk olarak, bir page fault handler’ı oluşturup onu IDT’mizde kaydediyoruz; böylece genel bir <a href="https://os.phil-opp.com/tr/double-fault-exceptions/">double fault</a> yerine bir page fault exception’ı görürüz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>
+</span><span>        […]
+</span><span>
+</span><span>        idt.page_fault.set_handler_fn(page_fault_handler); </span><span style="color:#608b4e;">// yeni
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::PageFaultErrorCode;
+</span><span style="color:#569cd6;">use crate</span><span>::hlt_loop;
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>page_fault_handler(
+</span><span>    stack_frame: InterruptStackFrame,
+</span><span>    error_code: PageFaultErrorCode,
+</span><span>) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr2;
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: PAGE FAULT&quot;</span><span>);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Accessed Address: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, Cr2::read());
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Error Code: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, error_code);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span>, stack_frame);
+</span><span>    hlt_loop();
+</span><span>}
+</span></code></pre>
+<p><a href="https://en.wikipedia.org/wiki/Control_register#CR2"><code>CR2</code></a> register’ı, bir page fault’ta CPU tarafından otomatik olarak ayarlanır ve page fault’a neden olan erişilen sanal adresi içerir. Onu okuyup yazdırmak için <code>x86_64</code> crate’inin <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr2.html#method.read"><code>Cr2::read</code></a> fonksiyonunu kullanıyoruz. <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html"><code>PageFaultErrorCode</code></a> tipi, page fault’a neden olan bellek erişiminin türü hakkında, örneğin bunun bir okuma mı yoksa yazma işlemi tarafından mı oluştuğu gibi, daha fazla bilgi sağlar. Bu nedenle onu da yazdırıyoruz. Page fault’u çözmeden çalıştırmaya devam edemeyiz, bu yüzden sonunda bir <a href="https://os.phil-opp.com/tr/hardware-interrupts/#the-hlt-instruction"><code>hlt_loop</code></a>’a giriyoruz.</p>
+<p>Artık kernel’imizin dışındaki bir belleğe erişmeyi deneyebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// yeni
+</span><span>    </span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u8</span><span>;
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ *ptr = </span><span style="color:#b5cea8;">42</span><span>; }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// önceki gibi
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
+</span><span>    blog_os::hlt_loop();
+</span><span>}
+</span></code></pre>
+<p>Onu çalıştırdığımızda, page fault handler’ımızın çağrıldığını görüyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/qemu-page-fault.png" alt="EXCEPTION: Page Fault, Accessed Address: VirtAddr(0xdeadbeaf), Error Code: CAUSED_BY_WRITE, InterruptStackFrame: {…}" /></p>
+<p><code>CR2</code> register’ı gerçekten de erişmeye çalıştığımız adres olan <code>0xdeadbeaf</code>’i içeriyor. Hata kodu, <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> aracılığıyla bize fault’un bir yazma işlemi gerçekleştirilmeye çalışılırken meydana geldiğini söylüyor. <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html">Ayarlı <em>olmayan</em> bitler</a> aracılığıyla bize daha fazlasını da söylüyor. Örneğin, <code>PROTECTION_VIOLATION</code> bayrağının ayarlı olmaması, page fault’un hedef sayfa mevcut olmadığı için meydana geldiği anlamına gelir.</p>
+<p>Mevcut komut işaretçisinin <code>0x2031b2</code> olduğunu görüyoruz, bu yüzden bu adresin bir kod sayfasına işaret ettiğini biliyoruz. Kod sayfaları bootloader tarafından salt okunur eşlenir, bu yüzden bu adresten okumak çalışır, ancak yazmak bir page fault’a neden olur. Bunu, <code>0xdeadbeaf</code> işaretçisini <code>0x2031b2</code> olarak değiştirerek deneyebilirsiniz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Not: Gerçek adres sizin için farklı olabilir. Page fault handler&#39;ınızın
+</span><span style="color:#608b4e;">// bildirdiği adresi kullanın.
+</span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#b5cea8;">0x2031b2 </span><span style="color:#569cd6;">as *mut u8</span><span>;
+</span><span>
+</span><span style="color:#608b4e;">// bir kod sayfasından oku
+</span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">let</span><span> x = *ptr; }
+</span><span>println!(</span><span style="color:#d69d85;">&quot;read worked&quot;</span><span>);
+</span><span>
+</span><span style="color:#608b4e;">// bir kod sayfasına yaz
+</span><span style="color:#569cd6;">unsafe </span><span>{ *ptr = </span><span style="color:#b5cea8;">42</span><span>; }
+</span><span>println!(</span><span style="color:#d69d85;">&quot;write worked&quot;</span><span>);
+</span></code></pre>
+<p>Son satırı yorum satırı haline getirerek, okuma erişiminin çalıştığını, ancak yazma erişiminin bir page fault’a neden olduğunu görürüz:</p>
+<p><img src="https://os.phil-opp.com/tr/paging-introduction/qemu-page-fault-protection.png" alt="QEMU çıktısı: “read worked, EXCEPTION: Page Fault, Accessed Address: VirtAddr(0x2031b2), Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE, InterruptStackFrame: {…}”" /></p>
+<p><em>“read worked”</em> mesajının yazdırıldığını görüyoruz; bu da okuma işleminin herhangi bir hataya neden olmadığını gösteriyor. Ancak <em>“write worked”</em> mesajı yerine bir page fault meydana geliyor. Bu sefer <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> bayrağına ek olarak <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.PROTECTION_VIOLATION"><code>PROTECTION_VIOLATION</code></a> bayrağı da ayarlanmış; bu da sayfanın mevcut olduğunu, ancak işleme onda izin verilmediğini gösteriyor. Bu durumda, kod sayfaları salt okunur eşlendiği için sayfaya yazmaya izin verilmiyor.</p>
+<h3 id="accessing-the-page-tables"><a class="zola-anchor" href="#accessing-the-page-tables" aria-label="Anchor link for: accessing-the-page-tables">🔗</a>Sayfa Tablolarına Erişmek</h3>
+<p>Kernel’imizin nasıl eşlendiğini tanımlayan sayfa tablolarına bir göz atmaya çalışalım:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr3;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let </span><span>(level_4_page_table, </span><span style="color:#569cd6;">_</span><span>) = Cr3::read();
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Level 4 page table at: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, level_4_page_table.start_address());
+</span><span>
+</span><span>    […] </span><span style="color:#608b4e;">// test_main(), println(…) ve hlt_loop()
+</span><span>}
+</span></code></pre>
+<p><code>x86_64</code>’ün <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3.html#method.read"><code>Cr3::read</code></a> fonksiyonu, şu anda aktif olan seviye 4 sayfa tablosunu <code>CR3</code> register’ından döndürür. Bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/frame/struct.PhysFrame.html"><code>PhysFrame</code></a> ve bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3Flags.html"><code>Cr3Flags</code></a> tipinden oluşan bir tuple döndürür. Yalnızca frame ile ilgilendiğimiz için, tuple’ın ikinci elemanını yok sayıyoruz.</p>
+<p>Onu çalıştırdığımızda, aşağıdaki çıktıyı görüyoruz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>Level 4 page table at: PhysAddr(0x1000)
+</span></code></pre>
+<p>Yani şu anda aktif olan seviye 4 sayfa tablosu, <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.PhysAddr.html"><code>PhysAddr</code></a> sarmalayıcı tipinin belirttiği gibi, <em>fiziksel</em> bellekte <code>0x1000</code> adresinde saklanıyor. Şimdi soru şu: bu tabloya kernel’imizden nasıl erişebiliriz?</p>
+<p>Paging aktifken fiziksel belleğe doğrudan erişmek mümkün değildir, çünkü aksi takdirde programlar bellek korumasını kolayca atlayıp diğer programların belleğine erişebilirdi. Yani tabloya erişmenin tek yolu, <code>0x1000</code> adresindeki fiziksel frame’e eşlenmiş bir sanal sayfa aracılığıyladır. Sayfa tablosu frame’leri için eşlemeler oluşturma sorunu genel bir sorundur, çünkü kernel’in sayfa tablolarına düzenli olarak erişmesi gerekir; örneğin yeni bir thread için bir stack ayırırken.</p>
+<p>Bu soruna yönelik çözümler bir sonraki yazıda ayrıntılı olarak açıklanmaktadır.</p>
+<h2 id="ozet"><a class="zola-anchor" href="#ozet" aria-label="Anchor link for: ozet">🔗</a>Özet</h2>
+<p>Bu yazı iki bellek koruma tekniğini tanıttı: segmentasyon ve paging. Birincisi değişken boyutlu bellek bölgeleri kullanır ve dış parçalanmadan muzdaripken, ikincisi sabit boyutlu sayfalar kullanır ve erişim izinleri üzerinde çok daha ince taneli kontrole olanak tanır.</p>
+<p>Paging, sayfalar için eşleme bilgisini bir veya daha fazla seviyeye sahip sayfa tablolarında saklar. x86_64 mimarisi 4 seviyeli sayfa tabloları ve 4 KiB’lık bir sayfa boyutu kullanır. Donanım otomatik olarak sayfa tablolarında yürür ve elde edilen çevirileri translation lookaside buffer’da (TLB) önbelleğe alır. Bu arabellek şeffaf bir şekilde güncellenmez ve sayfa tablosu değişikliklerinde elle temizlenmesi (flush) gerekir.</p>
+<p>Kernel’imizin zaten paging üzerinde çalıştığını ve yasa dışı bellek erişimlerinin page fault exception’larına neden olduğunu öğrendik. Şu anda aktif olan sayfa tablolarına erişmeye çalıştık, ancak bunu yapamadık; çünkü CR3 register’ı kernel’imizden doğrudan erişemeyeceğimiz bir fiziksel adres saklar.</p>
+<h2 id="sirada-ne-var"><a class="zola-anchor" href="#sirada-ne-var" aria-label="Anchor link for: sirada-ne-var">🔗</a>Sırada ne var?</h2>
+<p>Bir sonraki yazı, kernel’imizde paging için desteğin nasıl uygulanacağını açıklar. Kernel’imizden fiziksel belleğe erişmenin farklı yollarını sunar; bu da kernel’imizin üzerinde çalıştığı sayfa tablolarına erişmeyi mümkün kılar. Bu noktada, sanal adresleri fiziksel adreslere çevirmek ve sayfa tablolarında yeni eşlemeler oluşturmak için fonksiyonlar uygulayabiliriz.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Beni Destekle</h2>
+<p>Bu blogu ve ilişkili kütüphaneleri oluşturmak ve sürdürmek çok emek gerektiriyor, ve bunu yapmaktan gerçekten zevk alıyorum. Beni destekleyerek yeni içerik, yeni özellikler ve sürekli bakım için daha fazla zaman ayırmama olanak tanıyorsunuz. Beni desteklemenin en iyi yolu <a href="https://github.com/sponsors/phil-opp"><em>GitHub'da sponsor olmak</em></a>. Teşekkürler!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/tr/hardware-interrupts/">&laquo; Donanım Interrupt&#x27;ları</a>
+        
+        
+            <a class="next" href="/tr/paging-implementation/">Paging Uygulaması &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Yorumlar</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Bir sorunuz mu var, geri bildirim paylaşmak veya fikirlerinizi tartışmak mı istiyorsunuz? Buraya yorum bırakmaktan çekinmeyin! Lütfen İngilizce kullanın ve Rust'ın <a href="https://www.rust-lang.org/policies/code-of-conduct">davranış kurallarına</a> uyun. Bu yorum dizisi doğrudan <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Introduction%20to%20Paging%20%28tr%29%22%20in%3Atitle"><em>GitHub'daki bir tartışmaya</em></a> bağlıdır, dolayısıyla isterseniz oraya da yorum yapabilirsiniz.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Introduction to Paging (tr)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="tr"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Introduction%20to%20Paging%20%28tr%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Mümkünse yorumlarınızı İngilizce bırakınız.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/paging-introduction/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ar" class=""><a href="https://os.phil-opp.com/ar/paging-introduction/">
+                        العربية
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/paging-introduction/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/paging-introduction/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/paging-introduction/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/paging-introduction/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/paging-introduction/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

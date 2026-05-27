@@ -1,0 +1,1046 @@
+<!doctype html>
+
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Bu yazı, no_std çalıştırılabilir dosyalarında birim (unit) ve entegrasyon (integration) testlerini inceliyor. Test fonksiyonlarını kernel’imizin içind…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/tr/testing/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Test Etme | Rust ile İşletim Sistemi Yazıyoruz</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Rust ile İşletim Sistemi Yazıyoruz</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/tr" title="All Posts">« Tüm Yazılar</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>İçindekiler</h2>
+    <ol>
+        <li>
+            <a href="#gereksinimler">Gereksinimler</a>
+            
+        </li><li>
+            <a href="#rust-ta-test-etme">Rust’ta Test Etme</a>
+            <ol>
+                <li>
+                    <a href="#ozel-test-cerceveleri">Özel Test Çerçeveleri</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#qemu-dan-cikis">QEMU’dan Çıkış</a>
+            <ol>
+                <li>
+                    <a href="#i-o-ports">G/Ç Portları</a>
+                </li><li>
+                    <a href="#cikis-cihazini-kullanmak">Çıkış Cihazını Kullanmak</a>
+                </li><li>
+                    <a href="#basari-cikis-kodu">Başarı Çıkış Kodu</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#konsola-yazdirmak">Konsola Yazdırmak</a>
+            <ol>
+                <li>
+                    <a href="#seri-port">Seri Port</a>
+                </li><li>
+                    <a href="#qemu-argumanlari">QEMU Argümanları</a>
+                </li><li>
+                    <a href="#panic-aninda-hata-mesaji-yazdirmak">Panic Anında Hata Mesajı Yazdırmak</a>
+                </li><li>
+                    <a href="#qemu-yu-gizlemek">QEMU’yu Gizlemek</a>
+                </li><li>
+                    <a href="#zaman-asimlari">Zaman Aşımları</a>
+                </li><li>
+                    <a href="#yazdirmayi-otomatik-eklemek">Yazdırmayı Otomatik Eklemek</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#vga-arabellegini-test-etmek">VGA Arabelleğini Test Etmek</a>
+            
+        </li><li>
+            <a href="#entegrasyon-testleri">Entegrasyon Testleri</a>
+            <ol>
+                <li>
+                    <a href="#bir-kutuphane-olusturmak">Bir Kütüphane Oluşturmak</a>
+                </li><li>
+                    <a href="#entegrasyon-testini-tamamlamak">Entegrasyon Testini Tamamlamak</a>
+                </li><li>
+                    <a href="#gelecekteki-testler">Gelecekteki Testler</a>
+                </li><li>
+                    <a href="#panic-etmesi-gereken-testler">Panic Etmesi Gereken Testler</a>
+                </li><li>
+                    <a href="#no-harness-tests">Harness’sız Testler</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ozet">Özet</a>
+            
+        </li><li>
+            <a href="#sirada-ne-var">Sırada ne var?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Test Etme</h1>
+    <time datetime="2019-04-27" class="post-date">
+        Apr 27, 2019
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Çevrilmiş İçerik:</b>
+            Bu, <strong><a href="https://os.phil-opp.com/testing/">Testing</a></strong> adlı gönderinin topluluk tarafından yapılmış bir çevirisidir. Eksik, güncel olmayan veya hata içeriyor olabilir. Lütfen herhangi bir sorunu bildirin!
+            </p>
+            <p>
+                Translation by <a href="https://github.com/rhotav">@rhotav</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Bu yazı, <code>no_std</code> çalıştırılabilir dosyalarında birim (unit) ve entegrasyon (integration) testlerini inceliyor. Test fonksiyonlarını kernel’imizin içinde çalıştırmak için Rust’ın özel test çerçevelerine (custom test frameworks) yönelik desteğini kullanacağız. Sonuçları QEMU’dan dışarı raporlamak için QEMU’nun ve <code>bootimage</code> aracının farklı özelliklerini kullanacağız.</p>
+<span id="continue-reading"></span>
+<p>Bu blog <a href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/testing/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a href="https://github.com/phil-opp/blog_os/tree/post-04"><code>post-04</code></a> dalında bulunabilir.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>İçindekiler</b></summary>
+        <ul>
+            <li>
+                <a href="#gereksinimler">Gereksinimler</a>
+                
+            </li><li>
+                <a href="#rust-ta-test-etme">Rust’ta Test Etme</a>
+                <ul>
+                    <li>
+                        <a href="#ozel-test-cerceveleri">Özel Test Çerçeveleri</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#qemu-dan-cikis">QEMU’dan Çıkış</a>
+                <ul>
+                    <li>
+                        <a href="#i-o-ports">G/Ç Portları</a>
+                    </li><li>
+                        <a href="#cikis-cihazini-kullanmak">Çıkış Cihazını Kullanmak</a>
+                    </li><li>
+                        <a href="#basari-cikis-kodu">Başarı Çıkış Kodu</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#konsola-yazdirmak">Konsola Yazdırmak</a>
+                <ul>
+                    <li>
+                        <a href="#seri-port">Seri Port</a>
+                    </li><li>
+                        <a href="#qemu-argumanlari">QEMU Argümanları</a>
+                    </li><li>
+                        <a href="#panic-aninda-hata-mesaji-yazdirmak">Panic Anında Hata Mesajı Yazdırmak</a>
+                    </li><li>
+                        <a href="#qemu-yu-gizlemek">QEMU’yu Gizlemek</a>
+                    </li><li>
+                        <a href="#zaman-asimlari">Zaman Aşımları</a>
+                    </li><li>
+                        <a href="#yazdirmayi-otomatik-eklemek">Yazdırmayı Otomatik Eklemek</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#vga-arabellegini-test-etmek">VGA Arabelleğini Test Etmek</a>
+                
+            </li><li>
+                <a href="#entegrasyon-testleri">Entegrasyon Testleri</a>
+                <ul>
+                    <li>
+                        <a href="#bir-kutuphane-olusturmak">Bir Kütüphane Oluşturmak</a>
+                    </li><li>
+                        <a href="#entegrasyon-testini-tamamlamak">Entegrasyon Testini Tamamlamak</a>
+                    </li><li>
+                        <a href="#gelecekteki-testler">Gelecekteki Testler</a>
+                    </li><li>
+                        <a href="#panic-etmesi-gereken-testler">Panic Etmesi Gereken Testler</a>
+                    </li><li>
+                        <a href="#no-harness-tests">Harness’sız Testler</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ozet">Özet</a>
+                
+            </li><li>
+                <a href="#sirada-ne-var">Sırada ne var?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+        </ul>
+    </details>
+
+<h2 id="gereksinimler"><a class="zola-anchor" href="#gereksinimler" aria-label="Anchor link for: gereksinimler">🔗</a>Gereksinimler</h2>
+<p>Bu yazı, (artık kullanımdan kaldırılmış olan) <a href="https://os.phil-opp.com/unit-testing/"><em>Birim Testi</em></a> ve <a href="https://os.phil-opp.com/integration-tests/"><em>Entegrasyon Testleri</em></a> yazılarının yerini alır. 2019-04-27 tarihinden sonra <a href="https://os.phil-opp.com/tr/minimal-rust-kernel/"><em>Minimal Bir Rust Kernel’i</em></a> yazısını takip etmiş olduğunuzu varsayar. Esas olarak, <a href="https://os.phil-opp.com/tr/minimal-rust-kernel/#set-a-default-target">varsayılan bir hedef belirleyen</a> ve <a href="https://os.phil-opp.com/tr/minimal-rust-kernel/#using-cargo-run">bir runner çalıştırılabilir dosyası tanımlayan</a> bir <code>.cargo/config.toml</code> dosyanızın olmasını gerektirir.</p>
+<h2 id="rust-ta-test-etme"><a class="zola-anchor" href="#rust-ta-test-etme" aria-label="Anchor link for: rust-ta-test-etme">🔗</a>Rust’ta Test Etme</h2>
+<p>Rust’ın, herhangi bir kurulum yapmaya gerek kalmadan birim testleri çalıştırabilen <a href="https://doc.rust-lang.org/book/ch11-00-testing.html">yerleşik bir test çerçevesi</a> vardır. Yalnızca, bazı sonuçları assertion’lar (doğrulamalar) aracılığıyla kontrol eden bir fonksiyon oluşturmanız ve fonksiyon başlığına <code>#[test]</code> özniteliğini eklemeniz yeterlidir. Ardından <code>cargo test</code>, crate’inizdeki tüm test fonksiyonlarını otomatik olarak bulup çalıştırır.</p>
+<p>Kernel ikili dosyamız için testi etkinleştirmek üzere, Cargo.toml dosyasındaki <code>test</code> bayrağını <code>true</code> olarak ayarlayabiliriz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[[</span><span style="color:#808080;">bin</span><span>]]
+</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;blog_os&quot;
+</span><span style="color:#569cd6;">test </span><span>= </span><span style="color:#569cd6;">true
+</span><span style="color:#569cd6;">bench </span><span>= </span><span style="color:#569cd6;">false
+</span></code></pre>
+<p>Bu <a href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#configuring-a-target"><code>[[bin]]</code> bölümü</a>, <code>cargo</code>’nun <code>blog_os</code> çalıştırılabilir dosyamızı nasıl derlemesi gerektiğini belirtir.
+<code>test</code> alanı, bu çalıştırılabilir dosya için testin desteklenip desteklenmediğini belirtir.
+İlk yazıda <a href="https://os.phil-opp.com/tr/freestanding-rust-binary/#making-rust-analyzer-happy"><code>rust-analyzer</code>’ı mutlu etmek için</a> <code>test = false</code> ayarlamıştık, ancak şimdi testi etkinleştirmek istiyoruz, bu yüzden onu tekrar <code>true</code> olarak ayarlıyoruz.</p>
+<p>Ne yazık ki, kernel’imiz gibi <code>no_std</code> uygulamaları için test biraz daha karmaşıktır. Sorun, Rust’ın test çerçevesinin örtük olarak, standart kütüphaneye bağımlı olan yerleşik <a href="https://doc.rust-lang.org/test/index.html"><code>test</code></a> kütüphanesini kullanmasıdır. Bu, <code>#[no_std]</code> kernel’imiz için varsayılan test çerçevesini kullanamayacağımız anlamına gelir.</p>
+<p>Bunu, projemizde <code>cargo test</code> çalıştırmayı denediğimizde görebiliriz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
+</span><span>   Compiling blog_os v0.1.0 (/…/blog_os)
+</span><span>error[E0463]: can&#39;t find crate for `test`
+</span></code></pre>
+<p><code>test</code> crate’i standart kütüphaneye bağımlı olduğundan, bare metal hedefimiz için kullanılamaz. <code>test</code> crate’ini bir <code>#[no_std]</code> bağlamına taşımak <a href="https://github.com/japaric/utest">mümkün olsa da</a>, bu son derece kararsızdır ve <code>panic</code> makrosunu yeniden tanımlamak gibi bazı hile’ler (hack) gerektirir.</p>
+<h3 id="ozel-test-cerceveleri"><a class="zola-anchor" href="#ozel-test-cerceveleri" aria-label="Anchor link for: ozel-test-cerceveleri">🔗</a>Özel Test Çerçeveleri</h3>
+<p>Neyse ki Rust, varsayılan test çerçevesinin kararsız <a href="https://doc.rust-lang.org/unstable-book/language-features/custom-test-frameworks.html"><code>custom_test_frameworks</code></a> özelliği aracılığıyla değiştirilmesini destekler. Bu özellik herhangi bir dış kütüphane gerektirmez ve bu yüzden <code>#[no_std]</code> ortamlarında da çalışır. <code>#[test_case]</code> özniteliğiyle işaretlenmiş tüm fonksiyonları toplayarak ve ardından kullanıcı tarafından belirlenmiş bir runner fonksiyonunu, argüman olarak test listesiyle çağırarak çalışır. Böylece, uygulamaya test süreci üzerinde maksimum kontrol verir.</p>
+<p>Varsayılan test çerçevesine kıyasla dezavantajı, <a href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html#checking-for-panics-with-should_panic"><code>should_panic</code> testleri</a> gibi pek çok gelişmiş özelliğin kullanılamamasıdır. Bunun yerine, gerekirse bu tür özellikleri sağlamak uygulamanın kendisine kalmıştır. Bu bizim için idealdir, çünkü çok özel bir çalıştırma ortamımız var ve bu tür gelişmiş özelliklerin varsayılan uygulamaları muhtemelen zaten çalışmazdı. Örneğin, <code>#[should_panic]</code> özniteliği panic’leri yakalamak için stack unwinding’e dayanır; biz ise bunu kernel’imiz için devre dışı bıraktık.</p>
+<p>Kernel’imiz için özel bir test çerçevesi uygulamak amacıyla, <code>main.rs</code> dosyamıza aşağıdakileri ekliyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(crate::test_runner)]
+</span><span>
+</span><span>#[cfg(test)]
+</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Running </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Runner’ımız yalnızca kısa bir hata ayıklama mesajı yazdırır ve ardından listedeki her test fonksiyonunu çağırır. <code>&amp;[&amp;dyn Fn()]</code> argüman tipi, <a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a> trait’inin <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/trait-objects.html"><em>trait nesnesi (trait object)</em></a> referanslarından oluşan bir <a href="https://doc.rust-lang.org/std/primitive.slice.html"><em>dilim (slice)</em></a>’dir. Temel olarak, bir fonksiyon gibi çağrılabilen tiplere yapılan referansların bir listesidir. Bu fonksiyon test dışı çalıştırmalar için işe yaramaz olduğundan, onu yalnızca testler için dahil etmek üzere <code>#[cfg(test)]</code> özniteliğini kullanıyoruz.</p>
+<p>Şimdi <code>cargo test</code> çalıştırdığımızda, artık başarılı olduğunu görüyoruz (olmuyorsa, aşağıdaki nota bakın). Ancak hâlâ <code>test_runner</code>’ımızdan gelen mesaj yerine “Hello World”’ümüzü görüyoruz. Bunun nedeni, <code>_start</code> fonksiyonumuzun hâlâ giriş noktası olarak kullanılmasıdır. Özel test çerçeveleri özelliği, <code>test_runner</code>’ı çağıran bir <code>main</code> fonksiyonu üretir; ancak biz <code>#[no_main]</code> özniteliğini kullanıp kendi giriş noktamızı sağladığımız için bu fonksiyon yok sayılır.</p>
+<div class = "warning">
+<p><strong>Not:</strong> Cargo’da şu anda, bazı durumlarda <code>cargo test</code>’te “duplicate lang item” hatalarına yol açan bir hata (bug) var. Bu hata, <code>Cargo.toml</code> dosyanızda bir profil için <code>panic = "abort"</code> ayarladığınızda oluşur. Onu kaldırmayı deneyin, sonra <code>cargo test</code> çalışmalı. Alternatif olarak, eğer bu işe yaramazsa, <code>.cargo/config.toml</code> dosyanızın <code>[unstable]</code> bölümüne <code>panic-abort-tests = true</code> ekleyin. Bu konuda daha fazla bilgi için <a href="https://github.com/rust-lang/cargo/issues/7359">cargo issue</a>’ya bakın.</p>
+</div>
+<p>Bunu düzeltmek için, önce üretilen fonksiyonun adını <code>reexport_test_harness_main</code> özniteliği aracılığıyla <code>main</code>’den farklı bir şeye değiştirmemiz gerekir. Ardından, yeniden adlandırılan fonksiyonu <code>_start</code> fonksiyonumuzdan çağırabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Test çerçevesi giriş fonksiyonunun adını <code>test_main</code> olarak belirliyor ve onu <code>_start</code> giriş noktamızdan çağırıyoruz. <code>test_main</code> çağrısını yalnızca test bağlamlarına eklemek için <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">koşullu derleme (conditional compilation)</a> kullanıyoruz, çünkü bu fonksiyon normal bir çalıştırmada üretilmez.</p>
+<p>Şimdi <code>cargo test</code>’i çalıştırdığımızda, ekranda <code>test_runner</code>’ımızdan gelen “Running 0 tests” mesajını görüyoruz. Artık ilk test fonksiyonumuzu oluşturmaya hazırız:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;trivial assertion... &quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Şimdi <code>cargo test</code> çalıştırdığımızda, aşağıdaki çıktıyı görüyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/testing/qemu-test-runner-output.png" alt="QEMU’da “Hello World!”, “Running 1 tests” ve “trivial assertion… [ok]” yazısı" /></p>
+<p><code>test_runner</code> fonksiyonumuza geçirilen <code>tests</code> dilimi artık <code>trivial_assertion</code> fonksiyonuna bir referans içeriyor. Ekrandaki <code>trivial assertion... [ok]</code> çıktısından, testin çağrıldığını ve başarılı olduğunu görüyoruz.</p>
+<p>Testleri çalıştırdıktan sonra, <code>test_runner</code>’ımız <code>test_main</code> fonksiyonuna geri döner; o da sırayla <code>_start</code> giriş noktası fonksiyonumuza geri döner. <code>_start</code>’ın sonunda, giriş noktası fonksiyonunun geri dönmesine izin verilmediği için sonsuz bir döngüye giriyoruz. Bu bir sorundur, çünkü <code>cargo test</code>’in tüm testleri çalıştırdıktan sonra çıkmasını istiyoruz.</p>
+<h2 id="qemu-dan-cikis"><a class="zola-anchor" href="#qemu-dan-cikis" aria-label="Anchor link for: qemu-dan-cikis">🔗</a>QEMU’dan Çıkış</h2>
+<p>Şu anda <code>_start</code> fonksiyonumuzun sonunda sonsuz bir döngü var ve her <code>cargo test</code> çalıştırmasında QEMU’yu elle kapatmamız gerekiyor. Bu talihsiz bir durumdur, çünkü <code>cargo test</code>’i kullanıcı etkileşimi olmadan betiklerde de çalıştırmak istiyoruz. Bunun temiz çözümü, OS’umuzu kapatmanın düzgün bir yolunu uygulamak olurdu. Ne yazık ki bu nispeten karmaşıktır, çünkü <a href="https://wiki.osdev.org/APM">APM</a> veya <a href="https://wiki.osdev.org/ACPI">ACPI</a> güç yönetimi standardından birine yönelik destek uygulamayı gerektirir.</p>
+<p>Neyse ki bir kaçış kapısı var: QEMU, misafir (guest) sistemden QEMU’dan çıkmanın kolay bir yolunu sağlayan özel bir <code>isa-debug-exit</code> cihazını destekler. Onu etkinleştirmek için QEMU’ya bir <code>-device</code> argümanı geçirmemiz gerekir. Bunu, <code>Cargo.toml</code> dosyamıza bir <code>package.metadata.bootimage.test-args</code> yapılandırma anahtarı ekleyerek yapabiliriz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-args </span><span>= [</span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>]
+</span></code></pre>
+<p><code>bootimage runner</code>, tüm test çalıştırılabilir dosyaları için varsayılan QEMU komutuna <code>test-args</code>’ı ekler. Normal bir <code>cargo run</code> için argümanlar yok sayılır.</p>
+<p>Cihaz adıyla (<code>isa-debug-exit</code>) birlikte, cihaza kernel’imizden ulaşılabilecek <em>G/Ç portunu (I/O port)</em> belirten <code>iobase</code> ve <code>iosize</code> parametrelerini geçiriyoruz.</p>
+<h3 id="i-o-ports"><a class="zola-anchor" href="#i-o-ports" aria-label="Anchor link for: i-o-ports">🔗</a>G/Ç Portları</h3>
+<p>x86’da CPU ile çevresel donanım arasında iletişim kurmak için iki farklı yaklaşım vardır: <strong>belleğe eşlenmiş G/Ç (memory-mapped I/O)</strong> ve <strong>porta eşlenmiş G/Ç (port-mapped I/O)</strong>. <a href="https://os.phil-opp.com/tr/vga-text-mode/">VGA metin arabelleğine</a> <code>0xb8000</code> bellek adresi aracılığıyla erişmek için belleğe eşlenmiş G/Ç’yi zaten kullandık. Bu adres RAM’e değil, VGA cihazındaki bir belleğe eşlenmiştir.</p>
+<p>Buna karşılık, porta eşlenmiş G/Ç iletişim için ayrı bir G/Ç veri yolu (bus) kullanır. Bağlı her çevresel cihazın bir veya daha fazla port numarası vardır. Böyle bir G/Ç portuyla iletişim kurmak için, bir port numarası ve bir veri baytı alan <code>in</code> ve <code>out</code> adlı özel CPU komutları vardır (bu komutların bir <code>u16</code> veya <code>u32</code> göndermeye olanak tanıyan varyasyonları da vardır).</p>
+<p><code>isa-debug-exit</code> cihazı porta eşlenmiş G/Ç kullanır. <code>iobase</code> parametresi cihazın hangi port adresinde bulunması gerektiğini belirtir (<code>0xf4</code>, x86’nın G/Ç veri yolunda <a href="https://wiki.osdev.org/I/O_Ports#The_list">genellikle kullanılmayan</a> bir porttur) ve <code>iosize</code> port boyutunu belirtir (<code>0x04</code>, dört bayt anlamına gelir).</p>
+<h3 id="cikis-cihazini-kullanmak"><a class="zola-anchor" href="#cikis-cihazini-kullanmak" aria-label="Anchor link for: cikis-cihazini-kullanmak">🔗</a>Çıkış Cihazını Kullanmak</h3>
+<p><code>isa-debug-exit</code> cihazının işlevselliği çok basittir. <code>iobase</code> tarafından belirtilen G/Ç portuna bir <code>value</code> (değer) yazıldığında, QEMU’nun <code>(value &lt;&lt; 1) | 1</code> <a href="https://en.wikipedia.org/wiki/Exit_status">çıkış durumuyla (exit status)</a> çıkmasına neden olur. Yani porta <code>0</code> yazdığımızda QEMU <code>(0 &lt;&lt; 1) | 1 = 1</code> çıkış durumuyla çıkar; porta <code>1</code> yazdığımızda ise <code>(1 &lt;&lt; 1) | 1 = 3</code> çıkış durumuyla çıkar.</p>
+<p><code>in</code> ve <code>out</code> assembly komutlarını elle çağırmak yerine, <a href="https://docs.rs/x86_64/0.14.2/x86_64/"><code>x86_64</code></a> crate’inin sağladığı soyutlamaları kullanıyoruz. Bu crate’e bir bağımlılık eklemek için, onu <code>Cargo.toml</code> dosyamızdaki <code>dependencies</code> bölümüne ekliyoruz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">x86_64 </span><span>= </span><span style="color:#d69d85;">&quot;0.14.2&quot;
+</span></code></pre>
+<p>Artık bir <code>exit_qemu</code> fonksiyonu oluşturmak için crate’in sağladığı <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> tipini kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(u32)]
+</span><span style="color:#569cd6;">pub enum </span><span>QemuExitCode {
+</span><span>    Success = </span><span style="color:#b5cea8;">0x10</span><span>,
+</span><span>    Failed = </span><span style="color:#b5cea8;">0x11</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>exit_qemu(exit_code: QemuExitCode) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0xf4</span><span>);
+</span><span>        port.write(exit_code </span><span style="color:#569cd6;">as u32</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Fonksiyon, <code>isa-debug-exit</code> cihazının <code>iobase</code>’i olan <code>0xf4</code>’te yeni bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> oluşturur. Ardından, geçirilen çıkış kodunu porta yazar. <code>isa-debug-exit</code> cihazının <code>iosize</code>’ını 4 bayt olarak belirttiğimiz için <code>u32</code> kullanıyoruz. Bir G/Ç portuna yazmak genellikle keyfi davranışla sonuçlanabileceğinden, her iki işlem de unsafe’tir.</p>
+<p>Çıkış durumunu belirtmek için bir <code>QemuExitCode</code> enum’ı oluşturuyoruz. Fikir, tüm testler başarılı olursa başarı çıkış koduyla, aksi takdirde başarısızlık çıkış koduyla çıkmaktır. Enum, her varyantı bir <code>u32</code> tamsayıyla temsil etmek için <code>#[repr(u32)]</code> olarak işaretlenmiştir. Başarı için <code>0x10</code>, başarısızlık için <code>0x11</code> çıkış kodunu kullanıyoruz. QEMU’nun varsayılan çıkış kodlarıyla çakışmadıkları sürece, gerçek çıkış kodları pek önemli değildir. Örneğin, başarı için <code>0</code> çıkış kodunu kullanmak iyi bir fikir değildir, çünkü dönüşümden sonra <code>(0 &lt;&lt; 1) | 1 = 1</code> olur ve bu, QEMU çalışmayı başaramadığında verdiği varsayılan çıkış kodudur. Yani bir QEMU hatasını başarılı bir test çalıştırmasından ayırt edemezdik.</p>
+<p>Artık <code>test_runner</code>’ımızı, tüm testler çalıştıktan sonra QEMU’dan çıkacak şekilde güncelleyebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Running </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test();
+</span><span>    }
+</span><span>    </span><span style="color:#608b4e;">/// yeni
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>}
+</span></code></pre>
+<p>Şimdi <code>cargo test</code> çalıştırdığımızda, QEMU’nun testleri çalıştırdıktan hemen sonra kapandığını görüyoruz. Sorun şu ki, <code>Success</code> çıkış kodumuzu geçirmemize rağmen <code>cargo test</code>, testi başarısız olmuş gibi yorumluyor:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
+</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.03s
+</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-5804fc7d2dd4c9be
+</span><span>Building bootloader
+</span><span>   Compiling bootloader v0.5.3 (/home/philipp/Documents/bootloader)
+</span><span>    Finished release [optimized + debuginfo] target(s) in 1.07s
+</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
+</span><span>    deps/bootimage-blog_os-5804fc7d2dd4c9be.bin -device isa-debug-exit,iobase=0xf4,
+</span><span>    iosize=0x04`
+</span><span>error: test failed, to rerun pass &#39;--bin blog_os&#39;
+</span></code></pre>
+<p>Sorun, <code>cargo test</code>’in <code>0</code> dışındaki tüm hata kodlarını başarısızlık olarak görmesidir.</p>
+<h3 id="basari-cikis-kodu"><a class="zola-anchor" href="#basari-cikis-kodu" aria-label="Anchor link for: basari-cikis-kodu">🔗</a>Başarı Çıkış Kodu</h3>
+<p>Bunu aşmak için <code>bootimage</code>, belirtilen bir çıkış kodunu <code>0</code> çıkış koduyla eşleyen bir <code>test-success-exit-code</code> yapılandırma anahtarı sağlar:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-args </span><span>= [</span><span style="color:#ff3333;">…</span><span>]
+</span><span style="color:#569cd6;">test-success-exit-code </span><span>= </span><span style="color:#b5cea8;">33         </span><span style="color:#608b4e;"># (0x10 &lt;&lt; 1) | 1
+</span></code></pre>
+<p>Bu yapılandırmayla <code>bootimage</code>, başarı çıkış kodumuzu çıkış kodu 0’a eşler; böylece <code>cargo test</code> başarı durumunu doğru bir şekilde tanır ve testi başarısız olarak saymaz.</p>
+<p>Test runner’ımız artık QEMU’yu otomatik olarak kapatıyor ve test sonuçlarını doğru bir şekilde raporluyor. QEMU penceresinin hâlâ çok kısa bir süre açıldığını görüyoruz, ancak bu süre sonuçları okumaya yetmiyor. Bunun yerine test sonuçlarını konsola yazdırabilseydik güzel olurdu; böylece QEMU çıktıktan sonra da onları görebilirdik.</p>
+<h2 id="konsola-yazdirmak"><a class="zola-anchor" href="#konsola-yazdirmak" aria-label="Anchor link for: konsola-yazdirmak">🔗</a>Konsola Yazdırmak</h2>
+<p>Test çıktısını konsolda görmek için, verileri kernel’imizden host sistemine bir şekilde göndermemiz gerekiyor. Bunu başarmanın çeşitli yolları vardır; örneğin verileri bir TCP ağ arayüzü üzerinden göndermek gibi. Ancak bir ağ yığını (networking stack) kurmak oldukça karmaşık bir iştir, bu yüzden bunun yerine daha basit bir çözüm seçeceğiz.</p>
+<h3 id="seri-port"><a class="zola-anchor" href="#seri-port" aria-label="Anchor link for: seri-port">🔗</a>Seri Port</h3>
+<p>Verileri göndermenin basit bir yolu, modern bilgisayarlarda artık bulunmayan eski bir arayüz standardı olan <a href="https://en.wikipedia.org/wiki/Serial_port">seri portu (serial port)</a> kullanmaktır. Programlanması kolaydır ve QEMU, seri port üzerinden gönderilen baytları host’un standart çıktısına veya bir dosyaya yönlendirebilir.</p>
+<p>Bir seri arayüzü uygulayan çiplere <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter">UART</a> denir. x86’da <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter#Models">pek çok UART modeli</a> vardır, ancak neyse ki aralarındaki tek fark ihtiyaç duymadığımız bazı gelişmiş özelliklerdir. Günümüzdeki yaygın UART’ların hepsi <a href="https://en.wikipedia.org/wiki/16550_UART">16550 UART</a> ile uyumludur, bu yüzden test çerçevemiz için o modeli kullanacağız.</p>
+<p>UART’ı başlatmak ve verileri seri port üzerinden göndermek için <a href="https://docs.rs/uart_16550"><code>uart_16550</code></a> crate’ini kullanacağız. Onu bir bağımlılık olarak eklemek için, <code>Cargo.toml</code> ve <code>main.rs</code> dosyalarımızı güncelliyoruz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.6.0&quot;
+</span></code></pre>
+<p><code>uart_16550</code> crate’i, UART’ı <a href="https://en.wikipedia.org/wiki/Teleprinter">TTY</a> modunda başlatan ve metni kolayca göndermemize olanak tanıyan bir <a href="https://docs.rs/uart_16550/latest/uart_16550/struct.Uart16550Tty.html"><code>Uart16550Tty</code></a> tipi içerir.</p>
+<p>Bu tipi yeni bir <code>serial</code> modülünde kullanalım:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">mod </span><span>serial;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/serial.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>uart_16550::{Config, Uart16550Tty, backend::PioBackend};
+</span><span style="color:#569cd6;">use </span><span>spin::Mutex;
+</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;Uart16550Tty&lt;PioBackend&gt;&gt; = Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        Uart16550Tty::new_port(</span><span style="color:#b5cea8;">0x3F8</span><span>, Config::default())
+</span><span>            .expect(</span><span style="color:#d69d85;">&quot;failed to initialize UART&quot;</span><span>)
+</span><span>    });
+</span><span>}
+</span></code></pre>
+<p><a href="https://os.phil-opp.com/tr/vga-text-mode/#lazy-statics">VGA metin arabelleğinde</a> olduğu gibi, bir <code>static</code> writer örneği oluşturmak için <code>lazy_static</code> ve bir spinlock kullanıyoruz. <code>lazy_static</code> kullanarak, UART’ın ilk kullanımında tam olarak bir kez başlatılmasını sağlayabiliriz.</p>
+<p><code>isa-debug-exit</code> cihazı gibi, UART de port G/Ç’si kullanılarak programlanır; bu da <a href="https://docs.rs/uart_16550/latest/uart_16550/backend/struct.PioBackend.html"><code>PioBackend</code></a> parametresiyle belirtilir. UART daha karmaşık olduğu için, farklı cihaz register’larını programlamak amacıyla birden çok G/Ç portu kullanır. Unsafe <code>Uart16550Tty::new_port</code> fonksiyonu, argüman olarak UART’ın ilk G/Ç portunun adresini bekler; bu adresten gereken tüm portların adreslerini hesaplayabilir. Biz, ilk seri arayüz için standart port numarası olan <code>0x3F8</code> port adresini geçiriyoruz.</p>
+<p>Seri portu kolayca kullanılabilir hale getirmek için, <code>serial_print!</code> ve <code>serial_println!</code> makrolarını ekliyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/serial.rs içinde
+</span><span>
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: ::core::fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#b4cea8;">SERIAL1</span><span>.lock().write_fmt(args).expect(</span><span style="color:#d69d85;">&quot;Printing to serial failed&quot;</span><span>);
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// Seri arayüz aracılığıyla host&#39;a yazdırır.
+</span><span>#[macro_export]
+</span><span>macro_rules! serial_print {
+</span><span>    (</span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>        $crate::serial::_print(format_args!(</span><span style="color:#569cd6;">$</span><span>($arg)*));
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// Seri arayüz aracılığıyla host&#39;a, sona bir yeni satır ekleyerek yazdırır.
+</span><span>#[macro_export]
+</span><span>macro_rules! serial_println {
+</span><span>    () </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(</span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>));
+</span><span>    ($fmt:</span><span style="color:#569cd6;">expr</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>)));
+</span><span>    ($fmt:</span><span style="color:#569cd6;">expr</span><span>, </span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(
+</span><span>        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>), </span><span style="color:#569cd6;">$</span><span>($arg)*));
+</span><span>}
+</span></code></pre>
+<p>Uygulama, <code>print</code> ve <code>println</code> makrolarımızın uygulamasına çok benzer. <code>Uart16550Tty</code> tipi <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a> trait’ini zaten uyguladığı için, kendi uygulamamızı sağlamamıza gerek yok.</p>
+<p>Artık test kodumuzda VGA metin arabelleği yerine seri arayüze yazdırabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[cfg(test)]
+</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span>, tests.len());
+</span><span>    […]
+</span><span>}
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;trivial assertion... &quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p><code>#[macro_export]</code> özniteliğini kullandığımız için <code>serial_println</code> makrosunun doğrudan kök ad alanının altında bulunduğunu, bu yüzden onu <code>use crate::serial::serial_println</code> aracılığıyla içe aktarmanın çalışmayacağını unutmayın.</p>
+<h3 id="qemu-argumanlari"><a class="zola-anchor" href="#qemu-argumanlari" aria-label="Anchor link for: qemu-argumanlari">🔗</a>QEMU Argümanları</h3>
+<p>QEMU’dan gelen seri çıktıyı görmek için, çıktıyı stdout’a yönlendirmek üzere <code>-serial</code> argümanını kullanmamız gerekir:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-args </span><span>= [
+</span><span>    </span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span>, </span><span style="color:#d69d85;">&quot;stdio&quot;
+</span><span>]
+</span></code></pre>
+<p>Şimdi <code>cargo test</code> çalıştırdığımızda, test çıktısını doğrudan konsolda görüyoruz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
+</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
+</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
+</span><span>Building bootloader
+</span><span>    Finished release [optimized + debuginfo] target(s) in 0.02s
+</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
+</span><span>    deps/bootimage-blog_os-7b7c37b4ad62551a.bin -device
+</span><span>    isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`
+</span><span>Running 1 tests
+</span><span>trivial assertion... [ok]
+</span></code></pre>
+<p>Ancak bir test başarısız olduğunda, panic handler’ımız hâlâ <code>println</code> kullandığı için çıktıyı yine QEMU’nun içinde görüyoruz. Bunu canlandırmak için, <code>trivial_assertion</code> testimizdeki assertion’ı <code>assert_eq!(0, 1)</code> olarak değiştirebiliriz:</p>
+<p><img src="https://os.phil-opp.com/tr/testing/qemu-failed-test.png" alt="QEMU’da “Hello World!” ve “panicked at ‘assertion failed: (left == right) left: 0, right: 1’, src/main.rs:55:5” yazısı" /></p>
+<p>Panic mesajının hâlâ VGA arabelleğine, diğer test çıktısının ise seri porta yazdırıldığını görüyoruz. Panic mesajı oldukça yararlıdır, bu yüzden onu da konsolda görmek faydalı olurdu.</p>
+<h3 id="panic-aninda-hata-mesaji-yazdirmak"><a class="zola-anchor" href="#panic-aninda-hata-mesaji-yazdirmak" aria-label="Anchor link for: panic-aninda-hata-mesaji-yazdirmak">🔗</a>Panic Anında Hata Mesajı Yazdırmak</h3>
+<p>Bir panic durumunda QEMU’dan bir hata mesajıyla çıkmak için, test modunda farklı bir panic handler kullanmak üzere <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">koşullu derleme</a> kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">// mevcut panic handler&#39;ımız
+</span><span>#[cfg(not(test))] </span><span style="color:#608b4e;">// yeni öznitelik
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">// test modundaki panic handler&#39;ımız
+</span><span>#[cfg(test)]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    exit_qemu(QemuExitCode::Failed);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Test panic handler’ımız için <code>println</code> yerine <code>serial_println</code> kullanıyor ve ardından QEMU’dan bir başarısızlık çıkış koduyla çıkıyoruz. <code>exit_qemu</code> çağrısından sonra hâlâ sonsuz bir <code>loop</code>’a ihtiyacımız olduğunu unutmayın, çünkü derleyici <code>isa-debug-exit</code> cihazının bir program çıkışına neden olduğunu bilmez.</p>
+<p>Artık QEMU başarısız testler için de çıkıyor ve konsola yararlı bir hata mesajı yazdırıyor:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
+</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
+</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
+</span><span>Building bootloader
+</span><span>    Finished release [optimized + debuginfo] target(s) in 0.02s
+</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
+</span><span>    deps/bootimage-blog_os-7b7c37b4ad62551a.bin -device
+</span><span>    isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`
+</span><span>Running 1 tests
+</span><span>trivial assertion... [failed]
+</span><span>
+</span><span>Error: panicked at &#39;assertion failed: `(left == right)`
+</span><span>  left: `0`,
+</span><span> right: `1`&#39;, src/main.rs:65:5
+</span></code></pre>
+<p>Artık tüm test çıktısını konsolda gördüğümüz için, kısa bir süre açılan QEMU penceresine artık ihtiyacımız yok. Bu yüzden onu tamamen gizleyebiliriz.</p>
+<h3 id="qemu-yu-gizlemek"><a class="zola-anchor" href="#qemu-yu-gizlemek" aria-label="Anchor link for: qemu-yu-gizlemek">🔗</a>QEMU’yu Gizlemek</h3>
+<p>Eksiksiz test sonuçlarını <code>isa-debug-exit</code> cihazını ve seri portu kullanarak dışarı raporladığımız için, artık QEMU penceresine ihtiyacımız yok. QEMU’ya <code>-display none</code> argümanını geçirerek onu gizleyebiliriz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-args </span><span>= [
+</span><span>    </span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span>, </span><span style="color:#d69d85;">&quot;stdio&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;-display&quot;</span><span>, </span><span style="color:#d69d85;">&quot;none&quot;
+</span><span>]
+</span></code></pre>
+<p>Artık QEMU tamamen arka planda çalışıyor ve hiçbir pencere açılmıyor. Bu yalnızca daha az can sıkıcı olmakla kalmıyor, aynı zamanda test çerçevemizin CI hizmetleri veya <a href="https://en.wikipedia.org/wiki/Secure_Shell">SSH</a> bağlantıları gibi grafiksel bir kullanıcı arayüzü olmayan ortamlarda çalışmasına da olanak tanıyor.</p>
+<h3 id="zaman-asimlari"><a class="zola-anchor" href="#zaman-asimlari" aria-label="Anchor link for: zaman-asimlari">🔗</a>Zaman Aşımları</h3>
+<p><code>cargo test</code>, test runner çıkana kadar beklediği için, asla geri dönmeyen bir test, test runner’ı sonsuza dek bloklayabilir. Bu talihsiz bir durumdur, ancak sonsuz döngülerden kaçınmak genellikle kolay olduğu için pratikte büyük bir sorun değildir. Ancak bizim durumumuzda, sonsuz döngüler çeşitli durumlarda meydana gelebilir:</p>
+<ul>
+<li>Bootloader kernel’imizi yüklemeyi başaramaz, bu da sistemin sonsuza dek yeniden başlamasına neden olur.</li>
+<li>BIOS/UEFI firmware’i bootloader’ı yüklemeyi başaramaz, bu da aynı sonsuz yeniden başlatmaya neden olur.</li>
+<li>CPU, örneğin QEMU çıkış cihazı düzgün çalışmadığı için, bazı fonksiyonlarımızın sonunda bir <code>loop {}</code> ifadesine girer.</li>
+<li>Donanım bir sistem sıfırlamasına (reset) neden olur; örneğin bir CPU exception’ı yakalanmadığında (gelecekteki bir yazıda açıklanacak).</li>
+</ul>
+<p>Sonsuz döngüler çok fazla durumda meydana gelebileceği için, <code>bootimage</code> aracı her test çalıştırılabilir dosyası için varsayılan olarak 5 dakikalık bir zaman aşımı belirler. Test bu süre içinde bitmezse, başarısız olarak işaretlenir ve konsola bir “Timed Out” hatası yazdırılır. Bu özellik, sonsuz bir döngüde takılı kalan testlerin <code>cargo test</code>’i sonsuza dek bloklamamasını sağlar.</p>
+<p>Bunu <code>trivial_assertion</code> testine bir <code>loop {}</code> ifadesi ekleyerek kendiniz deneyebilirsiniz. <code>cargo test</code> çalıştırdığınızda, testin 5 dakika sonra zaman aşımına uğramış olarak işaretlendiğini görürsünüz. Zaman aşımı süresi, Cargo.toml’daki bir <code>test-timeout</code> anahtarı aracılığıyla <a href="https://github.com/rust-osdev/bootimage#configuration">yapılandırılabilir</a>:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
+</span><span style="color:#569cd6;">test-timeout </span><span>= </span><span style="color:#b5cea8;">300          </span><span style="color:#608b4e;"># (saniye cinsinden)
+</span></code></pre>
+<p><code>trivial_assertion</code> testinin zaman aşımına uğraması için 5 dakika beklemek istemiyorsanız, yukarıdaki değeri geçici olarak azaltabilirsiniz.</p>
+<h3 id="yazdirmayi-otomatik-eklemek"><a class="zola-anchor" href="#yazdirmayi-otomatik-eklemek" aria-label="Anchor link for: yazdirmayi-otomatik-eklemek">🔗</a>Yazdırmayı Otomatik Eklemek</h3>
+<p><code>trivial_assertion</code> testimizin şu anda kendi durum bilgisini <code>serial_print!</code>/<code>serial_println!</code> kullanarak yazdırması gerekiyor:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;trivial assertion... &quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Yazdığımız her test için bu yazdırma ifadelerini elle eklemek zahmetlidir, bu yüzden <code>test_runner</code>’ımızı bu mesajları otomatik olarak yazdıracak şekilde güncelleyelim. Bunu yapmak için, yeni bir <code>Testable</code> trait’i oluşturmamız gerekir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub trait </span><span>Testable {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; ();
+</span><span>}
+</span></code></pre>
+<p>Şimdi işin püf noktası, bu trait’i <a href="https://doc.rust-lang.org/stable/core/ops/trait.Fn.html"><code>Fn()</code> trait’ini</a> uygulayan tüm <code>T</code> tipleri için uygulamaktır:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span>T
+</span><span style="color:#569cd6;">where
+</span><span>    T: Fn(),
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) {
+</span><span>        serial_print!(</span><span style="color:#d69d85;">&quot;{}...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>, core::any::type_name::&lt;T&gt;());
+</span><span>        self();
+</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>run</code> fonksiyonunu, önce <a href="https://doc.rust-lang.org/stable/core/any/fn.type_name.html"><code>any::type_name</code></a> fonksiyonunu kullanarak fonksiyon adını yazdırarak uyguluyoruz. Bu fonksiyon doğrudan derleyicide uygulanmıştır ve her tipin bir dize açıklamasını döndürür. Fonksiyonlar için tip, onların adıdır; yani bu durumda tam olarak istediğimiz şey budur. <code>\t</code> karakteri, <code>[ok]</code> mesajlarına biraz hizalama ekleyen <a href="https://en.wikipedia.org/wiki/Tab_character">sekme karakteridir (tab character)</a>.</p>
+<p>Fonksiyon adını yazdırdıktan sonra, test fonksiyonunu <code>self()</code> aracılığıyla çağırıyoruz. Bu yalnızca, <code>self</code>’in <code>Fn()</code> trait’ini uygulamasını gerektirdiğimiz için çalışır. Test fonksiyonu geri döndükten sonra, fonksiyonun panic yapmadığını belirtmek için <code>[ok]</code> yazdırıyoruz.</p>
+<p>Son adım, <code>test_runner</code>’ımızı yeni <code>Testable</code> trait’ini kullanacak şekilde güncellemektir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[cfg(test)]
+</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Testable]) { </span><span style="color:#608b4e;">// yeni
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test.run(); </span><span style="color:#608b4e;">// yeni
+</span><span>    }
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>}
+</span></code></pre>
+<p>Tek iki değişiklik, <code>tests</code> argümanının tipinin <code>&amp;[&amp;dyn Fn()]</code>’ten <code>&amp;[&amp;dyn Testable]</code>’a değişmesi ve artık <code>test()</code> yerine <code>test.run()</code> çağırmamızdır.</p>
+<p>Artık <code>trivial_assertion</code> testimizden yazdırma ifadelerini kaldırabiliriz, çünkü artık otomatik olarak yazdırılıyorlar:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>}
+</span></code></pre>
+<p><code>cargo test</code> çıktısı artık şöyle görünüyor:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>Running 1 tests
+</span><span>blog_os::trivial_assertion...	[ok]
+</span></code></pre>
+<p>Fonksiyon adı artık fonksiyona giden tam yolu içeriyor; bu, farklı modüllerdeki test fonksiyonları aynı ada sahip olduğunda yararlıdır. Bunun dışında çıktı eskisiyle aynı görünüyor, ancak artık testlerimize yazdırma ifadelerini elle eklememize gerek yok.</p>
+<h2 id="vga-arabellegini-test-etmek"><a class="zola-anchor" href="#vga-arabellegini-test-etmek" aria-label="Anchor link for: vga-arabellegini-test-etmek">🔗</a>VGA Arabelleğini Test Etmek</h2>
+<p>Artık çalışan bir test çerçevemiz olduğuna göre, VGA arabellek uygulamamız için birkaç test oluşturabiliriz. İlk olarak, <code>println</code>’in panic yapmadan çalıştığını doğrulamak için çok basit bir test oluşturuyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_simple() {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;test_println_simple output&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Test yalnızca VGA arabelleğine bir şeyler yazdırır. Panic yapmadan biterse, <code>println</code> çağrısının da panic yapmadığı anlamına gelir.</p>
+<p>Çok sayıda satır yazdırılsa ve satırlar ekrandan dışarı kaydırılsa bile bir panic oluşmadığından emin olmak için, başka bir test oluşturabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_many() {
+</span><span>    </span><span style="color:#569cd6;">for _ in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">200 </span><span>{
+</span><span>        println!(</span><span style="color:#d69d85;">&quot;test_println_many output&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Yazdırılan satırların gerçekten ekranda göründüğünü doğrulamak için bir test fonksiyonu da oluşturabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span>;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s);
+</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> screen_char = </span><span style="color:#b4cea8;">WRITER</span><span>.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
+</span><span>        assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Fonksiyon bir test dizesi tanımlar, onu <code>println</code> kullanarak yazdırır ve ardından VGA metin arabelleğini temsil eden statik <code>WRITER</code>’ın ekran karakterleri üzerinde iterasyon yapar. <code>println</code> son ekran satırına yazdırıp hemen ardından bir yeni satır eklediğinden, dize <code>BUFFER_HEIGHT - 2</code> satırında görünmelidir.</p>
+<p><a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a>’i kullanarak, iterasyon sayısını <code>i</code> değişkeninde sayarız; bunu daha sonra <code>c</code>’ye karşılık gelen ekran karakterini yüklemek için kullanırız. Ekran karakterinin <code>ascii_character</code>’ını <code>c</code> ile karşılaştırarak, dizenin her karakterinin gerçekten VGA metin arabelleğinde göründüğünden emin oluruz.</p>
+<p>Tahmin edebileceğiniz gibi, çok daha fazla test fonksiyonu oluşturabilirdik. Örneğin, çok uzun satırlar yazdırılırken bir panic oluşmadığını ve bunların doğru şekilde kaydırıldığını test eden bir fonksiyon; ya da yeni satırların, yazdırılamaz karakterlerin ve unicode olmayan karakterlerin doğru işlendiğini test eden bir fonksiyon.</p>
+<p>Ancak bu yazının geri kalanında, farklı bileşenlerin birbiriyle etkileşimini test etmek için <em>entegrasyon testlerinin</em> nasıl oluşturulacağını açıklayacağız.</p>
+<h2 id="entegrasyon-testleri"><a class="zola-anchor" href="#entegrasyon-testleri" aria-label="Anchor link for: entegrasyon-testleri">🔗</a>Entegrasyon Testleri</h2>
+<p>Rust’ta <a href="https://doc.rust-lang.org/book/ch11-03-test-organization.html#integration-tests">entegrasyon testleri</a> için gelenek, onları proje kök dizinindeki bir <code>tests</code> dizinine (yani <code>src</code> dizininin yanına) koymaktır. Hem varsayılan test çerçevesi hem de özel test çerçeveleri, bu dizindeki tüm testleri otomatik olarak bulup çalıştırır.</p>
+<p>Tüm entegrasyon testleri kendi çalıştırılabilir dosyalarıdır ve <code>main.rs</code>’imizden tamamen ayrıdır. Bu, her testin kendi giriş noktası fonksiyonunu tanımlaması gerektiği anlamına gelir. Ayrıntılı olarak nasıl çalıştığını görmek için <code>basic_boot</code> adında örnek bir entegrasyon testi oluşturalım:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/basic_boot.rs içinde
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(crate::test_runner)]
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span>#[unsafe(no_mangle)] </span><span style="color:#608b4e;">// bu fonksiyonun adını parçalama (mangle etme)
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    test_main();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    unimplemented!();
+</span><span>}
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Entegrasyon testleri ayrı çalıştırılabilir dosyalar olduğundan, tüm crate özniteliklerini (<code>no_std</code>, <code>no_main</code>, <code>test_runner</code> vb.) yeniden sağlamamız gerekir. Ayrıca, test giriş noktası fonksiyonu <code>test_main</code>’i çağıran yeni bir giriş noktası fonksiyonu <code>_start</code> oluşturmamız gerekir. Entegrasyon testi çalıştırılabilir dosyaları asla test dışı modda derlenmediği için herhangi bir <code>cfg(test)</code> özniteliğine ihtiyacımız yok.</p>
+<p><code>test_runner</code> fonksiyonu için bir yer tutucu olarak her zaman panic yapan <a href="https://doc.rust-lang.org/core/macro.unimplemented.html"><code>unimplemented</code></a> makrosunu kullanıyor ve şimdilik <code>panic</code> handler’ında yalnızca <code>loop</code> yapıyoruz. İdeal olarak, bu fonksiyonları tam olarak <code>main.rs</code>’imizde yaptığımız gibi <code>serial_println</code> makrosunu ve <code>exit_qemu</code> fonksiyonunu kullanarak uygulamak istiyoruz. Sorun, testler <code>main.rs</code> çalıştırılabilir dosyamızdan tamamen ayrı olarak derlendiği için bu fonksiyonlara erişimimizin olmamasıdır.</p>
+<p>Bu aşamada <code>cargo test</code> çalıştırırsanız, panic handler’ı sonsuza dek döngüye girdiği için sonsuz bir döngüyle karşılaşırsınız. QEMU’dan çıkmak için <code>ctrl+c</code> klavye kısayolunu kullanmanız gerekir.</p>
+<h3 id="bir-kutuphane-olusturmak"><a class="zola-anchor" href="#bir-kutuphane-olusturmak" aria-label="Anchor link for: bir-kutuphane-olusturmak">🔗</a>Bir Kütüphane Oluşturmak</h3>
+<p>Gereken fonksiyonları entegrasyon testimize kullanılabilir kılmak için, <code>main.rs</code>’imizden, diğer crate’ler ve entegrasyon testi çalıştırılabilir dosyaları tarafından dahil edilebilecek bir kütüphaneyi ayırmamız gerekir. Bunu yapmak için yeni bir <code>src/lib.rs</code> dosyası oluşturuyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs
+</span><span>
+</span><span>#![no_std]
+</span><span>
+</span></code></pre>
+<p><code>main.rs</code> gibi, <code>lib.rs</code> de cargo tarafından otomatik olarak tanınan özel bir dosyadır. Kütüphane ayrı bir derleme birimidir, bu yüzden <code>#![no_std]</code> özniteliğini yeniden belirtmemiz gerekir.</p>
+<p>Kütüphanemizi <code>cargo test</code> ile çalışır hale getirmek için, test fonksiyonlarını ve özniteliklerini de <code>main.rs</code>’ten <code>lib.rs</code>’e taşımamız gerekir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span>#![cfg_attr(test, no_main)]
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(crate::test_runner)]
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span style="color:#569cd6;">pub trait </span><span>Testable {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; ();
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span>T
+</span><span style="color:#569cd6;">where
+</span><span>    T: Fn(),
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) {
+</span><span>        serial_print!(</span><span style="color:#d69d85;">&quot;{}...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>, core::any::type_name::&lt;T&gt;());
+</span><span>        self();
+</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    }
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Testable]) {
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test.run();
+</span><span>    }
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>test_panic_handler(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    exit_qemu(QemuExitCode::Failed);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// `cargo test` için giriş noktası
+</span><span>#[cfg(test)]
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    test_main();
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span>#[cfg(test)]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    test_panic_handler(info)
+</span><span>}
+</span></code></pre>
+<p><code>test_runner</code>’ımızı çalıştırılabilir dosyalara ve entegrasyon testlerine kullanılabilir kılmak için, onu public yapıyor ve ona <code>cfg(test)</code> özniteliğini uygulamıyoruz. Ayrıca panic handler’ımızın uygulamasını public bir <code>test_panic_handler</code> fonksiyonuna ayırıyoruz; böylece o da çalıştırılabilir dosyalar için kullanılabilir oluyor.</p>
+<p><code>lib.rs</code>’imiz <code>main.rs</code>’imizden bağımsız olarak test edildiğinden, kütüphane test modunda derlendiğinde bir <code>_start</code> giriş noktası ve bir panic handler eklememiz gerekir. <a href="https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg_attr-attribute"><code>cfg_attr</code></a> crate özniteliğini kullanarak, bu durumda <code>no_main</code> özniteliğini koşullu olarak etkinleştiriyoruz.</p>
+<p><code>QemuExitCode</code> enum’ını ve <code>exit_qemu</code> fonksiyonunu da taşıyıp public yapıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(u32)]
+</span><span style="color:#569cd6;">pub enum </span><span>QemuExitCode {
+</span><span>    Success = </span><span style="color:#b5cea8;">0x10</span><span>,
+</span><span>    Failed = </span><span style="color:#b5cea8;">0x11</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>exit_qemu(exit_code: QemuExitCode) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0xf4</span><span>);
+</span><span>        port.write(exit_code </span><span style="color:#569cd6;">as u32</span><span>);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Artık çalıştırılabilir dosyalar ve entegrasyon testleri bu fonksiyonları kütüphaneden içe aktarabilir ve kendi uygulamalarını tanımlamaları gerekmez. <code>println</code> ve <code>serial_println</code>’i de kullanılabilir kılmak için, modül bildirimlerini de taşıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>serial;
+</span><span style="color:#569cd6;">pub mod </span><span>vga_buffer;
+</span></code></pre>
+<p>Modülleri, kütüphanemizin dışında kullanılabilir kılmak için public yapıyoruz. Bu, <code>println</code> ve <code>serial_println</code> makrolarımızı kullanılabilir kılmak için de gereklidir, çünkü onlar modüllerin <code>_print</code> fonksiyonlarını kullanır.</p>
+<p>Artık <code>main.rs</code>’imizi kütüphaneyi kullanacak şekilde güncelleyebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(blog_os::test_runner)]
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span style="color:#569cd6;">use </span><span>blog_os::println;
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#608b4e;">/// Bu fonksiyon panic anında çağrılır.
+</span><span>#[cfg(not(test))]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span>#[cfg(test)]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    blog_os::test_panic_handler(info)
+</span><span>}
+</span></code></pre>
+<p>Kütüphane, normal bir dış crate gibi kullanılabilir. Tıpkı crate’imiz gibi, adı <code>blog_os</code>’tur. Yukarıdaki kod, <code>test_runner</code> özniteliğinde <code>blog_os::test_runner</code> fonksiyonunu ve <code>cfg(test)</code> panic handler’ımızda <code>blog_os::test_panic_handler</code> fonksiyonunu kullanır. Ayrıca, <code>_start</code> ve <code>panic</code> fonksiyonlarımıza kullanılabilir kılmak için <code>println</code> makrosunu içe aktarır.</p>
+<p>Bu noktada <code>cargo run</code> ve <code>cargo test</code> yeniden çalışmalı. Tabii ki <code>cargo test</code> hâlâ sonsuza dek döngüye giriyor (<code>ctrl+c</code> ile çıkabilirsiniz). Bunu, gereken kütüphane fonksiyonlarını entegrasyon testimizde kullanarak düzeltelim.</p>
+<h3 id="entegrasyon-testini-tamamlamak"><a class="zola-anchor" href="#entegrasyon-testini-tamamlamak" aria-label="Anchor link for: entegrasyon-testini-tamamlamak">🔗</a>Entegrasyon Testini Tamamlamak</h3>
+<p><code>src/main.rs</code>’imiz gibi, <code>tests/basic_boot.rs</code> çalıştırılabilir dosyamız da yeni kütüphanemizden tipleri içe aktarabilir. Bu, testimizi tamamlamak için eksik bileşenleri içe aktarmamıza olanak tanır:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/basic_boot.rs içinde
+</span><span>
+</span><span>#![test_runner(blog_os::test_runner)]
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    blog_os::test_panic_handler(info)
+</span><span>}
+</span></code></pre>
+<p>Test runner’ı yeniden uygulamak yerine, <code>#![test_runner(crate::test_runner)]</code> özniteliğini <code>#![test_runner(blog_os::test_runner)]</code> olarak değiştirerek kütüphanemizdeki <code>test_runner</code> fonksiyonunu kullanıyoruz. Böylece <code>basic_boot.rs</code>’teki <code>test_runner</code> taslak (stub) fonksiyonuna artık ihtiyacımız kalmaz, onu kaldırabiliriz. <code>panic</code> handler’ımız için ise, tıpkı <code>main.rs</code>’imizde yaptığımız gibi <code>blog_os::test_panic_handler</code> fonksiyonunu çağırıyoruz.</p>
+<p>Artık <code>cargo test</code> yeniden normal bir şekilde çıkıyor. Onu çalıştırdığınızda, <code>lib.rs</code>, <code>main.rs</code> ve <code>basic_boot.rs</code> için testleri art arda ayrı ayrı derleyip çalıştırdığını görürsünüz. <code>main.rs</code> ve <code>basic_boot</code> entegrasyon testleri için, bu dosyalarda <code>#[test_case]</code> ile işaretlenmiş hiçbir fonksiyon olmadığı için “Running 0 tests” raporlar.</p>
+<p>Artık <code>basic_boot.rs</code>’imize testler ekleyebiliriz. Örneğin, VGA arabellek testlerinde yaptığımız gibi, <code>println</code>’in panic yapmadan çalıştığını test edebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/basic_boot.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::println;
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println() {
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;test_println output&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Şimdi <code>cargo test</code> çalıştırdığımızda, test fonksiyonunu bulup çalıştırdığını görüyoruz.</p>
+<p>Test şu anda biraz işe yaramaz görünebilir, çünkü VGA arabellek testlerinden biriyle neredeyse aynı. Ancak gelecekte, <code>main.rs</code> ve <code>lib.rs</code>’imizin <code>_start</code> fonksiyonları büyüyebilir ve <code>test_main</code> fonksiyonunu çalıştırmadan önce çeşitli başlatma rutinlerini çağırabilir; böylece iki test çok farklı ortamlarda çalıştırılır.</p>
+<p><code>println</code>’i, <code>_start</code>’ta herhangi bir başlatma rutini çağırmadan bir <code>basic_boot</code> ortamında test ederek, <code>println</code>’in önyüklemeden hemen sonra çalıştığından emin olabiliriz. Bu önemlidir, çünkü ona örneğin panic mesajlarını yazdırmak için güveniyoruz.</p>
+<h3 id="gelecekteki-testler"><a class="zola-anchor" href="#gelecekteki-testler" aria-label="Anchor link for: gelecekteki-testler">🔗</a>Gelecekteki Testler</h3>
+<p>Entegrasyon testlerinin gücü, tamamen ayrı çalıştırılabilir dosyalar olarak ele alınmalarıdır. Bu onlara ortam üzerinde tam kontrol verir; bu da kodun CPU veya donanım cihazlarıyla doğru şekilde etkileşip etkileşmediğini test etmeyi mümkün kılar.</p>
+<p><code>basic_boot</code> testimiz, bir entegrasyon testinin çok basit bir örneğidir. Gelecekte kernel’imiz çok daha fazla özellik kazanacak ve donanımla çeşitli şekillerde etkileşecek. Entegrasyon testleri ekleyerek, bu etkileşimlerin beklendiği gibi çalıştığından (ve çalışmaya devam ettiğinden) emin olabiliriz. Olası gelecekteki testler için bazı fikirler:</p>
+<ul>
+<li><strong>CPU Exception’ları</strong>: Kod geçersiz işlemler gerçekleştirdiğinde (örneğin sıfıra bölme), CPU bir exception fırlatır. Kernel, bu tür exception’lar için handler fonksiyonları kaydedebilir. Bir entegrasyon testi, bir CPU exception’ı oluştuğunda doğru exception handler’ının çağrıldığını veya çözülebilir bir exception’dan sonra çalıştırmanın doğru şekilde devam ettiğini doğrulayabilir.</li>
+<li><strong>Sayfa Tabloları (Page Tables)</strong>: Sayfa tabloları, hangi bellek bölgelerinin geçerli ve erişilebilir olduğunu tanımlar. Sayfa tablolarını değiştirerek, örneğin programları başlatırken yeni bellek bölgeleri ayırmak mümkündür. Bir entegrasyon testi, <code>_start</code> fonksiyonunda sayfa tablolarını değiştirebilir ve değişikliklerin <code>#[test_case]</code> fonksiyonlarında istenen etkilere sahip olduğunu doğrulayabilir.</li>
+<li><strong>Kullanıcı Alanı (Userspace) Programları</strong>: Kullanıcı alanı programları, sistemin kaynaklarına sınırlı erişimi olan programlardır. Örneğin, kernel veri yapılarına veya diğer programların belleğine erişimleri yoktur. Bir entegrasyon testi, yasak işlemler gerçekleştiren kullanıcı alanı programları başlatabilir ve kernel’in hepsini engellediğini doğrulayabilir.</li>
+</ul>
+<p>Tahmin edebileceğiniz gibi, çok daha fazla test mümkündür. Bu tür testler ekleyerek, kernel’imize yeni özellikler eklediğimizde veya kodumuzu yeniden düzenlediğimizde (refactor) onları yanlışlıkla bozmadığımızdan emin olabiliriz. Bu, özellikle kernel’imiz daha büyük ve daha karmaşık hale geldiğinde önemlidir.</p>
+<h3 id="panic-etmesi-gereken-testler"><a class="zola-anchor" href="#panic-etmesi-gereken-testler" aria-label="Anchor link for: panic-etmesi-gereken-testler">🔗</a>Panic Etmesi Gereken Testler</h3>
+<p>Standart kütüphanenin test çerçevesi, başarısız olması gereken testler oluşturmaya olanak tanıyan bir <a href="https://doc.rust-lang.org/rust-by-example/testing/unit_testing.html#testing-panics"><code>#[should_panic]</code> özniteliğini</a> destekler. Bu, örneğin geçersiz bir argüman geçirildiğinde bir fonksiyonun başarısız olduğunu doğrulamak için yararlıdır. Ne yazık ki bu öznitelik, standart kütüphaneden destek gerektirdiği için <code>#[no_std]</code> crate’lerinde desteklenmez.</p>
+<p><code>#[should_panic]</code> özniteliğini kernel’imizde kullanamasak da, panic handler’dan başarı hata koduyla çıkan bir entegrasyon testi oluşturarak benzer bir davranış elde edebiliriz. <code>should_panic</code> adıyla böyle bir test oluşturmaya başlayalım:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/should_panic.rs içinde
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span style="color:#569cd6;">use </span><span>blog_os::{QemuExitCode, exit_qemu, serial_println};
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Bu test, henüz bir <code>_start</code> fonksiyonu veya özel test runner özniteliklerinden herhangi birini tanımlamadığı için hâlâ eksiktir. Eksik kısımları ekleyelim:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/should_panic.rs içinde
+</span><span>
+</span><span>#![feature(custom_test_frameworks)]
+</span><span>#![test_runner(test_runner)]
+</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    test_main();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Running {} tests&quot;</span><span>, tests.len());
+</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
+</span><span>        test();
+</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[test did not panic]&quot;</span><span>);
+</span><span>        exit_qemu(QemuExitCode::Failed);
+</span><span>    }
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>}
+</span></code></pre>
+<p><code>lib.rs</code>’imizdeki <code>test_runner</code>’ı yeniden kullanmak yerine, test kendi <code>test_runner</code> fonksiyonunu tanımlar; bu fonksiyon, bir test panic yapmadan geri döndüğünde bir başarısızlık çıkış koduyla çıkar (testlerimizin panic yapmasını istiyoruz). Hiçbir test fonksiyonu tanımlanmamışsa, runner bir başarı hata koduyla çıkar. Runner her zaman tek bir testi çalıştırdıktan sonra çıktığı için, birden fazla <code>#[test_case]</code> fonksiyonu tanımlamak mantıklı değildir.</p>
+<p>Artık başarısız olması gereken bir test oluşturabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/should_panic.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>blog_os::serial_print;
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>should_fail() {
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">0</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Test, <code>0</code> ile <code>1</code>’in eşit olduğunu doğrulamak için <code>assert_eq</code> kullanır. Tabii ki bu başarısız olur, bu yüzden testimiz istendiği gibi panic yapar. Burada <code>Testable</code> trait’ini kullanmadığımız için fonksiyon adını <code>serial_print!</code> kullanarak elle yazdırmamız gerektiğine dikkat edin.</p>
+<p>Testi <code>cargo test --test should_panic</code> aracılığıyla çalıştırdığımızda, beklendiği gibi panic yaptığı için başarılı olduğunu görüyoruz. Assertion’ı yorum satırı haline getirip testi tekrar çalıştırdığımızda, gerçekten <em>“test did not panic”</em> mesajıyla başarısız olduğunu görüyoruz.</p>
+<p>Bu yaklaşımın önemli bir dezavantajı, yalnızca tek bir test fonksiyonu için çalışmasıdır. Birden çok <code>#[test_case]</code> fonksiyonu olduğunda, panic handler çağrıldıktan sonra çalıştırma devam edemediği için yalnızca ilk fonksiyon çalıştırılır. Şu anda bu sorunu çözmenin iyi bir yolunu bilmiyorum, bu yüzden bir fikriniz varsa bana bildirin!</p>
+<h3 id="no-harness-tests"><a class="zola-anchor" href="#no-harness-tests" aria-label="Anchor link for: no-harness-tests">🔗</a>Harness’sız Testler</h3>
+<p>Yalnızca tek bir test fonksiyonu olan entegrasyon testleri için (<code>should_panic</code> testimiz gibi), test runner’a gerçekten gerek yoktur. Bunun gibi durumlarda, test runner’ı tamamen devre dışı bırakabilir ve testimizi doğrudan <code>_start</code> fonksiyonunda çalıştırabiliriz.</p>
+<p>Bunun anahtarı, testin <code>Cargo.toml</code>’daki <code>harness</code> bayrağını devre dışı bırakmaktır; bu bayrak, bir entegrasyon testi için bir test runner kullanılıp kullanılmayacağını tanımlar. <code>false</code> olarak ayarlandığında, hem varsayılan test runner hem de özel test runner özelliği devre dışı bırakılır; böylece test normal bir çalıştırılabilir dosya gibi ele alınır.</p>
+<p><code>should_panic</code> testimiz için <code>harness</code> bayrağını devre dışı bırakalım:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[[</span><span style="color:#808080;">test</span><span>]]
+</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;should_panic&quot;
+</span><span style="color:#569cd6;">harness </span><span>= </span><span style="color:#569cd6;">false
+</span></code></pre>
+<p>Şimdi <code>should_panic</code> testimizi, <code>test_runner</code> ile ilgili kodu kaldırarak büyük ölçüde basitleştiriyoruz. Sonuç şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/should_panic.rs içinde
+</span><span>
+</span><span>#![no_std]
+</span><span>#![no_main]
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span style="color:#569cd6;">use </span><span>blog_os::{exit_qemu, serial_print, serial_println, QemuExitCode};
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    should_fail();
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[test did not panic]&quot;</span><span>);
+</span><span>    exit_qemu(QemuExitCode::Failed);
+</span><span>    </span><span style="color:#569cd6;">loop</span><span>{}
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">fn </span><span>should_fail() {
+</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    assert_eq!(</span><span style="color:#b5cea8;">0</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>}
+</span><span>
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
+</span><span>    exit_qemu(QemuExitCode::Success);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Artık <code>should_fail</code> fonksiyonunu doğrudan <code>_start</code> fonksiyonumuzdan çağırıyor ve geri dönerse bir başarısızlık çıkış koduyla çıkıyoruz. Şimdi <code>cargo test --test should_panic</code> çalıştırdığımızda, testin tam olarak öncekiyle aynı davrandığını görüyoruz.</p>
+<p><code>should_panic</code> testleri oluşturmanın yanı sıra, <code>harness</code> özniteliğini devre dışı bırakmak karmaşık entegrasyon testleri için de yararlı olabilir; örneğin tek tek test fonksiyonlarının yan etkileri olduğunda ve belirli bir sırada çalıştırılmaları gerektiğinde.</p>
+<h2 id="ozet"><a class="zola-anchor" href="#ozet" aria-label="Anchor link for: ozet">🔗</a>Özet</h2>
+<p>Test etme, belirli bileşenlerin istenen davranışa sahip olduğundan emin olmak için çok yararlı bir tekniktir. Hataların yokluğunu gösteremeseler bile, onları bulmak ve özellikle gerilemeleri (regression) önlemek için yine de yararlı bir araçtır.</p>
+<p>Bu yazı, Rust kernel’imiz için bir test çerçevesinin nasıl kurulacağını açıkladı. Bare metal ortamımızda basit bir <code>#[test_case]</code> özniteliğine yönelik destek uygulamak için Rust’ın özel test çerçeveleri özelliğini kullandık. QEMU’nun <code>isa-debug-exit</code> cihazını kullanarak, test runner’ımız testleri çalıştırdıktan sonra QEMU’dan çıkabilir ve test durumunu raporlayabilir. Hata mesajlarını VGA arabelleği yerine konsola yazdırmak için, seri port için temel bir sürücü oluşturduk.</p>
+<p><code>println</code> makromuz için bazı testler oluşturduktan sonra, yazının ikinci yarısında entegrasyon testlerini inceledik. Onların <code>tests</code> dizininde bulunduğunu ve tamamen ayrı çalıştırılabilir dosyalar olarak ele alındığını öğrendik. Onlara <code>exit_qemu</code> fonksiyonuna ve <code>serial_println</code> makrosuna erişim vermek için, kodumuzun çoğunu tüm çalıştırılabilir dosyalar ve entegrasyon testleri tarafından içe aktarılabilen bir kütüphaneye taşıdık. Entegrasyon testleri kendi ayrı ortamlarında çalıştığı için, donanımla etkileşimleri test etmeyi veya panic etmesi gereken testler oluşturmayı mümkün kılarlar.</p>
+<p>Artık QEMU’nun içinde gerçekçi bir ortamda çalışan bir test çerçevemiz var. Gelecekteki yazılarda daha fazla test oluşturarak, kernel’imiz daha karmaşık hale geldiğinde onu sürdürülebilir tutabiliriz.</p>
+<h2 id="sirada-ne-var"><a class="zola-anchor" href="#sirada-ne-var" aria-label="Anchor link for: sirada-ne-var">🔗</a>Sırada ne var?</h2>
+<p>Bir sonraki yazıda <em>CPU exception’larını</em> inceleyeceğiz. Bu exception’lar, sıfıra bölme veya eşlenmemiş bir bellek sayfasına erişim (sözde bir “page fault”) gibi yasa dışı bir şey olduğunda CPU tarafından fırlatılır. Bu exception’ları yakalayabilmek ve inceleyebilmek, gelecekteki hataların ayıklanması için çok önemlidir. Exception işleme, klavye desteği için gereken donanım interrupt’larının işlenmesine de çok benzer.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Beni Destekle</h2>
+<p>Bu blogu ve ilişkili kütüphaneleri oluşturmak ve sürdürmek çok emek gerektiriyor, ve bunu yapmaktan gerçekten zevk alıyorum. Beni destekleyerek yeni içerik, yeni özellikler ve sürekli bakım için daha fazla zaman ayırmama olanak tanıyorsunuz. Beni desteklemenin en iyi yolu <a href="https://github.com/sponsors/phil-opp"><em>GitHub'da sponsor olmak</em></a>. Teşekkürler!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/tr/vga-text-mode/">&laquo; VGA Metin Modu</a>
+        
+        
+            <a class="next" href="/tr/cpu-exceptions/">CPU Exception&#x27;ları &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Yorumlar</h2>
+
+        
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+    
+
+    <p class="comment-note">
+        Bir sorunuz mu var, geri bildirim paylaşmak veya fikirlerinizi tartışmak mı istiyorsunuz? Buraya yorum bırakmaktan çekinmeyin! Lütfen İngilizce kullanın ve Rust'ın <a href="https://www.rust-lang.org/policies/code-of-conduct">davranış kurallarına</a> uyun. Bu yorum dizisi doğrudan <a href="https://github.com/phil-opp/blog_os/discussions/1009"><em>GitHub'daki bir tartışmaya</em></a> bağlıdır, dolayısıyla isterseniz oraya da yorum yapabilirsiniz.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="number"
+    
+        data-term="1009"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="tr"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/1009"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Mümkünse yorumlarınızı İngilizce bırakınız.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/testing/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ar" class=""><a href="https://os.phil-opp.com/ar/testing/">
+                        العربية
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/testing/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/testing/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/testing/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/testing/">
+                        Korean
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/testing/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/testing/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,588 @@
+<!doctype html>
+
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="CPU exception’ları çeşitli hatalı durumlarda meydana gelir; örneğin geçersiz bir bellek adresine erişilirken veya sıfıra bölünürken. Onlara tepki vere…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/tr/cpu-exceptions/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>CPU Exception&#x27;ları | Rust ile İşletim Sistemi Yazıyoruz</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Rust ile İşletim Sistemi Yazıyoruz</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/tr" title="All Posts">« Tüm Yazılar</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>İçindekiler</h2>
+    <ol>
+        <li>
+            <a href="#genel-bakis">Genel Bakış</a>
+            <ol>
+                <li>
+                    <a href="#the-interrupt-descriptor-table">Interrupt Descriptor Table</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#bir-idt-tipi">Bir IDT Tipi</a>
+            
+        </li><li>
+            <a href="#interrupt-cagirma-kurali">Interrupt Çağırma Kuralı</a>
+            <ol>
+                <li>
+                    <a href="#korunan-ve-scratch-register-lar">Korunan ve Scratch Register’lar</a>
+                </li><li>
+                    <a href="#tum-register-lari-korumak">Tüm Register’ları Korumak</a>
+                </li><li>
+                    <a href="#the-interrupt-stack-frame">Interrupt Stack Frame</a>
+                </li><li>
+                    <a href="#perde-arkasi">Perde Arkası</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#implementation">Uygulama</a>
+            <ol>
+                <li>
+                    <a href="#loading-the-idt">IDT’yi Yüklemek</a>
+                </li><li>
+                    <a href="#calistirmak">Çalıştırmak</a>
+                </li><li>
+                    <a href="#bir-test-eklemek">Bir Test Eklemek</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#too-much-magic">Fazla mı Sihir?</a>
+            
+        </li><li>
+            <a href="#sirada-ne-var">Sırada ne var?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>CPU Exception&#x27;ları</h1>
+    <time datetime="2018-06-17" class="post-date">
+        Jun 17, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Çevrilmiş İçerik:</b>
+            Bu, <strong><a href="https://os.phil-opp.com/cpu-exceptions/">CPU Exceptions</a></strong> adlı gönderinin topluluk tarafından yapılmış bir çevirisidir. Eksik, güncel olmayan veya hata içeriyor olabilir. Lütfen herhangi bir sorunu bildirin!
+            </p>
+            <p>
+                Translation by <a href="https://github.com/rhotav">@rhotav</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>CPU exception’ları çeşitli hatalı durumlarda meydana gelir; örneğin geçersiz bir bellek adresine erişilirken veya sıfıra bölünürken. Onlara tepki verebilmek için, handler fonksiyonları sağlayan bir <em>interrupt descriptor table</em> kurmamız gerekir. Bu yazının sonunda, kernel’imiz <a href="https://wiki.osdev.org/Exceptions#Breakpoint">breakpoint exception’larını</a> yakalayabilecek ve sonrasında normal çalıştırmaya devam edebilecek.</p>
+<span id="continue-reading"></span>
+<p>Bu blog <a href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/cpu-exceptions/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a href="https://github.com/phil-opp/blog_os/tree/post-05"><code>post-05</code></a> dalında bulunabilir.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>İçindekiler</b></summary>
+        <ul>
+            <li>
+                <a href="#genel-bakis">Genel Bakış</a>
+                <ul>
+                    <li>
+                        <a href="#the-interrupt-descriptor-table">Interrupt Descriptor Table</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#bir-idt-tipi">Bir IDT Tipi</a>
+                
+            </li><li>
+                <a href="#interrupt-cagirma-kurali">Interrupt Çağırma Kuralı</a>
+                <ul>
+                    <li>
+                        <a href="#korunan-ve-scratch-register-lar">Korunan ve Scratch Register’lar</a>
+                    </li><li>
+                        <a href="#tum-register-lari-korumak">Tüm Register’ları Korumak</a>
+                    </li><li>
+                        <a href="#the-interrupt-stack-frame">Interrupt Stack Frame</a>
+                    </li><li>
+                        <a href="#perde-arkasi">Perde Arkası</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#implementation">Uygulama</a>
+                <ul>
+                    <li>
+                        <a href="#loading-the-idt">IDT’yi Yüklemek</a>
+                    </li><li>
+                        <a href="#calistirmak">Çalıştırmak</a>
+                    </li><li>
+                        <a href="#bir-test-eklemek">Bir Test Eklemek</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#too-much-magic">Fazla mı Sihir?</a>
+                
+            </li><li>
+                <a href="#sirada-ne-var">Sırada ne var?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+        </ul>
+    </details>
+
+<h2 id="genel-bakis"><a class="zola-anchor" href="#genel-bakis" aria-label="Anchor link for: genel-bakis">🔗</a>Genel Bakış</h2>
+<p>Bir exception, mevcut komutla ilgili bir şeyin yanlış olduğunu bildirir. Örneğin, mevcut komut 0’a bölmeye çalışırsa CPU bir exception verir. Bir exception meydana geldiğinde, CPU mevcut işini keser ve exception tipine bağlı olarak hemen belirli bir exception handler fonksiyonunu çağırır.</p>
+<p>x86’da yaklaşık 20 farklı CPU exception tipi vardır. En önemlileri şunlardır:</p>
+<ul>
+<li><strong>Page Fault</strong>: Bir page fault, yasa dışı bellek erişimlerinde meydana gelir. Örneğin, mevcut komut eşlenmemiş bir sayfadan okumaya veya salt okunur bir sayfaya yazmaya çalışırsa.</li>
+<li><strong>Invalid Opcode</strong>: Bu exception, mevcut komut geçersiz olduğunda meydana gelir; örneğin, yeni <a href="https://en.wikipedia.org/wiki/Streaming_SIMD_Extensions">SSE komutlarını</a> bunları desteklemeyen eski bir CPU’da kullanmaya çalıştığımızda.</li>
+<li><strong>General Protection Fault</strong>: Bu, en geniş neden yelpazesine sahip exception’dır. Çeşitli erişim ihlallerinde meydana gelir; örneğin kullanıcı seviyesindeki kodda ayrıcalıklı bir komut çalıştırmaya çalışmak veya yapılandırma register’larındaki ayrılmış alanlara yazmak gibi.</li>
+<li><strong>Double Fault</strong>: Bir exception meydana geldiğinde, CPU karşılık gelen handler fonksiyonunu çağırmaya çalışır. <em>Exception handler çağrılırken</em> başka bir exception meydana gelirse, CPU bir double fault exception’ı yükseltir. Bu exception, bir exception için kayıtlı bir handler fonksiyonu olmadığında da meydana gelir.</li>
+<li><strong>Triple Fault</strong>: CPU double fault handler fonksiyonunu çağırmaya çalışırken bir exception meydana gelirse, ölümcül bir <em>triple fault</em> verir. Bir triple fault’u yakalayamaz veya işleyemeyiz. Çoğu işlemci buna kendini sıfırlayarak ve işletim sistemini yeniden başlatarak tepki verir.</li>
+</ul>
+<p>Exception’ların tam listesi için <a href="https://wiki.osdev.org/Exceptions">OSDev wiki</a>’sine göz atın.</p>
+<h3 id="the-interrupt-descriptor-table"><a class="zola-anchor" href="#the-interrupt-descriptor-table" aria-label="Anchor link for: the-interrupt-descriptor-table">🔗</a>Interrupt Descriptor Table</h3>
+<p>Exception’ları yakalamak ve işlemek için, <em>Interrupt Descriptor Table</em> (IDT) adı verilen bir tablo kurmamız gerekir. Bu tabloda, her CPU exception’ı için bir handler fonksiyonu belirtebiliriz. Donanım bu tabloyu doğrudan kullanır, bu yüzden önceden tanımlanmış bir biçimi takip etmemiz gerekir. Her girdi aşağıdaki 16 baytlık yapıya sahip olmalıdır:</p>
+<table><thead><tr><th>Tip</th><th>Ad</th><th>Açıklama</th></tr></thead><tbody>
+<tr><td>u16</td><td>Function Pointer [0:15]</td><td>Handler fonksiyonuna işaretçinin alt bitleri.</td></tr>
+<tr><td>u16</td><td>GDT seçicisi</td><td><a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table">Global descriptor table</a>’daki bir kod segmentinin seçicisi.</td></tr>
+<tr><td>u16</td><td>Options</td><td>(aşağıya bakın)</td></tr>
+<tr><td>u16</td><td>Function Pointer [16:31]</td><td>Handler fonksiyonuna işaretçinin orta bitleri.</td></tr>
+<tr><td>u32</td><td>Function Pointer [32:63]</td><td>Handler fonksiyonuna işaretçinin kalan bitleri.</td></tr>
+<tr><td>u32</td><td>Reserved</td><td></td></tr>
+</tbody></table>
+<p>Options alanı aşağıdaki biçime sahiptir:</p>
+<table><thead><tr><th>Bitler</th><th>Ad</th><th>Açıklama</th></tr></thead><tbody>
+<tr><td>0-2</td><td>Interrupt Stack Table Index</td><td>0: Stack’leri değiştirme, 1-7: Bu handler çağrıldığında Interrupt Stack Table’daki n. stack’e geç.</td></tr>
+<tr><td>3-7</td><td>Reserved</td><td></td></tr>
+<tr><td>8</td><td>0: Interrupt Gate, 1: Trap Gate</td><td>Bu bit 0 ise, bu handler çağrıldığında interrupt’lar devre dışı bırakılır.</td></tr>
+<tr><td>9-11</td><td>bir olmalı</td><td></td></tr>
+<tr><td>12</td><td>sıfır olmalı</td><td></td></tr>
+<tr><td>13‑14</td><td>Descriptor Privilege Level (DPL)</td><td>Bu handler’ı çağırmak için gereken minimum ayrıcalık seviyesi.</td></tr>
+<tr><td>15</td><td>Present</td><td></td></tr>
+</tbody></table>
+<p>Her exception’ın önceden tanımlanmış bir IDT indeksi vardır. Örneğin, invalid opcode exception’ının tablo indeksi 6, page fault exception’ının ise tablo indeksi 14’tür. Böylece donanım, her exception için karşılık gelen IDT girdisini otomatik olarak yükleyebilir. OSDev wiki’sindeki <a href="https://wiki.osdev.org/Exceptions">Exception Table</a>, tüm exception’ların IDT indekslerini “Vector nr.” sütununda gösterir.</p>
+<p>Bir exception meydana geldiğinde, CPU kabaca şunları yapar:</p>
+<ol>
+<li>Komut işaretçisi (instruction pointer) ve <a href="https://en.wikipedia.org/wiki/FLAGS_register">RFLAGS</a> register’ı dahil olmak üzere bazı register’ları stack’e push’lar. (Bu değerleri bu yazının ilerleyen kısmında kullanacağız.)</li>
+<li>Interrupt Descriptor Table’dan (IDT) karşılık gelen girdiyi okur. Örneğin, bir page fault meydana geldiğinde CPU 14. girdiyi okur.</li>
+<li>Girdinin mevcut olup olmadığını kontrol eder ve değilse bir double fault yükseltir.</li>
+<li>Girdi bir interrupt gate ise (bit 40 ayarlanmamışsa) donanım interrupt’larını devre dışı bırakır.</li>
+<li>Belirtilen <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table">GDT</a> seçicisini CS’ye (kod segmenti) yükler.</li>
+<li>Belirtilen handler fonksiyonuna atlar.</li>
+</ol>
+<p>Şimdilik 4. ve 5. adımlar için endişelenmeyin; global descriptor table’ı ve donanım interrupt’larını gelecekteki yazılarda öğreneceğiz.</p>
+<h2 id="bir-idt-tipi"><a class="zola-anchor" href="#bir-idt-tipi" aria-label="Anchor link for: bir-idt-tipi">🔗</a>Bir IDT Tipi</h2>
+<p>Kendi IDT tipimizi oluşturmak yerine, <code>x86_64</code> crate’inin şöyle görünen <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code> struct’ını</a> kullanacağız:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[repr(C)]
+</span><span style="color:#569cd6;">pub struct </span><span>InterruptDescriptorTable {
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>divide_by_zero: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>debug: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>non_maskable_interrupt: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>breakpoint: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>overflow: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>bound_range_exceeded: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>invalid_opcode: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>device_not_available: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>double_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>invalid_tss: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>segment_not_present: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>stack_segment_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>general_protection_fault: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>page_fault: Entry&lt;PageFaultHandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>x87_floating_point: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>alignment_check: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>machine_check: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>simd_floating_point: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>virtualization: Entry&lt;HandlerFunc&gt;,
+</span><span>    </span><span style="color:#569cd6;">pub </span><span>security_exception: Entry&lt;HandlerFuncWithErrCode&gt;,
+</span><span>    </span><span style="color:#608b4e;">// bazı alanlar atlandı
+</span><span>}
+</span></code></pre>
+<p>Alanlar, bir IDT girdisinin alanlarını temsil eden bir struct olan <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.Entry.html"><code>idt::Entry&lt;F&gt;</code></a> tipine sahiptir (yukarıdaki tabloya bakın). Tip parametresi <code>F</code>, beklenen handler fonksiyon tipini tanımlar. Bazı girdilerin bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFunc.html"><code>HandlerFunc</code></a>, bazı girdilerin ise bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a> gerektirdiğini görüyoruz. Page fault’un kendine ait özel bir tipi bile var: <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.PageFaultHandlerFunc.html"><code>PageFaultHandlerFunc</code></a>.</p>
+<p>Önce <code>HandlerFunc</code> tipine bakalım:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">HandlerFunc </span><span>= </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn</span><span>(</span><span style="color:#569cd6;">_</span><span>: InterruptStackFrame);
+</span></code></pre>
+<p>Bu, bir <code>extern "x86-interrupt" fn</code> tipi için bir <a href="https://doc.rust-lang.org/book/ch20-03-advanced-types.html#creating-type-synonyms-with-type-aliases">tip takma adıdır (type alias)</a>. <code>extern</code> anahtar kelimesi, <a href="https://doc.rust-lang.org/nomicon/ffi.html#foreign-calling-conventions">yabancı bir çağırma kuralına (foreign calling convention)</a> sahip bir fonksiyon tanımlar ve genellikle C koduyla iletişim kurmak için kullanılır (<code>extern "C" fn</code>). Peki <code>x86-interrupt</code> çağırma kuralı nedir?</p>
+<h2 id="interrupt-cagirma-kurali"><a class="zola-anchor" href="#interrupt-cagirma-kurali" aria-label="Anchor link for: interrupt-cagirma-kurali">🔗</a>Interrupt Çağırma Kuralı</h2>
+<p>Exception’lar fonksiyon çağrılarına oldukça benzer: CPU, çağrılan fonksiyonun ilk komutuna atlar ve onu çalıştırır. Sonrasında CPU dönüş adresine atlar ve üst fonksiyonun çalıştırılmasına devam eder.</p>
+<p>Ancak exception’lar ile fonksiyon çağrıları arasında büyük bir fark vardır: Bir fonksiyon çağrısı, derleyici tarafından eklenen bir <code>call</code> komutuyla gönüllü olarak başlatılır; bir exception ise <em>herhangi</em> bir komutta meydana gelebilir. Bu farkın sonuçlarını anlamak için, fonksiyon çağrılarını daha ayrıntılı incelememiz gerekir.</p>
+<p><a href="https://en.wikipedia.org/wiki/Calling_convention">Çağırma kuralları (calling conventions)</a> bir fonksiyon çağrısının ayrıntılarını belirtir. Örneğin, fonksiyon parametrelerinin nereye yerleştirildiğini (örneğin register’lara mı yoksa stack’e mi) ve sonuçların nasıl döndürüldüğünü belirtirler. x86_64 Linux’ta, C fonksiyonları için aşağıdaki kurallar geçerlidir (<a href="https://refspecs.linuxbase.org/elf/x86_64-abi-0.99.pdf">System V ABI</a>’de belirtilmiştir):</p>
+<ul>
+<li>ilk altı tamsayı argümanı <code>rdi</code>, <code>rsi</code>, <code>rdx</code>, <code>rcx</code>, <code>r8</code>, <code>r9</code> register’larında geçirilir</li>
+<li>ek argümanlar stack’te geçirilir</li>
+<li>sonuçlar <code>rax</code> ve <code>rdx</code>’te döndürülür</li>
+</ul>
+<p>Rust’ın C ABI’sini takip etmediğini unutmayın (aslında <a href="https://github.com/rust-lang/rfcs/issues/600">henüz bir Rust ABI’si bile yok</a>), bu yüzden bu kurallar yalnızca <code>extern "C" fn</code> olarak bildirilen fonksiyonlar için geçerlidir.</p>
+<h3 id="korunan-ve-scratch-register-lar"><a class="zola-anchor" href="#korunan-ve-scratch-register-lar" aria-label="Anchor link for: korunan-ve-scratch-register-lar">🔗</a>Korunan ve Scratch Register’lar</h3>
+<p>Çağırma kuralı register’ları iki bölüme ayırır: <em>korunan (preserved)</em> ve <em>scratch</em> register’lar.</p>
+<p><em>Korunan</em> register’ların değerleri fonksiyon çağrıları boyunca değişmeden kalmalıdır. Yani çağrılan bir fonksiyonun (<em>“callee”</em>) bu register’ların üzerine yazmasına yalnızca, geri dönmeden önce orijinal değerlerini geri yüklemesi koşuluyla izin verilir. Bu nedenle bu register’lara <em>“callee-saved”</em> denir. Yaygın bir örüntü, bu register’ları fonksiyonun başında stack’e kaydetmek ve geri dönmeden hemen önce geri yüklemektir.</p>
+<p>Buna karşılık, çağrılan bir fonksiyonun <em>scratch</em> register’ların üzerine kısıtlama olmadan yazmasına izin verilir. Çağıran fonksiyon (caller), bir scratch register’ının değerini bir fonksiyon çağrısı boyunca korumak isterse, onu fonksiyon çağrısından önce yedeklemesi ve geri yüklemesi gerekir (örneğin onu stack’e push’layarak). Yani scratch register’lar <em>caller-saved</em>’dır.</p>
+<p>x86_64’te, C çağırma kuralı aşağıdaki korunan ve scratch register’ları belirtir:</p>
+<table><thead><tr><th>korunan register’lar</th><th>scratch register’lar</th></tr></thead><tbody>
+<tr><td><code>rbp</code>, <code>rbx</code>, <code>rsp</code>, <code>r12</code>, <code>r13</code>, <code>r14</code>, <code>r15</code></td><td><code>rax</code>, <code>rcx</code>, <code>rdx</code>, <code>rsi</code>, <code>rdi</code>, <code>r8</code>, <code>r9</code>, <code>r10</code>, <code>r11</code></td></tr>
+<tr><td><em>callee-saved</em></td><td><em>caller-saved</em></td></tr>
+</tbody></table>
+<p>Derleyici bu kuralları bilir, bu yüzden kodu buna göre üretir. Örneğin, çoğu fonksiyon <code>rbp</code>’yi stack’e yedekleyen bir <code>push rbp</code> ile başlar (çünkü o bir callee-saved register’dır).</p>
+<h3 id="tum-register-lari-korumak"><a class="zola-anchor" href="#tum-register-lari-korumak" aria-label="Anchor link for: tum-register-lari-korumak">🔗</a>Tüm Register’ları Korumak</h3>
+<p>Fonksiyon çağrılarının aksine, exception’lar <em>herhangi</em> bir komutta meydana gelebilir. Çoğu durumda, üretilen kodun bir exception’a neden olup olmayacağını derleme zamanında bile bilemeyiz. Örneğin, derleyici bir komutun stack taşmasına mı yoksa page fault’a mı neden olduğunu bilemez.</p>
+<p>Bir exception’ın ne zaman meydana geleceğini bilmediğimiz için, öncesinde hiçbir register’ı yedekleyemeyiz. Bu, exception handler’lar için caller-saved register’lara dayanan bir çağırma kuralı kullanamayacağımız anlamına gelir. Bunun yerine, <em>tüm register’ları</em> koruyan bir çağırma kuralına ihtiyacımız var. <code>x86-interrupt</code> çağırma kuralı böyle bir çağırma kuralıdır, bu yüzden fonksiyon dönüşünde tüm register değerlerinin orijinal değerlerine geri yüklenmesini garanti eder.</p>
+<p>Bunun, tüm register’ların fonksiyon girişinde stack’e kaydedildiği anlamına gelmediğini unutmayın. Bunun yerine, derleyici yalnızca fonksiyon tarafından üzerine yazılan register’ları yedekler. Bu sayede, yalnızca birkaç register kullanan kısa fonksiyonlar için çok verimli kod üretilebilir.</p>
+<h3 id="the-interrupt-stack-frame"><a class="zola-anchor" href="#the-interrupt-stack-frame" aria-label="Anchor link for: the-interrupt-stack-frame">🔗</a>Interrupt Stack Frame</h3>
+<p>Normal bir fonksiyon çağrısında (<code>call</code> komutu kullanılarak), CPU hedef fonksiyona atlamadan önce dönüş adresini push’lar. Fonksiyon dönüşünde (<code>ret</code> komutu kullanılarak), CPU bu dönüş adresini pop’lar ve ona atlar. Yani normal bir fonksiyon çağrısının stack frame’i şöyle görünür:</p>
+<p><img src="https://os.phil-opp.com/tr/cpu-exceptions/function-stack-frame.svg" alt="fonksiyon stack frame’i" /></p>
+<p>Ancak exception ve interrupt handler’ları için, yalnızca bir dönüş adresi push’lamak yeterli olmazdı; çünkü interrupt handler’ları genellikle farklı bir bağlamda (stack pointer, CPU bayrakları vb.) çalışır. Bunun yerine, bir interrupt meydana geldiğinde CPU aşağıdaki adımları gerçekleştirir:</p>
+<ol start="0">
+<li><strong>Eski stack pointer’ı kaydetmek</strong>: CPU, stack pointer (<code>rsp</code>) ve stack segment (<code>ss</code>) register değerlerini okur ve onları dahili bir arabellekte hatırlar.</li>
+<li><strong>Stack pointer’ı hizalamak</strong>: Bir interrupt herhangi bir komutta meydana gelebilir, bu yüzden stack pointer da herhangi bir değere sahip olabilir. Ancak bazı CPU komutları (örneğin bazı SSE komutları) stack pointer’ın 16 baytlık bir sınırda hizalanmasını gerektirir, bu yüzden CPU interrupt’tan hemen sonra böyle bir hizalama gerçekleştirir.</li>
+<li><strong>Stack’leri değiştirmek</strong> (bazı durumlarda): CPU ayrıcalık seviyesi değiştiğinde bir stack değişimi meydana gelir; örneğin, bir kullanıcı modu programında bir CPU exception’ı oluştuğunda. <em>Interrupt Stack Table</em> adı verilen şey kullanılarak (bir sonraki yazıda açıklanacak) belirli interrupt’lar için stack değişimleri yapılandırmak da mümkündür.</li>
+<li><strong>Eski stack pointer’ı push’lamak</strong>: CPU, 0. adımdaki <code>rsp</code> ve <code>ss</code> değerlerini stack’e push’lar. Bu, bir interrupt handler’dan dönerken orijinal stack pointer’ın geri yüklenmesini mümkün kılar.</li>
+<li><strong><code>RFLAGS</code> register’ını push’lamak ve güncellemek</strong>: <a href="https://en.wikipedia.org/wiki/FLAGS_register"><code>RFLAGS</code></a> register’ı çeşitli kontrol ve durum bitleri içerir. Interrupt girişinde, CPU bazı bitleri değiştirir ve eski değeri push’lar.</li>
+<li><strong>Komut işaretçisini push’lamak</strong>: Interrupt handler fonksiyonuna atlamadan önce, CPU komut işaretçisini (<code>rip</code>) ve kod segmentini (<code>cs</code>) push’lar. Bu, normal bir fonksiyon çağrısının dönüş adresi push’lamasına benzer.</li>
+<li><strong>Bir hata kodu push’lamak</strong> (bazı exception’lar için): Page fault gibi bazı belirli exception’lar için, CPU exception’ın nedenini açıklayan bir hata kodu push’lar.</li>
+<li><strong>Interrupt handler’ı çağırmak</strong>: CPU, interrupt handler fonksiyonunun adresini ve segment tanımlayıcısını IDT’deki karşılık gelen alandan okur. Ardından, bu değerleri <code>rip</code> ve <code>cs</code> register’larına yükleyerek bu handler’ı çağırır.</li>
+</ol>
+<p>Yani <em>interrupt stack frame</em> şöyle görünür:</p>
+<p><img src="https://os.phil-opp.com/tr/cpu-exceptions/exception-stack-frame.svg" alt="interrupt stack frame’i" /></p>
+<p><code>x86_64</code> crate’inde, interrupt stack frame <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptStackFrame.html"><code>InterruptStackFrame</code></a> struct’ı ile temsil edilir. Interrupt handler’larına <code>&amp;mut</code> olarak geçirilir ve exception’ın nedeni hakkında ek bilgi almak için kullanılabilir. Yalnızca birkaç exception bir hata kodu push’ladığından, struct’ta hata kodu alanı yoktur. Bu exception’lar, ek bir <code>error_code</code> argümanına sahip olan ayrı <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a> fonksiyon tipini kullanır.</p>
+<h3 id="perde-arkasi"><a class="zola-anchor" href="#perde-arkasi" aria-label="Anchor link for: perde-arkasi">🔗</a>Perde Arkası</h3>
+<p><code>x86-interrupt</code> çağırma kuralı, exception işleme sürecinin neredeyse tüm dağınık ayrıntılarını gizleyen güçlü bir soyutlamadır. Ancak bazen perde arkasında ne olduğunu bilmek yararlıdır. İşte <code>x86-interrupt</code> çağırma kuralının hallettiği şeylerin kısa bir özeti:</p>
+<ul>
+<li><strong>Argümanları almak</strong>: Çoğu çağırma kuralı, argümanların register’larda geçirilmesini bekler. Bu, exception handler’lar için mümkün değildir, çünkü register değerlerini stack’e yedeklemeden önce hiçbirinin üzerine yazmamalıyız. Bunun yerine, <code>x86-interrupt</code> çağırma kuralı, argümanların belirli bir ofsette zaten stack’te bulunduğunun farkındadır.</li>
+<li><strong><code>iretq</code> kullanarak geri dönmek</strong>: Interrupt stack frame, normal fonksiyon çağrılarının stack frame’lerinden tamamen farklı olduğundan, handler fonksiyonlarından normal <code>ret</code> komutuyla geri dönemeyiz. Bu yüzden bunun yerine <code>iretq</code> komutunun kullanılması gerekir.</li>
+<li><strong>Hata kodunu işlemek</strong>: Bazı exception’lar için push’lanan hata kodu işleri çok daha karmaşık hale getirir. Stack hizalamasını değiştirir (sonraki maddeye bakın) ve geri dönmeden önce stack’ten pop’lanması gerekir. <code>x86-interrupt</code> çağırma kuralı tüm bu karmaşıklığı halleder. Ancak hangi handler fonksiyonunun hangi exception için kullanıldığını bilmez, bu yüzden bu bilgiyi fonksiyon argümanlarının sayısından çıkarması gerekir. Bu da, her exception için doğru fonksiyon tipini kullanmaktan programcının hâlâ sorumlu olduğu anlamına gelir. Neyse ki, <code>x86_64</code> crate’i tarafından tanımlanan <code>InterruptDescriptorTable</code> tipi doğru fonksiyon tiplerinin kullanılmasını sağlar.</li>
+<li><strong>Stack’i hizalamak</strong>: Bazı komutlar (özellikle SSE komutları) 16 baytlık bir stack hizalaması gerektirir. CPU, bir exception meydana geldiğinde bu hizalamayı sağlar, ancak bazı exception’lar için bir hata kodu push’ladığında onu daha sonra tekrar bozar. <code>x86-interrupt</code> çağırma kuralı, bu durumda stack’i yeniden hizalayarak bununla ilgilenir.</li>
+</ul>
+<p>Daha fazla ayrıntıyla ilgileniyorsanız, exception işlemeyi <a href="https://github.com/rust-lang/rfcs/blob/master/text/1201-naked-fns.md">naked fonksiyonlar</a> kullanarak açıklayan ve <a href="https://os.phil-opp.com/tr/cpu-exceptions/#too-much-magic">bu yazının sonunda</a> bağlantısı verilen bir yazı dizimiz de var.</p>
+<h2 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Uygulama</h2>
+<p>Artık teoriyi anladığımıza göre, kernel’imizde CPU exception’larını işlemenin zamanı geldi. <code>src/interrupts.rs</code> dosyasında, önce yeni bir <code>InterruptDescriptorTable</code> oluşturan bir <code>init_idt</code> fonksiyonu oluşturan yeni bir interrupts modülü oluşturarak başlayacağız:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>interrupts;
+</span><span>
+</span><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::InterruptDescriptorTable;
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>}
+</span></code></pre>
+<p>Artık handler fonksiyonları ekleyebiliriz. <a href="https://wiki.osdev.org/Exceptions#Breakpoint">Breakpoint exception</a> için bir handler ekleyerek başlıyoruz. Breakpoint exception’ı, exception işlemeyi test etmek için mükemmel bir exception’dır. Tek amacı, <code>int3</code> breakpoint komutu çalıştırıldığında bir programı geçici olarak duraklatmaktır.</p>
+<p>Breakpoint exception’ı genellikle hata ayıklayıcılarda (debugger) kullanılır: Kullanıcı bir breakpoint belirlediğinde, hata ayıklayıcı karşılık gelen komutun üzerine <code>int3</code> komutunu yazar; böylece CPU o satıra ulaştığında breakpoint exception’ını fırlatır. Kullanıcı programa devam etmek istediğinde, hata ayıklayıcı <code>int3</code> komutunu tekrar orijinal komutla değiştirir ve programa devam eder. Daha fazla ayrıntı için <a href="https://eli.thegreenplace.net/2011/01/27/how-debuggers-work-part-2-breakpoints">“<em>Hata ayıklayıcılar nasıl çalışır</em>”</a> dizisine bakın.</p>
+<p>Bizim kullanım senaryomuz için hiçbir komutun üzerine yazmamıza gerek yok. Bunun yerine, yalnızca breakpoint komutu çalıştırıldığında bir mesaj yazdırmak ve ardından programa devam etmek istiyoruz. O halde basit bir <code>breakpoint_handler</code> fonksiyonu oluşturup onu IDT’mize ekleyelim:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+</span><span style="color:#569cd6;">use crate</span><span>::println;
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>    idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>breakpoint_handler(
+</span><span>    stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: BREAKPOINT</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span>, stack_frame);
+</span><span>}
+</span></code></pre>
+<p>Handler’ımız yalnızca bir mesaj çıktılar ve interrupt stack frame’i okunaklı biçimde yazdırır.</p>
+<p>Onu derlemeye çalıştığımızda, aşağıdaki hata oluşur:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0658]: x86-interrupt ABI is experimental and subject to change (see issue #40180)
+</span><span>  --&gt; src/main.rs:53:1
+</span><span>   |
+</span><span>53 | / extern &quot;x86-interrupt&quot; fn breakpoint_handler(stack_frame: InterruptStackFrame) {
+</span><span>54 | |     println!(&quot;EXCEPTION: BREAKPOINT\n{:#?}&quot;, stack_frame);
+</span><span>55 | | }
+</span><span>   | |_^
+</span><span>   |
+</span><span>   = help: add #![feature(abi_x86_interrupt)] to the crate attributes to enable
+</span></code></pre>
+<p>Bu hata, <code>x86-interrupt</code> çağırma kuralının hâlâ kararsız olması nedeniyle oluşur. Yine de onu kullanmak için, <code>lib.rs</code> dosyamızın başına <code>#![feature(abi_x86_interrupt)]</code> ekleyerek onu açıkça etkinleştirmemiz gerekir.</p>
+<h3 id="loading-the-idt"><a class="zola-anchor" href="#loading-the-idt" aria-label="Anchor link for: loading-the-idt">🔗</a>IDT’yi Yüklemek</h3>
+<p>CPU’nun yeni interrupt descriptor table’ımızı kullanabilmesi için, onu <a href="https://www.felixcloutier.com/x86/lgdt:lidt"><code>lidt</code></a> komutunu kullanarak yüklememiz gerekir. <code>x86_64</code> crate’inin <code>InterruptDescriptorTable</code> struct’ı bunun için bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html#method.load"><code>load</code></a> metodu sağlar. Onu kullanmayı deneyelim:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>    idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>    idt.load();
+</span><span>}
+</span></code></pre>
+<p>Onu şimdi derlemeye çalıştığımızda, aşağıdaki hata oluşur:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: `idt` does not live long enough
+</span><span>  --&gt; src/interrupts/mod.rs:43:5
+</span><span>   |
+</span><span>43 |     idt.load();
+</span><span>   |     ^^^ does not live long enough
+</span><span>44 | }
+</span><span>   | - borrowed value only lives until here
+</span><span>   |
+</span><span>   = note: borrowed value must be valid for the static lifetime...
+</span></code></pre>
+<p>Yani <code>load</code> metodu bir <code>&amp;'static self</code> bekler; yani programın tüm çalışma süresi boyunca geçerli olan bir referans. Bunun nedeni, biz farklı bir IDT yükleyene kadar CPU’nun bu tabloya her interrupt’ta erişecek olmasıdır. Dolayısıyla <code>'static</code>’ten daha kısa bir ömür kullanmak, use-after-free hatalarına yol açabilir.</p>
+<p>Aslında burada tam olarak olan budur. <code>idt</code>’miz stack’te oluşturulur, bu yüzden yalnızca <code>init</code> fonksiyonunun içinde geçerlidir. Sonrasında, stack belleği başka fonksiyonlar için yeniden kullanılır, bu yüzden CPU rastgele stack belleğini IDT olarak yorumlardı. Neyse ki, <code>InterruptDescriptorTable::load</code> metodu bu ömür gereksinimini fonksiyon tanımında kodlar; böylece Rust derleyicisi bu olası hatayı derleme zamanında önleyebilir.</p>
+<p>Bu sorunu düzeltmek için, <code>idt</code>’mizi <code>'static</code> ömrüne sahip olduğu bir yerde saklamamız gerekir. Bunu başarmak için, IDT’mizi <a href="https://doc.rust-lang.org/std/boxed/struct.Box.html"><code>Box</code></a> kullanarak heap’te ayırabilir ve ardından onu bir <code>'static</code> referansına dönüştürebilirdik; ancak biz bir OS kernel’i yazıyoruz ve bu yüzden (henüz) bir heap’imiz yok.</p>
+<p>Bir alternatif olarak, IDT’yi bir <code>static</code> olarak saklamayı deneyebilirdik:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = InterruptDescriptorTable::new();
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>}
+</span></code></pre>
+<p>Ancak bir sorun var: Statics değiştirilemez (immutable), bu yüzden <code>init</code> fonksiyonumuzdan breakpoint girdisini değiştiremeyiz. Bu sorunu bir <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#accessing-or-modifying-a-mutable-static-variable"><code>static mut</code></a> kullanarak çözebilirdik:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">static mut </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = InterruptDescriptorTable::new();
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">IDT</span><span>.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Bu varyant hatasız derlenir, ancak deyimsel (idiomatic) olmaktan çok uzaktır. <code>static mut</code>’lar veri yarışlarına çok yatkındır, bu yüzden her erişimde bir <a href="https://doc.rust-lang.org/1.30.0/book/second-edition/ch19-01-unsafe-rust.html#unsafe-superpowers"><code>unsafe</code> bloğuna</a> ihtiyacımız var.</p>
+<h4 id="imdada-lazy-statics-yetisiyor"><a class="zola-anchor" href="#imdada-lazy-statics-yetisiyor" aria-label="Anchor link for: imdada-lazy-statics-yetisiyor">🔗</a>İmdada Lazy Statics Yetişiyor</h4>
+<p>Neyse ki, <code>lazy_static</code> makrosu var. Bir <code>static</code>’i derleme zamanında değerlendirmek yerine, makro başlatmayı <code>static</code>’e ilk kez referans verildiğinde gerçekleştirir. Böylece, başlatma bloğunda neredeyse her şeyi yapabilir, hatta çalışma zamanı değerlerini bile okuyabiliriz.</p>
+<p><a href="https://os.phil-opp.com/tr/vga-text-mode/#lazy-statics">VGA metin arabelleği için bir soyutlama oluşturduğumuzda</a> <code>lazy_static</code> crate’ini zaten içe aktarmıştık. Bu yüzden statik IDT’mizi oluşturmak için doğrudan <code>lazy_static!</code> makrosunu kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init_idt() {
+</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
+</span><span>}
+</span></code></pre>
+<p>Bu çözümün hiçbir <code>unsafe</code> bloğu gerektirmediğine dikkat edin. <code>lazy_static!</code> makrosu perde arkasında <code>unsafe</code> kullanır, ancak bu güvenli bir arayüzde soyutlanmıştır.</p>
+<h3 id="calistirmak"><a class="zola-anchor" href="#calistirmak" aria-label="Anchor link for: calistirmak">🔗</a>Çalıştırmak</h3>
+<p>Kernel’imizde exception’ları çalışır hale getirmenin son adımı, <code>init_idt</code> fonksiyonunu <code>main.rs</code>’imizden çağırmaktır. Onu doğrudan çağırmak yerine, <code>lib.rs</code>’imizde genel bir <code>init</code> fonksiyonu sunuyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    interrupts::init_idt();
+</span><span>}
+</span></code></pre>
+<p>Bu fonksiyonla, artık <code>main.rs</code>, <code>lib.rs</code> ve entegrasyon testlerimizdeki farklı <code>_start</code> fonksiyonları arasında paylaşılabilecek başlatma rutinleri için merkezi bir yerimiz var.</p>
+<p>Artık <code>main.rs</code>’imizin <code>_start</code> fonksiyonunu, <code>init</code>’i çağıracak ve ardından bir breakpoint exception’ı tetikleyecek şekilde güncelleyebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    blog_os::init(); </span><span style="color:#608b4e;">// yeni
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// bir breakpoint exception&#39;ı tetikle
+</span><span>    x86_64::instructions::interrupts::int3(); </span><span style="color:#608b4e;">// yeni
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// önceki gibi
+</span><span>    #[cfg(test)]
+</span><span>    test_main();
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Onu şimdi QEMU’da çalıştırdığımızda (<code>cargo run</code> kullanarak), şunu görüyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/cpu-exceptions/qemu-breakpoint-exception.png" alt="EXCEPTION: BREAKPOINT ve interrupt stack frame’i yazdıran QEMU" /></p>
+<p>Çalışıyor! CPU, breakpoint handler’ımızı başarıyla çağırıyor; o mesajı yazdırıyor ve ardından <code>_start</code> fonksiyonuna geri dönüyor; burada <code>It did not crash!</code> mesajı yazdırılıyor.</p>
+<p>Interrupt stack frame’inin bize, exception meydana geldiği andaki komut ve stack işaretçilerini söylediğini görüyoruz. Bu bilgi, beklenmeyen exception’ların hata ayıklamasında çok yararlıdır.</p>
+<h3 id="bir-test-eklemek"><a class="zola-anchor" href="#bir-test-eklemek" aria-label="Anchor link for: bir-test-eklemek">🔗</a>Bir Test Eklemek</h3>
+<p>Yukarıdakilerin çalışmaya devam ettiğinden emin olan bir test oluşturalım. İlk olarak, <code>_start</code> fonksiyonunu <code>init</code>’i de çağıracak şekilde güncelliyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">/// `cargo test` için giriş noktası
+</span><span>#[cfg(test)]
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    init();      </span><span style="color:#608b4e;">// yeni
+</span><span>    test_main();
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Unutmayın, bu <code>_start</code> fonksiyonu <code>cargo test --lib</code> çalıştırılırken kullanılır, çünkü Rust <code>lib.rs</code>’i <code>main.rs</code>’ten tamamen bağımsız olarak test eder. Testleri çalıştırmadan önce bir IDT kurmak için burada <code>init</code>’i çağırmamız gerekir.</p>
+<p>Artık bir <code>test_breakpoint_exception</code> testi oluşturabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_breakpoint_exception() {
+</span><span>    </span><span style="color:#608b4e;">// bir breakpoint exception&#39;ı tetikle
+</span><span>    x86_64::instructions::interrupts::int3();
+</span><span>}
+</span></code></pre>
+<p>Test, bir breakpoint exception’ı tetiklemek için <code>int3</code> fonksiyonunu çağırır. Çalıştırmanın sonrasında devam ettiğini kontrol ederek, breakpoint handler’ımızın doğru çalıştığını doğrularız.</p>
+<p>Bu yeni testi <code>cargo test</code> (tüm testler) veya <code>cargo test --lib</code> (yalnızca <code>lib.rs</code>’in ve modüllerinin testleri) çalıştırarak deneyebilirsiniz. Çıktıda şunu görmelisiniz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>blog_os::interrupts::test_breakpoint_exception...	[ok]
+</span></code></pre>
+<h2 id="too-much-magic"><a class="zola-anchor" href="#too-much-magic" aria-label="Anchor link for: too-much-magic">🔗</a>Fazla mı Sihir?</h2>
+<p><code>x86-interrupt</code> çağırma kuralı ve <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> tipi, exception işleme sürecini nispeten basit ve sancısız hale getirdi. Bu sizin için fazla sihir olduysa ve exception işlemenin tüm kanlı ayrıntılarını öğrenmek istiyorsanız, sizi düşündük: <a href="https://os.phil-opp.com/edition-1/extra/naked-exceptions/">“Naked Fonksiyonlarla Exception İşleme”</a> dizimiz, exception’ların <code>x86-interrupt</code> çağırma kuralı olmadan nasıl işleneceğini gösterir ve ayrıca kendi IDT tipini oluşturur. Tarihsel olarak, bu yazılar <code>x86-interrupt</code> çağırma kuralı ve <code>x86_64</code> crate’i var olmadan önceki ana exception işleme yazılarıydı. Bu yazıların bu blogun <a href="https://os.phil-opp.com/edition-1/">birinci sürümüne</a> dayandığını ve güncel olmayabileceğini unutmayın.</p>
+<h2 id="sirada-ne-var"><a class="zola-anchor" href="#sirada-ne-var" aria-label="Anchor link for: sirada-ne-var">🔗</a>Sırada ne var?</h2>
+<p>İlk exception’ımızı başarıyla yakaladık ve ondan geri döndük! Sonraki adım, tüm exception’ları yakaladığımızdan emin olmaktır; çünkü yakalanmamış bir exception, sistem sıfırlamasına yol açan ölümcül bir <a href="https://wiki.osdev.org/Triple_Fault">triple fault</a>’a neden olur. Bir sonraki yazı, <a href="https://wiki.osdev.org/Double_Fault#Double_Fault">double fault’ları</a> doğru şekilde yakalayarak bunu nasıl önleyebileceğimizi açıklar.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Beni Destekle</h2>
+<p>Bu blogu ve ilişkili kütüphaneleri oluşturmak ve sürdürmek çok emek gerektiriyor, ve bunu yapmaktan gerçekten zevk alıyorum. Beni destekleyerek yeni içerik, yeni özellikler ve sürekli bakım için daha fazla zaman ayırmama olanak tanıyorsunuz. Beni desteklemenin en iyi yolu <a href="https://github.com/sponsors/phil-opp"><em>GitHub'da sponsor olmak</em></a>. Teşekkürler!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/tr/testing/">&laquo; Test Etme</a>
+        
+        
+            <a class="next" href="/tr/double-fault-exceptions/">Double Fault&#x27;lar &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Yorumlar</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Bir sorunuz mu var, geri bildirim paylaşmak veya fikirlerinizi tartışmak mı istiyorsunuz? Buraya yorum bırakmaktan çekinmeyin! Lütfen İngilizce kullanın ve Rust'ın <a href="https://www.rust-lang.org/policies/code-of-conduct">davranış kurallarına</a> uyun. Bu yorum dizisi doğrudan <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22CPU%20Exceptions%20%28tr%29%22%20in%3Atitle"><em>GitHub'daki bir tartışmaya</em></a> bağlıdır, dolayısıyla isterseniz oraya da yorum yapabilirsiniz.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="CPU Exceptions (tr)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="tr"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22CPU%20Exceptions%20%28tr%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Mümkünse yorumlarınızı İngilizce bırakınız.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/cpu-exceptions/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ar" class=""><a href="https://os.phil-opp.com/ar/cpu-exceptions/">
+                        العربية
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/cpu-exceptions/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/cpu-exceptions/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/cpu-exceptions/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/cpu-exceptions/">
+                        Korean
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/cpu-exceptions/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/cpu-exceptions/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

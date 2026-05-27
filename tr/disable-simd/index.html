@@ -1,0 +1,133 @@
+<!doctype html>
+
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Single Instruction Multiple Data (SIMD) komutları, bir işlemi (örneğin toplama) aynı anda birden çok veri sözcüğü üzerinde gerçekleştirebilir; bu da p…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/tr/disable-simd/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>SIMD&#x27;yi Devre Dışı Bırakmak | Rust ile İşletim Sistemi Yazıyoruz</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Rust ile İşletim Sistemi Yazıyoruz</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+            <main>
+    <h1>SIMD&#x27;yi Devre Dışı Bırakmak</h1>
+    <p><a href="https://en.wikipedia.org/wiki/SIMD">Single Instruction Multiple Data (SIMD)</a> komutları, bir işlemi (örneğin toplama) aynı anda birden çok veri sözcüğü üzerinde gerçekleştirebilir; bu da programları önemli ölçüde hızlandırabilir. <code>x86_64</code> mimarisi çeşitli SIMD standartlarını destekler:</p>
+<span id="continue-reading"></span>
+<ul>
+<li><a href="https://en.wikipedia.org/wiki/MMX_(instruction_set)">MMX</a>: <em>Multi Media Extension</em> komut kümesi 1997’de tanıtıldı ve <code>mm0</code>’dan <code>mm7</code>’ye kadar adlandırılan sekiz adet 64-bit register tanımlar. Bu register’lar yalnızca <a href="https://en.wikipedia.org/wiki/X87">x87 kayan nokta birimi (floating point unit)</a> register’larının takma adlarıdır.</li>
+<li><a href="https://en.wikipedia.org/wiki/Streaming_SIMD_Extensions">SSE</a>: <em>Streaming SIMD Extensions</em> komut kümesi 1999’da tanıtıldı. Kayan nokta register’larını yeniden kullanmak yerine, tamamen yeni bir register kümesi ekler. <code>xmm0</code>’dan <code>xmm15</code>’e kadar adlandırılan on altı yeni register vardır ve her biri 128 bittir.</li>
+<li><a href="https://en.wikipedia.org/wiki/Advanced_Vector_Extensions">AVX</a>: <em>Advanced Vector Extensions</em>, multimedya register’larının boyutunu daha da artıran uzantılardır. Yeni register’lar <code>ymm0</code>’dan <code>ymm15</code>’e kadar adlandırılır ve her biri 256 bittir. <code>xmm</code> register’larını genişletirler, böylece örneğin <code>xmm0</code>, <code>ymm0</code>’ın alt yarısıdır.</li>
+</ul>
+<p>Bu tür SIMD standartlarını kullanarak programlar genellikle önemli ölçüde hızlanabilir. İyi derleyiciler, <a href="https://en.wikipedia.org/wiki/Automatic_vectorization">otomatik vektörleştirme (auto-vectorization)</a> adı verilen bir süreç aracılığıyla normal döngüleri otomatik olarak bu tür SIMD koduna dönüştürebilir.</p>
+<p>Ancak büyük SIMD register’ları, OS kernel’lerinde sorunlara yol açar. Bunun nedeni, kernel’in her donanım interrupt’ında kullandığı tüm register’ları belleğe yedeklemesi gerektiğidir; çünkü kesintiye uğramış program devam ettiğinde bunların orijinal değerlerine sahip olması gerekir. Yani kernel SIMD register’larını kullanırsa, çok daha fazla veriyi (512–1600 bayt) yedeklemesi gerekir ve bu da performansı gözle görülür biçimde düşürür. Bu performans kaybını önlemek için <code>sse</code> ve <code>mmx</code> özelliklerini devre dışı bırakmak istiyoruz (<code>avx</code> özelliği zaten varsayılan olarak devre dışıdır).</p>
+<p>Bunu, hedef belirtimimizdeki <code>features</code> alanı aracılığıyla yapabiliriz. <code>mmx</code> ve <code>sse</code> özelliklerini devre dışı bırakmak için, onları önlerine eksi koyarak ekliyoruz:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;features&quot;</span><span>: </span><span style="color:#d69d85;">&quot;-mmx,-sse&quot;
+</span></code></pre>
+<h2 id="kayan-nokta-floating-point">Kayan Nokta (Floating Point)</h2>
+<p>Bizim için ne yazık ki, <code>x86_64</code> mimarisi kayan nokta işlemleri için SSE register’larını kullanır. Dolayısıyla, SSE devre dışıyken kayan noktanın her kullanımı LLVM’de bir hataya neden olur. Sorun, Rust’ın core kütüphanesinin zaten float’ları kullanmasıdır (örneğin <code>f32</code> ve <code>f64</code> için trait’ler uygular), bu yüzden kernel’imizde float’lardan kaçınmak yeterli değildir.</p>
+<p>Neyse ki LLVM, tüm kayan nokta işlemlerini normal tamsayılara dayalı yazılım fonksiyonları aracılığıyla öykünen bir <code>soft-float</code> özelliğine destek sağlar. Bu, kernel’imizde SSE olmadan float kullanmayı mümkün kılar; sadece biraz daha yavaş olur.</p>
+<p>Kernel’imiz için <code>soft-float</code> özelliğini açmak amacıyla, onu hedef belirtimimizdeki <code>features</code> satırına önüne artı koyarak ekliyoruz:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;features&quot;</span><span>: </span><span style="color:#d69d85;">&quot;-mmx,-sse,+soft-float&quot;
+</span></code></pre>
+
+</main>
+        </div>
+
+        <div>
+    <hr>
+    <section>
+        <h2 id="comments">Comments</h2>
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Bir sorunuz mu var, geri bildirim paylaşmak veya fikirlerinizi tartışmak mı istiyorsunuz? Buraya yorum bırakmaktan çekinmeyin! Lütfen İngilizce kullanın ve Rust'ın <a href="https://www.rust-lang.org/policies/code-of-conduct">davranış kurallarına</a> uyun. Bu yorum dizisi doğrudan <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22SIMD%27yi%20Devre%20D%C4%B1%C5%9F%C4%B1%20B%C4%B1rakmak%20%28Extra%20Post%29%22%20in%3Atitle"><em>GitHub'daki bir tartışmaya</em></a> bağlıdır, dolayısıyla isterseniz oraya da yorum yapabilirsiniz.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="SIMD&#x27;yi Devre Dışı Bırakmak (Extra Post)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="tr"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22SIMD%27yi%20Devre%20D%C4%B1%C5%9F%C4%B1%20B%C4%B1rakmak%20%28Extra%20Post%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+    </section>
+</div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

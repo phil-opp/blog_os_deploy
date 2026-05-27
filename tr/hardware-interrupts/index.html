@@ -1,0 +1,806 @@
+<!doctype html>
+
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Bu yazıda, donanım interrupt’larını CPU’ya doğru şekilde iletmek için programlanabilir interrupt controller’ı kuruyoruz. Bu interrupt’ları işlemek içi…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/tr/hardware-interrupts/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Donanım Interrupt&#x27;ları | Rust ile İşletim Sistemi Yazıyoruz</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Rust ile İşletim Sistemi Yazıyoruz</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/tr" title="All Posts">« Tüm Yazılar</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>İçindekiler</h2>
+    <ol>
+        <li>
+            <a href="#genel-bakis">Genel Bakış</a>
+            
+        </li><li>
+            <a href="#the-8259-pic">8259 PIC</a>
+            <ol>
+                <li>
+                    <a href="#uygulama">Uygulama</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#interrupt-lari-etkinlestirmek">Interrupt’ları Etkinleştirmek</a>
+            
+        </li><li>
+            <a href="#timer-interrupt-larini-islemek">Timer Interrupt’larını İşlemek</a>
+            <ol>
+                <li>
+                    <a href="#interrupt-sonu-end-of-interrupt">Interrupt Sonu (End of Interrupt)</a>
+                </li><li>
+                    <a href="#timer-i-yapilandirmak">Timer’ı Yapılandırmak</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#deadlock-lar">Deadlock’lar</a>
+            <ol>
+                <li>
+                    <a href="#bir-deadlock-a-yol-acmak">Bir Deadlock’a Yol Açmak</a>
+                </li><li>
+                    <a href="#deadlock-u-duzeltmek">Deadlock’u Düzeltmek</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#bir-race-condition-i-duzeltmek">Bir Race Condition’ı Düzeltmek</a>
+            
+        </li><li>
+            <a href="#the-hlt-instruction">hlt Komutu</a>
+            
+        </li><li>
+            <a href="#klavye-girisi">Klavye Girişi</a>
+            <ol>
+                <li>
+                    <a href="#scancode-lari-okumak">Scancode’ları Okumak</a>
+                </li><li>
+                    <a href="#interpreting-the-scancodes">Scancode’ları Yorumlamak</a>
+                </li><li>
+                    <a href="#klavyeyi-yapilandirmak">Klavyeyi Yapılandırmak</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ozet">Özet</a>
+            
+        </li><li>
+            <a href="#sirada-ne-var">Sırada ne var?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Donanım Interrupt&#x27;ları</h1>
+    <time datetime="2018-10-22" class="post-date">
+        Oct 22, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Çevrilmiş İçerik:</b>
+            Bu, <strong><a href="https://os.phil-opp.com/hardware-interrupts/">Hardware Interrupts</a></strong> adlı gönderinin topluluk tarafından yapılmış bir çevirisidir. Eksik, güncel olmayan veya hata içeriyor olabilir. Lütfen herhangi bir sorunu bildirin!
+            </p>
+            <p>
+                Translation by <a href="https://github.com/rhotav">@rhotav</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Bu yazıda, donanım interrupt’larını CPU’ya doğru şekilde iletmek için programlanabilir interrupt controller’ı kuruyoruz. Bu interrupt’ları işlemek için, tıpkı exception handler’larımız için yaptığımız gibi, interrupt descriptor table’ımıza yeni girdiler ekliyoruz. Periyodik timer interrupt’larını nasıl alacağımızı ve klavyeden nasıl girdi alacağımızı öğreneceğiz.</p>
+<span id="continue-reading"></span>
+<p>Bu blog <a href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/hardware-interrupts/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a href="https://github.com/phil-opp/blog_os/tree/post-07"><code>post-07</code></a> dalında bulunabilir.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>İçindekiler</b></summary>
+        <ul>
+            <li>
+                <a href="#genel-bakis">Genel Bakış</a>
+                
+            </li><li>
+                <a href="#the-8259-pic">8259 PIC</a>
+                <ul>
+                    <li>
+                        <a href="#uygulama">Uygulama</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#interrupt-lari-etkinlestirmek">Interrupt’ları Etkinleştirmek</a>
+                
+            </li><li>
+                <a href="#timer-interrupt-larini-islemek">Timer Interrupt’larını İşlemek</a>
+                <ul>
+                    <li>
+                        <a href="#interrupt-sonu-end-of-interrupt">Interrupt Sonu (End of Interrupt)</a>
+                    </li><li>
+                        <a href="#timer-i-yapilandirmak">Timer’ı Yapılandırmak</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#deadlock-lar">Deadlock’lar</a>
+                <ul>
+                    <li>
+                        <a href="#bir-deadlock-a-yol-acmak">Bir Deadlock’a Yol Açmak</a>
+                    </li><li>
+                        <a href="#deadlock-u-duzeltmek">Deadlock’u Düzeltmek</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#bir-race-condition-i-duzeltmek">Bir Race Condition’ı Düzeltmek</a>
+                
+            </li><li>
+                <a href="#the-hlt-instruction">hlt Komutu</a>
+                
+            </li><li>
+                <a href="#klavye-girisi">Klavye Girişi</a>
+                <ul>
+                    <li>
+                        <a href="#scancode-lari-okumak">Scancode’ları Okumak</a>
+                    </li><li>
+                        <a href="#interpreting-the-scancodes">Scancode’ları Yorumlamak</a>
+                    </li><li>
+                        <a href="#klavyeyi-yapilandirmak">Klavyeyi Yapılandırmak</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ozet">Özet</a>
+                
+            </li><li>
+                <a href="#sirada-ne-var">Sırada ne var?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+        </ul>
+    </details>
+
+<h2 id="genel-bakis"><a class="zola-anchor" href="#genel-bakis" aria-label="Anchor link for: genel-bakis">🔗</a>Genel Bakış</h2>
+<p>Interrupt’lar, bağlı donanım cihazlarından CPU’yu bilgilendirmenin bir yolunu sağlar. Yani, kernel’in klavyeyi yeni karakterler için periyodik olarak kontrol etmesine (<a href="https://en.wikipedia.org/wiki/Polling_(computer_science)"><em>yoklama (polling)</em></a> adı verilen bir süreç) izin vermek yerine, klavye her tuş basışını kernel’e bildirebilir. Bu çok daha verimlidir, çünkü kernel’in yalnızca bir şey olduğunda harekete geçmesi gerekir. Ayrıca, kernel yalnızca bir sonraki yoklamada değil, hemen tepki verebileceği için daha hızlı tepki sürelerine de olanak tanır.</p>
+<p>Tüm donanım cihazlarını doğrudan CPU’ya bağlamak mümkün değildir. Bunun yerine, ayrı bir <em>interrupt controller</em> tüm cihazlardan gelen interrupt’ları toplar ve ardından CPU’yu bilgilendirir:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>                                    ____________             _____
+</span><span>               Timer ------------&gt; |            |           |     |
+</span><span>               Keyboard ---------&gt; | Interrupt  |---------&gt; | CPU |
+</span><span>               Other Hardware ---&gt; | Controller |           |_____|
+</span><span>               Etc. -------------&gt; |____________|
+</span><span>
+</span></code></pre>
+<p>Çoğu interrupt controller programlanabilirdir; bu da interrupt’lar için farklı öncelik seviyelerini destekledikleri anlamına gelir. Örneğin bu, doğru zaman tutmayı sağlamak için timer interrupt’larına klavye interrupt’larından daha yüksek bir öncelik vermeye olanak tanır.</p>
+<p>Exception’ların aksine, donanım interrupt’ları <em>asenkron</em> olarak meydana gelir. Bu, çalıştırılan koddan tamamen bağımsız oldukları ve herhangi bir zamanda meydana gelebilecekleri anlamına gelir. Böylece, kernel’imizde aniden tüm potansiyel eşzamanlılıkla (concurrency) ilgili hatalarıyla birlikte bir tür eşzamanlılık ortaya çıkar. Rust’ın katı sahiplik modeli burada bize yardımcı olur, çünkü değiştirilebilir global durumu yasaklar. Ancak deadlock’lar hâlâ mümkündür; bu yazının ilerleyen kısımlarında göreceğimiz gibi.</p>
+<h2 id="the-8259-pic"><a class="zola-anchor" href="#the-8259-pic" aria-label="Anchor link for: the-8259-pic">🔗</a>8259 PIC</h2>
+<p><a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a>, 1976’da tanıtılan programlanabilir bir interrupt controller’dır (PIC). Uzun süre önce yerini daha yeni <a href="https://en.wikipedia.org/wiki/Intel_APIC_Architecture">APIC</a> almıştır, ancak arayüzü geriye dönük uyumluluk nedenleriyle güncel sistemlerde hâlâ desteklenir. 8259 PIC’in kurulumu APIC’ten önemli ölçüde daha kolaydır, bu yüzden daha sonraki bir yazıda APIC’e geçmeden önce interrupt’larla tanışmak için onu kullanacağız.</p>
+<p>8259’un sekiz interrupt hattı ve CPU ile iletişim kurmak için çeşitli hatları vardır. O zamanların tipik sistemleri, 8259 PIC’in iki örneğiyle donatılmıştı; biri birincil (primary), biri ikincil (secondary) PIC olmak üzere, ikincisi birincilin interrupt hatlarından birine bağlıydı:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>                     ____________                          ____________
+</span><span>Real Time Clock --&gt; |            |   Timer -------------&gt; |            |
+</span><span>ACPI -------------&gt; |            |   Keyboard-----------&gt; |            |      _____
+</span><span>Available --------&gt; | Secondary  |----------------------&gt; | Primary    |     |     |
+</span><span>Available --------&gt; | Interrupt  |   Serial Port 2 -----&gt; | Interrupt  |---&gt; | CPU |
+</span><span>Mouse ------------&gt; | Controller |   Serial Port 1 -----&gt; | Controller |     |_____|
+</span><span>Co-Processor -----&gt; |            |   Parallel Port 2/3 -&gt; |            |
+</span><span>Primary ATA ------&gt; |            |   Floppy disk -------&gt; |            |
+</span><span>Secondary ATA ----&gt; |____________|   Parallel Port 1----&gt; |____________|
+</span><span>
+</span></code></pre>
+<p>Bu grafik, interrupt hatlarının tipik atamasını gösterir. 15 hattın çoğunun sabit bir eşlemesi olduğunu görüyoruz; örneğin, ikincil PIC’in 4. hattı fareye atanmıştır.</p>
+<p>Her controller iki <a href="https://os.phil-opp.com/tr/testing/#i-o-ports">I/O portu</a> aracılığıyla yapılandırılabilir: bir “komut” portu ve bir “veri” portu. Birincil controller için bu portlar <code>0x20</code> (komut) ve <code>0x21</code>’dir (veri). İkincil controller için ise <code>0xa0</code> (komut) ve <code>0xa1</code>’dir (veri). PIC’lerin nasıl yapılandırılabileceği hakkında daha fazla bilgi için <a href="https://wiki.osdev.org/8259_PIC">osdev.org’daki makaleye</a> bakın.</p>
+<h3 id="uygulama"><a class="zola-anchor" href="#uygulama" aria-label="Anchor link for: uygulama">🔗</a>Uygulama</h3>
+<p>PIC’lerin varsayılan yapılandırması kullanılabilir değildir, çünkü CPU’ya 0–15 aralığında interrupt vektör numaraları gönderir. Bu numaralar zaten CPU exception’ları tarafından işgal edilmiştir. Örneğin, 8 numarası bir double fault’a karşılık gelir. Bu çakışma sorununu düzeltmek için, PIC interrupt’larını farklı numaralara yeniden eşlememiz (remap) gerekir. Exception’larla çakışmadığı sürece gerçek aralık önemli değildir, ancak tipik olarak 32–47 aralığı seçilir; çünkü bunlar 32 exception yuvasından sonraki ilk boş numaralardır.</p>
+<p>Yapılandırma, PIC’lerin komut ve veri portlarına özel değerler yazılarak gerçekleşir. Neyse ki, <a href="https://docs.rs/pic8259/0.10.1/pic8259/"><code>pic8259</code></a> adında zaten bir crate var, bu yüzden başlatma dizisini kendimiz yazmamıza gerek yok. Ancak nasıl çalıştığıyla ilgileniyorsanız, <a href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">kaynak koduna</a> göz atın. Oldukça küçük ve iyi belgelenmiştir.</p>
+<p>Crate’i bir bağımlılık olarak eklemek için, projemize aşağıdakini ekliyoruz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">pic8259 </span><span>= </span><span style="color:#d69d85;">&quot;0.10.1&quot;
+</span></code></pre>
+<p>Crate’in sağladığı ana soyutlama, yukarıda gördüğümüz birincil/ikincil PIC düzenini temsil eden <a href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a> struct’ıdır. Aşağıdaki şekilde kullanılmak üzere tasarlanmıştır:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>pic8259::ChainedPics;
+</span><span style="color:#569cd6;">use</span><span> spin;
+</span><span>
+</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#b5cea8;">32</span><span>;
+</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span>: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#b4cea8;">PIC_1_OFFSET </span><span>+ </span><span style="color:#b5cea8;">8</span><span>;
+</span><span>
+</span><span style="color:#569cd6;">pub static </span><span style="color:#b4cea8;">PICS</span><span>: spin::Mutex&lt;ChainedPics&gt; =
+</span><span>    spin::Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{ ChainedPics::new(</span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>, </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span>) });
+</span></code></pre>
+<p>Yukarıda belirtildiği gibi, PIC’lerin ofsetlerini 32–47 aralığına ayarlıyoruz. <code>ChainedPics</code> struct’ını bir <code>Mutex</code> içine sararak, bir sonraki adımda ihtiyaç duyacağımız güvenli değiştirilebilir erişimi (<a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html#method.lock"><code>lock</code> metodu</a> aracılığıyla) elde edebiliriz. <code>ChainedPics::new</code> fonksiyonu unsafe’tir, çünkü yanlış ofsetler tanımsız davranışa neden olabilir.</p>
+<p>Artık 8259 PIC’i <code>init</code> fonksiyonumuzda başlatabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    gdt::init();
+</span><span>    interrupts::init_idt();
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span>.lock().initialize() }; </span><span style="color:#608b4e;">// yeni
+</span><span>}
+</span></code></pre>
+<p>PIC başlatmasını gerçekleştirmek için <a href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> fonksiyonunu kullanıyoruz. <code>ChainedPics::new</code> fonksiyonu gibi, bu fonksiyon da unsafe’tir; çünkü PIC yanlış yapılandırılırsa tanımsız davranışa neden olabilir.</p>
+<p>Her şey yolunda giderse, <code>cargo run</code> çalıştırdığımızda “It did not crash” mesajını görmeye devam etmeliyiz.</p>
+<h2 id="interrupt-lari-etkinlestirmek"><a class="zola-anchor" href="#interrupt-lari-etkinlestirmek" aria-label="Anchor link for: interrupt-lari-etkinlestirmek">🔗</a>Interrupt’ları Etkinleştirmek</h2>
+<p>Şimdiye kadar hiçbir şey olmadı, çünkü interrupt’lar CPU yapılandırmasında hâlâ devre dışı. Bu, CPU’nun interrupt controller’ı hiç dinlemediği anlamına gelir, bu yüzden hiçbir interrupt CPU’ya ulaşamaz. Bunu değiştirelim:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>init() {
+</span><span>    gdt::init();
+</span><span>    interrupts::init_idt();
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span>.lock().initialize() };
+</span><span>    x86_64::instructions::interrupts::enable();     </span><span style="color:#608b4e;">// yeni
+</span><span>}
+</span></code></pre>
+<p><code>x86_64</code> crate’inin <code>interrupts::enable</code> fonksiyonu, harici interrupt’ları etkinleştirmek için özel <code>sti</code> komutunu (“set interrupts”) çalıştırır. Şimdi <code>cargo run</code> denediğimizde, bir double fault’un meydana geldiğini görüyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/hardware-interrupts/qemu-hardware-timer-double-fault.png" alt="Donanım timer’ı nedeniyle EXCEPTION: DOUBLE FAULT yazdıran QEMU" /></p>
+<p>Bu double fault’un nedeni, donanım timer’ının (tam olarak <a href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a>) varsayılan olarak etkin olmasıdır; bu yüzden interrupt’ları etkinleştirir etkinleştirmez timer interrupt’ları almaya başlarız. Onun için henüz bir handler fonksiyonu tanımlamadığımız için, double fault handler’ımız çağrılır.</p>
+<h2 id="timer-interrupt-larini-islemek"><a class="zola-anchor" href="#timer-interrupt-larini-islemek" aria-label="Anchor link for: timer-interrupt-larini-islemek">🔗</a>Timer Interrupt’larını İşlemek</h2>
+<p><a href="https://os.phil-opp.com/tr/hardware-interrupts/#the-8259-pic">Yukarıdaki</a> grafikten gördüğümüz gibi, timer birincil PIC’in 0. hattını kullanır. Bu, CPU’ya interrupt 32 (0 + ofset 32) olarak ulaştığı anlamına gelir. İndeks 32’yi koda gömmek (hardcode) yerine, onu bir <code>InterruptIndex</code> enum’ında saklıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy)]
+</span><span>#[repr(u8)]
+</span><span style="color:#569cd6;">pub enum </span><span>InterruptIndex {
+</span><span>    Timer = </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>InterruptIndex {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>as_u8(self) -&gt; </span><span style="color:#569cd6;">u8 </span><span>{
+</span><span>        self </span><span style="color:#569cd6;">as u8
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>as_usize(self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>        </span><span style="color:#569cd6;">usize</span><span>::from(self.as_u8())
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Enum, her varyant için indeksi doğrudan belirtebilmemiz için bir <a href="https://doc.rust-lang.org/reference/items/enumerations.html#custom-discriminant-values-for-fieldless-enumerations">C benzeri enum</a>’dır. <code>repr(u8)</code> özniteliği, her varyantın bir <code>u8</code> olarak temsil edildiğini belirtir. Gelecekte diğer interrupt’lar için daha fazla varyant ekleyeceğiz.</p>
+<p>Artık timer interrupt’ı için bir handler fonksiyonu ekleyebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use crate</span><span>::print;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        […]
+</span><span>        idt[InterruptIndex::Timer.as_usize()]
+</span><span>            .set_handler_fn(timer_interrupt_handler); </span><span style="color:#608b4e;">// yeni
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>timer_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;.&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p><code>timer_interrupt_handler</code>’ımız, exception handler’larımızla aynı imzaya sahiptir; çünkü CPU exception’lara ve harici interrupt’lara aynı şekilde tepki verir (tek fark, bazı exception’ların bir hata kodu push’lamasıdır). <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> struct’ı <a href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> trait’ini uygular, bu yüzden tek tek girdilere dizi indeksleme söz dizimi aracılığıyla erişebiliriz.</p>
+<p>Timer interrupt handler’ımızda, ekrana bir nokta yazdırıyoruz. Timer interrupt’ı periyodik olarak gerçekleştiği için, her timer tıkında bir nokta belirmesini bekleriz. Ancak onu çalıştırdığımızda, yalnızca tek bir noktanın yazdırıldığını görüyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/hardware-interrupts/qemu-single-dot-printed.png" alt="Donanım timer’ı için yalnızca tek bir nokta yazdıran QEMU" /></p>
+<h3 id="interrupt-sonu-end-of-interrupt"><a class="zola-anchor" href="#interrupt-sonu-end-of-interrupt" aria-label="Anchor link for: interrupt-sonu-end-of-interrupt">🔗</a>Interrupt Sonu (End of Interrupt)</h3>
+<p>Bunun nedeni, PIC’in interrupt handler’ımızdan açık bir “interrupt sonu” (end of interrupt, EOI) sinyali beklemesidir. Bu sinyal controller’a, interrupt’ın işlendiğini ve sistemin bir sonraki interrupt’ı almaya hazır olduğunu söyler. Yani PIC, hâlâ ilk timer interrupt’ını işlemekle meşgul olduğumuzu düşünür ve bir sonrakini göndermeden önce sabırla EOI sinyalini bekler.</p>
+<p>EOI’yi göndermek için yine statik <code>PICS</code> struct’ımızı kullanıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>timer_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;.&quot;</span><span>);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>notify_end_of_interrupt</code>, interrupt’ı birincil mi yoksa ikincil PIC’in mi gönderdiğini bulur ve ardından ilgili controller’lara bir EOI sinyali göndermek için <code>command</code> ve <code>data</code> portlarını kullanır. İnterrupt’ı ikincil PIC gönderdiyse, ikincil PIC birincil PIC’in bir giriş hattına bağlı olduğu için her iki PIC’in de bilgilendirilmesi gerekir.</p>
+<p>Doğru interrupt vektör numarasını kullanmaya dikkat etmeliyiz; aksi takdirde yanlışlıkla önemli, gönderilmemiş bir interrupt’ı silebilir veya sistemimizin asılı kalmasına neden olabiliriz. Fonksiyonun unsafe olmasının nedeni budur.</p>
+<p>Şimdi <code>cargo run</code> çalıştırdığımızda, ekranda periyodik olarak beliren noktalar görüyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="Donanım timer’ını gösteren ardışık noktalar yazdıran QEMU" /></p>
+<h3 id="timer-i-yapilandirmak"><a class="zola-anchor" href="#timer-i-yapilandirmak" aria-label="Anchor link for: timer-i-yapilandirmak">🔗</a>Timer’ı Yapılandırmak</h3>
+<p>Kullandığımız donanım timer’ının adı kısaca <em>Programmable Interval Timer</em> ya da PIT’tir. Adının da söylediği gibi, iki interrupt arasındaki aralığı yapılandırmak mümkündür. Yakında <a href="https://wiki.osdev.org/APIC_timer">APIC timer’a</a> geçeceğimiz için burada ayrıntılara girmeyeceğiz, ancak OSDev wiki’sinde <a href="https://wiki.osdev.org/Programmable_Interval_Timer">PIT’i yapılandırma</a> hakkında kapsamlı bir makale var.</p>
+<h2 id="deadlock-lar"><a class="zola-anchor" href="#deadlock-lar" aria-label="Anchor link for: deadlock-lar">🔗</a>Deadlock’lar</h2>
+<p>Artık kernel’imizde bir tür eşzamanlılığımız var: Timer interrupt’ları asenkron olarak meydana gelir, bu yüzden <code>_start</code> fonksiyonumuzu herhangi bir zamanda kesebilirler. Neyse ki, Rust’ın sahiplik sistemi eşzamanlılıkla ilgili pek çok tür hatayı derleme zamanında önler. Dikkate değer bir istisna deadlock’lardır. Deadlock’lar, bir thread asla serbest kalmayacak bir kilidi (lock) almaya çalıştığında meydana gelir. Böylece thread süresiz olarak asılı kalır.</p>
+<p>Kernel’imizde halihazırda bir deadlock’a yol açabiliriz. Hatırlayın, <code>println</code> makromuz <code>vga_buffer::_print</code> fonksiyonunu çağırır; bu fonksiyon, bir spinlock kullanarak <a href="https://os.phil-opp.com/tr/vga-text-mode/#spinlocks">global bir <code>WRITER</code>’ı kilitler</a>:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>[…]
+</span><span>
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
+</span><span>}
+</span></code></pre>
+<p><code>WRITER</code>’ı kilitler, onun üzerinde <code>write_fmt</code> çağırır ve fonksiyonun sonunda örtük olarak kilidini açar. Şimdi, <code>WRITER</code> kilitliyken bir interrupt meydana geldiğini ve interrupt handler’ının da bir şeyler yazdırmaya çalıştığını hayal edin:</p>
+<table><thead><tr><th>Zaman adımı</th><th>_start</th><th>interrupt_handler</th></tr></thead><tbody>
+<tr><td>0</td><td><code>println!</code> çağırır</td><td> </td></tr>
+<tr><td>1</td><td><code>print</code>, <code>WRITER</code>’ı kilitler</td><td> </td></tr>
+<tr><td>2</td><td></td><td><strong>interrupt meydana gelir</strong>, handler çalışmaya başlar</td></tr>
+<tr><td>3</td><td></td><td><code>println!</code> çağırır</td></tr>
+<tr><td>4</td><td></td><td><code>print</code>, <code>WRITER</code>’ı kilitlemeye çalışır (zaten kilitli)</td></tr>
+<tr><td>5</td><td></td><td><code>print</code>, <code>WRITER</code>’ı kilitlemeye çalışır (zaten kilitli)</td></tr>
+<tr><td>…</td><td></td><td>…</td></tr>
+<tr><td><em>asla</em></td><td><em><code>WRITER</code>’ın kilidini aç</em></td><td></td></tr>
+</tbody></table>
+<p><code>WRITER</code> kilitlidir, bu yüzden interrupt handler’ı serbest kalana kadar bekler. Ancak bu asla gerçekleşmez, çünkü <code>_start</code> fonksiyonu yalnızca interrupt handler’ı geri döndükten sonra çalışmaya devam eder. Böylece tüm sistem asılı kalır.</p>
+<h3 id="bir-deadlock-a-yol-acmak"><a class="zola-anchor" href="#bir-deadlock-a-yol-acmak" aria-label="Anchor link for: bir-deadlock-a-yol-acmak">🔗</a>Bir Deadlock’a Yol Açmak</h3>
+<p><code>_start</code> fonksiyonumuzun sonundaki döngüde bir şeyler yazdırarak kernel’imizde kolayca böyle bir deadlock’a yol açabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    […]
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>        </span><span style="color:#569cd6;">use </span><span>blog_os::print;
+</span><span>        print!(</span><span style="color:#d69d85;">&quot;-&quot;</span><span>);        </span><span style="color:#608b4e;">// yeni
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Onu QEMU’da çalıştırdığımızda, şu biçimde bir çıktı alıyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/hardware-interrupts/./qemu-deadlock.png" alt="Birçok satır tire içeren ve hiç nokta içermeyen QEMU çıktısı" /></p>
+<p>İlk timer interrupt’ı meydana gelene kadar yalnızca sınırlı sayıda tirenin yazdırıldığını görüyoruz. Sonra sistem asılı kalır, çünkü timer interrupt handler’ı bir nokta yazdırmaya çalıştığında deadlock’a girer. Yukarıdaki çıktıda hiç nokta görmememizin nedeni budur.</p>
+<p>Tirelerin gerçek sayısı çalıştırmalar arasında değişir, çünkü timer interrupt’ı asenkron olarak meydana gelir. Bu belirsizlik (non-determinism), eşzamanlılıkla ilgili hataların hata ayıklamasını bu kadar zorlaştıran şeydir.</p>
+<h3 id="deadlock-u-duzeltmek"><a class="zola-anchor" href="#deadlock-u-duzeltmek" aria-label="Anchor link for: deadlock-u-duzeltmek">🔗</a>Deadlock’u Düzeltmek</h3>
+<p>Bu deadlock’tan kaçınmak için, <code>Mutex</code> kilitli olduğu sürece interrupt’ları devre dışı bırakabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">/// Verilen biçimlendirilmiş dizeyi, global `WRITER` örneği aracılığıyla
+</span><span style="color:#608b4e;">/// VGA metin arabelleğine yazdırır.
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;   </span><span style="color:#608b4e;">// yeni
+</span><span>
+</span><span>    interrupts::without_interrupts(|| {     </span><span style="color:#608b4e;">// yeni
+</span><span>        </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
+</span><span>    });
+</span><span>}
+</span></code></pre>
+<p><a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> fonksiyonu bir <a href="https://doc.rust-lang.org/book/ch13-01-closures.html">closure</a> alır ve onu interrupt’sız bir ortamda çalıştırır. Onu, <code>Mutex</code> kilitli olduğu sürece hiçbir interrupt’ın meydana gelememesini sağlamak için kullanıyoruz. Kernel’imizi şimdi çalıştırdığımızda, asılı kalmadan çalışmaya devam ettiğini görüyoruz. (Hâlâ herhangi bir nokta fark etmiyoruz, ancak bunun nedeni çok hızlı kaymalarıdır. Yazdırmayı yavaşlatmayı deneyin; örneğin döngünün içine bir <code>for _ in 0..10000 {}</code> koyarak.)</p>
+<p>Aynı değişikliği, onunla da deadlock’ların oluşmamasını sağlamak için seri yazdırma fonksiyonumuza da uygulayabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/serial.rs içinde
+</span><span>
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: ::core::fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;       </span><span style="color:#608b4e;">// yeni
+</span><span>
+</span><span>    interrupts::without_interrupts(|| {         </span><span style="color:#608b4e;">// yeni
+</span><span>        </span><span style="color:#b4cea8;">SERIAL1
+</span><span>            .lock()
+</span><span>            .write_fmt(args)
+</span><span>            .expect(</span><span style="color:#d69d85;">&quot;Printing to serial failed&quot;</span><span>);
+</span><span>    });
+</span><span>}
+</span></code></pre>
+<p>İnterrupt’ları devre dışı bırakmanın genel bir çözüm olmaması gerektiğine dikkat edin. Sorun, en kötü durum interrupt gecikmesini, yani sistemin bir interrupt’a tepki verene kadar geçen süreyi artırmasıdır. Bu nedenle, interrupt’lar yalnızca çok kısa bir süre için devre dışı bırakılmalıdır.</p>
+<h2 id="bir-race-condition-i-duzeltmek"><a class="zola-anchor" href="#bir-race-condition-i-duzeltmek" aria-label="Anchor link for: bir-race-condition-i-duzeltmek">🔗</a>Bir Race Condition’ı Düzeltmek</h2>
+<p><code>cargo test</code> çalıştırırsanız, <code>test_println_output</code> testinin başarısız olduğunu görebilirsiniz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --lib
+</span><span>[…]
+</span><span>Running 4 tests
+</span><span>test_breakpoint_exception...[ok]
+</span><span>test_println... [ok]
+</span><span>test_println_many... [ok]
+</span><span>test_println_output... [failed]
+</span><span>
+</span><span>Error: panicked at &#39;assertion failed: `(left == right)`
+</span><span>  left: `&#39;.&#39;`,
+</span><span> right: `&#39;S&#39;`&#39;, src/vga_buffer.rs:205:9
+</span></code></pre>
+<p>Bunun nedeni, test ile timer handler’ımız arasındaki bir <em>race condition</em>’dır. Hatırlayın, test şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span>;
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s);
+</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> screen_char = </span><span style="color:#b4cea8;">WRITER</span><span>.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
+</span><span>        assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Test, VGA arabelleğine bir dize yazdırır ve ardından <code>buffer_chars</code> dizisi üzerinde elle iterasyon yaparak çıktıyı kontrol eder. Race condition, timer interrupt handler’ının <code>println</code> ile ekran karakterlerinin okunması arasında çalışabilmesi nedeniyle meydana gelir. Bunun, Rust’ın derleme zamanında tamamen önlediği tehlikeli bir <em>veri yarışı (data race)</em> olmadığını unutmayın. Ayrıntılar için <a href="https://doc.rust-lang.org/nomicon/races.html"><em>Rustonomicon</em>’a</a> bakın.</p>
+<p>Bunu düzeltmek için, <code>WRITER</code>’ı testin tüm süresi boyunca kilitli tutmamız gerekir; böylece timer handler’ı arada ekrana bir <code>.</code> yazamaz. Düzeltilmiş test şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span>;
+</span><span>    interrupts::without_interrupts(|| {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> writer = </span><span style="color:#b4cea8;">WRITER</span><span>.lock();
+</span><span>        writeln!(writer, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s).expect(</span><span style="color:#d69d85;">&quot;writeln failed&quot;</span><span>);
+</span><span>        </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
+</span><span>            </span><span style="color:#569cd6;">let</span><span> screen_char = writer.buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
+</span><span>            assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
+</span><span>        }
+</span><span>    });
+</span><span>}
+</span></code></pre>
+<p>Aşağıdaki değişiklikleri yaptık:</p>
+<ul>
+<li><code>lock()</code> metodunu açıkça kullanarak writer’ı testin tamamı boyunca kilitli tutuyoruz. <code>println</code> yerine, zaten kilitli bir writer’a yazdırmaya olanak tanıyan <a href="https://doc.rust-lang.org/core/macro.writeln.html"><code>writeln</code></a> makrosunu kullanıyoruz.</li>
+<li>Başka bir deadlock’tan kaçınmak için, testin süresi boyunca interrupt’ları devre dışı bırakıyoruz. Aksi takdirde, writer hâlâ kilitliyken test kesintiye uğrayabilir.</li>
+<li>Timer interrupt handler’ı testten önce hâlâ çalışabileceği için, <code>s</code> dizesini yazdırmadan önce ek bir yeni satır <code>\n</code> yazdırıyoruz. Bu sayede, timer handler’ı mevcut satıra zaten bazı <code>.</code> karakterleri yazdırmışsa test başarısızlığından kaçınırız.</li>
+</ul>
+<p>Yukarıdaki değişikliklerle, <code>cargo test</code> artık deterministik olarak yeniden başarılı oluyor.</p>
+<p>Bu, yalnızca bir test başarısızlığına neden olan çok zararsız bir race condition’dı. Tahmin edebileceğiniz gibi, diğer race condition’lar belirsiz (non-deterministic) doğaları nedeniyle hata ayıklaması çok daha zor olabilir. Neyse ki Rust, race condition’ların en ciddi sınıfı olan veri yarışlarından bizi korur; çünkü bunlar sistem çökmeleri ve sessiz bellek bozulmaları dahil her türlü tanımsız davranışa neden olabilir.</p>
+<h2 id="the-hlt-instruction"><a class="zola-anchor" href="#the-hlt-instruction" aria-label="Anchor link for: the-hlt-instruction">🔗</a><code>hlt</code> Komutu</h2>
+<p>Şimdiye kadar, <code>_start</code> ve <code>panic</code> fonksiyonlarımızın sonunda basit, boş bir döngü ifadesi kullandık. Bu, CPU’nun sonsuza dek dönmesine neden olur ve böylece beklendiği gibi çalışır. Ancak aynı zamanda çok verimsizdir, çünkü yapacak iş olmamasına rağmen CPU tam hızda çalışmaya devam eder. Kernel’inizi çalıştırdığınızda bu sorunu görev yöneticinizde görebilirsiniz: QEMU süreci her zaman %100’e yakın CPU’ya ihtiyaç duyar.</p>
+<p>Gerçekten yapmak istediğimiz şey, bir sonraki interrupt gelene kadar CPU’yu durdurmaktır (halt). Bu, CPU’nun çok daha az enerji tükettiği bir uyku durumuna girmesine olanak tanır. <a href="https://en.wikipedia.org/wiki/HLT_(x86_instruction)"><code>hlt</code> komutu</a> tam olarak bunu yapar. Enerji açısından verimli bir sonsuz döngü oluşturmak için bu komutu kullanalım:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>hlt_loop() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{
+</span><span>        x86_64::instructions::hlt();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>instructions::hlt</code> fonksiyonu, yalnızca assembly komutunun etrafındaki <a href="https://github.com/rust-osdev/x86_64/blob/5e8e218381c5205f5777cb50da3ecac5d7e3b1ab/src/instructions/mod.rs#L16-L22">ince bir sarmalayıcıdır (thin wrapper)</a>. Güvenlidir, çünkü bellek güvenliğini tehlikeye atmasının hiçbir yolu yoktur.</p>
+<p>Artık bu <code>hlt_loop</code>’u <code>_start</code> ve <code>panic</code> fonksiyonlarımızdaki sonsuz döngüler yerine kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    […]
+</span><span>
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
+</span><span>    blog_os::hlt_loop();            </span><span style="color:#608b4e;">// yeni
+</span><span>}
+</span><span>
+</span><span>
+</span><span>#[cfg(not(test))]
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    blog_os::hlt_loop();            </span><span style="color:#608b4e;">// yeni
+</span><span>}
+</span><span>
+</span></code></pre>
+<p><code>lib.rs</code>’imizi de güncelleyelim:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">/// `cargo test` için giriş noktası
+</span><span>#[cfg(test)]
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    init();
+</span><span>    test_main();
+</span><span>    hlt_loop();         </span><span style="color:#608b4e;">// yeni
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>test_panic_handler(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
+</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    exit_qemu(QemuExitCode::Failed);
+</span><span>    hlt_loop();         </span><span style="color:#608b4e;">// yeni
+</span><span>}
+</span></code></pre>
+<p>Kernel’imizi şimdi QEMU’da çalıştırdığımızda, çok daha düşük bir CPU kullanımı görüyoruz.</p>
+<h2 id="klavye-girisi"><a class="zola-anchor" href="#klavye-girisi" aria-label="Anchor link for: klavye-girisi">🔗</a>Klavye Girişi</h2>
+<p>Artık harici cihazlardan gelen interrupt’ları işleyebildiğimize göre, nihayet klavye girişi için destek ekleyebiliriz. Bu, kernel’imizle ilk kez etkileşim kurmamıza olanak tanıyacak.</p>
+<aside class="post_aside">
+<p>Burada yalnızca <a href="https://en.wikipedia.org/wiki/PS/2_port">PS/2</a> klavyelerin nasıl işleneceğini açıkladığımızı, USB klavyeleri değil, unutmayın. Ancak anakart, eski yazılımı desteklemek için USB klavyeleri PS/2 cihazları olarak öykünür (emulate), bu yüzden kernel’imizde USB desteğine sahip olana kadar USB klavyeleri güvenle göz ardı edebiliriz.</p>
+</aside>
+<p>Donanım timer’ı gibi, klavye controller’ı da varsayılan olarak zaten etkindir. Yani bir tuşa bastığınızda, klavye controller’ı PIC’e bir interrupt gönderir; o da onu CPU’ya iletir. CPU IDT’de bir handler fonksiyonu arar, ancak karşılık gelen girdi boştur. Bu nedenle bir double fault meydana gelir.</p>
+<p>O halde klavye interrupt’ı için bir handler fonksiyonu ekleyelim. Timer interrupt’ı için handler’ı tanımlama şeklimize oldukça benzer; yalnızca farklı bir interrupt numarası kullanır:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy)]
+</span><span>#[repr(u8)]
+</span><span style="color:#569cd6;">pub enum </span><span>InterruptIndex {
+</span><span>    Timer = </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>,
+</span><span>    Keyboard, </span><span style="color:#608b4e;">// yeni
+</span><span>}
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
+</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
+</span><span>        […]
+</span><span>        </span><span style="color:#608b4e;">// yeni
+</span><span>        idt[InterruptIndex::Keyboard.as_usize()]
+</span><span>            .set_handler_fn(keyboard_interrupt_handler);
+</span><span>
+</span><span>        idt
+</span><span>    };
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;k&quot;</span><span>);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><a href="https://os.phil-opp.com/tr/hardware-interrupts/#the-8259-pic">Yukarıdaki</a> grafikten gördüğümüz gibi, klavye birincil PIC’in 1. hattını kullanır. Bu, CPU’ya interrupt 33 (1 + ofset 32) olarak ulaştığı anlamına gelir. Bu indeksi <code>InterruptIndex</code> enum’ına yeni bir <code>Keyboard</code> varyantı olarak ekliyoruz. Değeri açıkça belirtmemize gerek yok, çünkü varsayılan olarak bir önceki değerin bir fazlasıdır; bu da yine 33’tür. Interrupt handler’ında bir <code>k</code> yazdırıyor ve interrupt controller’a interrupt sonu sinyalini gönderiyoruz.</p>
+<p>Şimdi, bir tuşa bastığımızda ekranda bir <code>k</code> belirdiğini görüyoruz. Ancak bu yalnızca bastığımız ilk tuş için çalışıyor. Tuşlara basmaya devam etsek bile, ekranda daha fazla <code>k</code> belirmiyor. Bunun nedeni, basılan tuşun <em>scancode</em> adı verilen kodunu okuyana kadar klavye controller’ının başka bir interrupt göndermeyecek olmasıdır.</p>
+<h3 id="scancode-lari-okumak"><a class="zola-anchor" href="#scancode-lari-okumak" aria-label="Anchor link for: scancode-lari-okumak">🔗</a>Scancode’ları Okumak</h3>
+<p><em>Hangi</em> tuşa basıldığını öğrenmek için, klavye controller’ını sorgulamamız gerekir. Bunu, PS/2 controller’ının veri portundan, yani <code>0x60</code> numaralı <a href="https://os.phil-opp.com/tr/testing/#i-o-ports">I/O portundan</a> okuyarak yaparız:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
+</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
+</span><span>    print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, scancode);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Klavyenin veri portundan bir bayt okumak için <code>x86_64</code> crate’inin <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> tipini kullanıyoruz. Bu bayta <a href="https://en.wikipedia.org/wiki/Scancode"><em>scancode</em></a> denir ve tuş basışını/bırakışını temsil eder. Scancode ile şimdilik, onu ekrana yazdırmak dışında bir şey yapmıyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/hardware-interrupts/qemu-printing-scancodes.gif" alt="Tuşlara basıldığında ekrana scancode’ları yazdıran QEMU" /></p>
+<p>Yukarıdaki görsel, yavaşça “123” yazdığımı gösteriyor. Bitişik tuşların bitişik scancode’lara sahip olduğunu ve bir tuşa basmanın, onu bırakmaktan farklı bir scancode’a neden olduğunu görüyoruz. Peki scancode’ları gerçek tuş eylemlerine tam olarak nasıl çeviririz?</p>
+<h3 id="interpreting-the-scancodes"><a class="zola-anchor" href="#interpreting-the-scancodes" aria-label="Anchor link for: interpreting-the-scancodes">🔗</a>Scancode’ları Yorumlamak</h3>
+<p>Scancode’lar ile tuşlar arasındaki eşleme için üç farklı standart vardır; bunlara <em>scancode setleri</em> denir. Üçü de erken IBM bilgisayarlarının klavyelerine dayanır: <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a>, <a href="https://en.wikipedia.org/wiki/IBM_3270_PC">IBM 3270 PC</a> ve <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer/AT">IBM AT</a>. Sonraki bilgisayarlar neyse ki yeni scancode setleri tanımlama eğilimini sürdürmedi, bunun yerine mevcut setleri öykünüp (emulate) genişletti. Günümüzde, çoğu klavye üç setten herhangi birini öykünecek şekilde yapılandırılabilir.</p>
+<p>Varsayılan olarak, PS/2 klavyeler scancode seti 1’i (“XT”) öykünür. Bu sette, bir scancode baytının alt 7 biti tuşu tanımlar ve en anlamlı bit, bunun bir basış (“0”) mı yoksa bir bırakış (“1”) mı olduğunu tanımlar. Orijinal <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a> klavyesinde bulunmayan tuşlar, örneğin tuş takımındaki enter tuşu, art arda iki scancode üretir: bir <code>0xe0</code> kaçış (escape) baytı ve ardından tuşu temsil eden bir bayt. Tüm set 1 scancode’larının ve karşılık gelen tuşlarının listesi için <a href="https://wiki.osdev.org/Keyboard#Scan_Code_Set_1">OSDev Wiki’sine</a> göz atın.</p>
+<p>Scancode’ları tuşlara çevirmek için bir <code>match</code> ifadesi kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
+</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">// yeni
+</span><span>    </span><span style="color:#569cd6;">let</span><span> key = </span><span style="color:#569cd6;">match</span><span> scancode {
+</span><span>        </span><span style="color:#b5cea8;">0x02 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;1&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x03 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;2&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x04 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;3&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x05 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;4&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x06 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;5&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x07 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;6&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x08 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;7&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x09 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;8&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x0a </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;9&#39;</span><span>),
+</span><span>        </span><span style="color:#b5cea8;">0x0b </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;0&#39;</span><span>),
+</span><span>        </span><span style="color:#569cd6;">_ =&gt; </span><span>None,
+</span><span>    };
+</span><span>    </span><span style="color:#569cd6;">if let </span><span>Some(key) = key {
+</span><span>        print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, key);
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Yukarıdaki kod, 0-9 sayı tuşlarının basışlarını çevirir ve diğer tüm tuşları yok sayar. Her scancode’a bir karakter veya <code>None</code> atamak için bir <a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a> ifadesi kullanır. Ardından, isteğe bağlı <code>key</code>’i yapısöküme (destructure) uğratmak için <a href="https://doc.rust-lang.org/book/ch19-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a> kullanır. Pattern’de aynı <code>key</code> değişken adını kullanarak, önceki bildirimi <a href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">gölgeleriz (shadow)</a>; bu, Rust’ta <code>Option</code> tiplerini yapısöküme uğratmak için yaygın bir örüntüdür.</p>
+<p>Artık sayılar yazabiliriz:</p>
+<p><img src="https://os.phil-opp.com/tr/hardware-interrupts/qemu-printing-numbers.gif" alt="Ekrana sayılar yazdıran QEMU" /></p>
+<p>Diğer tuşları çevirmek de aynı şekilde çalışır. Neyse ki, scancode seti 1 ve 2’nin scancode’larını çevirmek için <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/"><code>pc-keyboard</code></a> adında bir crate var, bu yüzden bunu kendimiz uygulamamıza gerek yok. Crate’i kullanmak için, onu <code>Cargo.toml</code>’umuza ekliyor ve <code>lib.rs</code>’imizde içe aktarıyoruz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">pc-keyboard </span><span>= </span><span style="color:#d69d85;">&quot;0.7.0&quot;
+</span></code></pre>
+<p>Artık bu crate’i <code>keyboard_interrupt_handler</code>’ımızı yeniden yazmak için kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
+</span><span>    _stack_frame: InterruptStackFrame)
+</span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
+</span><span>    </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
+</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
+</span><span>
+</span><span>    lazy_static! {
+</span><span>        </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
+</span><span>            Mutex::new(Keyboard::new(ScancodeSet1::new(),
+</span><span>                layouts::Us104Key, HandleControl::Ignore)
+</span><span>            );
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> keyboard = </span><span style="color:#b4cea8;">KEYBOARD</span><span>.lock();
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
+</span><span>    </span><span style="color:#569cd6;">if let </span><span>Ok(Some(key_event)) = keyboard.add_byte(scancode) {
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Some(key) = keyboard.process_keyevent(key_event) {
+</span><span>            </span><span style="color:#569cd6;">match</span><span> key {
+</span><span>                DecodedKey::Unicode(character) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, character),
+</span><span>                DecodedKey::RawKey(key) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, key),
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
+</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Bir Mutex tarafından korunan statik bir <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> nesnesi oluşturmak için <code>lazy_static</code> makrosunu kullanıyoruz. <code>Keyboard</code>’u bir ABD klavye düzeni ve scancode seti 1 ile başlatıyoruz. <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> parametresi, <code>ctrl+[a-z]</code>’yi <code>U+0001</code>’den <code>U+001A</code>’ya kadar Unicode karakterlerine eşlemeye olanak tanır. Bunu yapmak istemiyoruz, bu yüzden <code>ctrl</code>’yi normal tuşlar gibi ele almak için <code>Ignore</code> seçeneğini kullanıyoruz.</p>
+<p>Her interrupt’ta Mutex’i kilitliyor, scancode’u klavye controller’ından okuyor ve onu, scancode’u bir <code>Option&lt;KeyEvent&gt;</code>’e çeviren <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> metoduna geçiriyoruz. <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a>, olaya neden olan tuşu ve bunun bir basış mı yoksa bırakış olayı mı olduğunu içerir.</p>
+<p>Bu tuş olayını yorumlamak için, onu mümkünse tuş olayını bir karaktere çeviren <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> metoduna geçiriyoruz. Örneğin, <code>A</code> tuşunun bir basış olayını, shift tuşuna basılıp basılmadığına bağlı olarak küçük harf <code>a</code> veya büyük harf <code>A</code> karakterine çevirir.</p>
+<p>Bu değiştirilmiş interrupt handler’ıyla, artık metin yazabiliriz:</p>
+<p><img src="https://os.phil-opp.com/tr/hardware-interrupts/qemu-typing.gif" alt="QEMU’da “Hello World” yazmak" /></p>
+<h3 id="klavyeyi-yapilandirmak"><a class="zola-anchor" href="#klavyeyi-yapilandirmak" aria-label="Anchor link for: klavyeyi-yapilandirmak">🔗</a>Klavyeyi Yapılandırmak</h3>
+<p>Bir PS/2 klavyenin bazı yönlerini yapılandırmak mümkündür; örneğin hangi scancode setini kullanması gerektiğini. Bu yazı zaten yeterince uzun olduğu için bunu burada ele almayacağız, ancak OSDev Wiki’sinde olası <a href="https://wiki.osdev.org/PS/2_Keyboard#Commands">yapılandırma komutlarına</a> genel bir bakış var.</p>
+<h2 id="ozet"><a class="zola-anchor" href="#ozet" aria-label="Anchor link for: ozet">🔗</a>Özet</h2>
+<p>Bu yazı, harici interrupt’ların nasıl etkinleştirileceğini ve işleneceğini açıkladı. 8259 PIC’i ve onun birincil/ikincil düzenini, interrupt numaralarının yeniden eşlenmesini ve “interrupt sonu” sinyalini öğrendik. Donanım timer’ı ve klavye için handler’lar uyguladık ve CPU’yu bir sonraki interrupt’a kadar durduran <code>hlt</code> komutunu öğrendik.</p>
+<p>Artık kernel’imizle etkileşim kurabiliyoruz ve küçük bir kabuk (shell) veya basit oyunlar oluşturmak için bazı temel yapı taşlarına sahibiz.</p>
+<h2 id="sirada-ne-var"><a class="zola-anchor" href="#sirada-ne-var" aria-label="Anchor link for: sirada-ne-var">🔗</a>Sırada ne var?</h2>
+<p>Timer interrupt’ları bir işletim sistemi için olmazsa olmazdır, çünkü çalışan süreci periyodik olarak kesip kernel’in kontrolü yeniden ele geçirmesine olanak tanırlar. Kernel daha sonra farklı bir sürece geçebilir ve paralel olarak çalışan birden çok süreç yanılsaması oluşturabilir.</p>
+<p>Ancak süreçler veya thread’ler oluşturmadan önce, onlar için bellek ayırmanın bir yoluna ihtiyacımız var. Sonraki yazılar, bu temel yapı taşını sağlamak için bellek yönetimini inceleyecek.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Beni Destekle</h2>
+<p>Bu blogu ve ilişkili kütüphaneleri oluşturmak ve sürdürmek çok emek gerektiriyor, ve bunu yapmaktan gerçekten zevk alıyorum. Beni destekleyerek yeni içerik, yeni özellikler ve sürekli bakım için daha fazla zaman ayırmama olanak tanıyorsunuz. Beni desteklemenin en iyi yolu <a href="https://github.com/sponsors/phil-opp"><em>GitHub'da sponsor olmak</em></a>. Teşekkürler!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/tr/double-fault-exceptions/">&laquo; Double Fault&#x27;lar</a>
+        
+        
+            <a class="next" href="/tr/paging-introduction/">Paging&#x27;e Giriş &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Yorumlar</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Bir sorunuz mu var, geri bildirim paylaşmak veya fikirlerinizi tartışmak mı istiyorsunuz? Buraya yorum bırakmaktan çekinmeyin! Lütfen İngilizce kullanın ve Rust'ın <a href="https://www.rust-lang.org/policies/code-of-conduct">davranış kurallarına</a> uyun. Bu yorum dizisi doğrudan <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Hardware%20Interrupts%20%28tr%29%22%20in%3Atitle"><em>GitHub'daki bir tartışmaya</em></a> bağlıdır, dolayısıyla isterseniz oraya da yorum yapabilirsiniz.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Hardware Interrupts (tr)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="tr"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Hardware%20Interrupts%20%28tr%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Mümkünse yorumlarınızı İngilizce bırakınız.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/hardware-interrupts/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ar" class=""><a href="https://os.phil-opp.com/ar/hardware-interrupts/">
+                        العربية
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/hardware-interrupts/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/hardware-interrupts/">
+                        Persian
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/hardware-interrupts/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/hardware-interrupts/">
+                        Korean
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/hardware-interrupts/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/hardware-interrupts/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

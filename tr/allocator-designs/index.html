@@ -1,0 +1,1129 @@
+<!doctype html>
+
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Bu yazı, heap allocator’ların sıfırdan nasıl uygulanacağını açıklar. Bump ayırma, bağlı liste ayırma ve sabit boyutlu blok ayırma dahil olmak üzere fa…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/tr/allocator-designs/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Allocator Tasarımları | Rust ile İşletim Sistemi Yazıyoruz</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Rust ile İşletim Sistemi Yazıyoruz</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/tr" title="All Posts">« Tüm Yazılar</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>İçindekiler</h2>
+    <ol>
+        <li>
+            <a href="#giris">Giriş</a>
+            <ol>
+                <li>
+                    <a href="#tasarim-hedefleri">Tasarım Hedefleri</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#bump-allocator">Bump Allocator</a>
+            <ol>
+                <li>
+                    <a href="#fikir">Fikir</a>
+                </li><li>
+                    <a href="#uygulama">Uygulama</a>
+                </li><li>
+                    <a href="#globalalloc-u-uygulamak">GlobalAlloc’u Uygulamak</a>
+                </li><li>
+                    <a href="#kullanmak">Kullanmak</a>
+                </li><li>
+                    <a href="#tartisma">Tartışma</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#linked-list-allocator">Bağlı Liste Allocator’ı</a>
+            <ol>
+                <li>
+                    <a href="#uygulama-1">Uygulama</a>
+                </li><li>
+                    <a href="#kullanmak-1">Kullanmak</a>
+                </li><li>
+                    <a href="#tartisma-1">Tartışma</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#fixed-size-block-allocator">Sabit Boyutlu Blok Allocator’ı</a>
+            <ol>
+                <li>
+                    <a href="#giris-1">Giriş</a>
+                </li><li>
+                    <a href="#uygulama-2">Uygulama</a>
+                </li><li>
+                    <a href="#kullanmak-2">Kullanmak</a>
+                </li><li>
+                    <a href="#tartisma-2">Tartışma</a>
+                </li><li>
+                    <a href="#cesitlemeler">Çeşitlemeler</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ozet">Özet</a>
+            
+        </li><li>
+            <a href="#sirada-ne-var">Sırada ne var?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Allocator Tasarımları</h1>
+    <time datetime="2020-01-20" class="post-date">
+        Jan 20, 2020
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Çevrilmiş İçerik:</b>
+            Bu, <strong><a href="https://os.phil-opp.com/allocator-designs/">Allocator Designs</a></strong> adlı gönderinin topluluk tarafından yapılmış bir çevirisidir. Eksik, güncel olmayan veya hata içeriyor olabilir. Lütfen herhangi bir sorunu bildirin!
+            </p>
+            <p>
+                Translation by <a href="https://github.com/rhotav">@rhotav</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Bu yazı, heap allocator’ların sıfırdan nasıl uygulanacağını açıklar. Bump ayırma, bağlı liste ayırma ve sabit boyutlu blok ayırma dahil olmak üzere farklı allocator tasarımlarını sunar ve tartışır. Üç tasarımın her biri için, kernel’imizde kullanılabilecek temel bir uygulama oluşturacağız.</p>
+<span id="continue-reading"></span>
+<p>Bu blog <a href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/allocator-designs/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a href="https://github.com/phil-opp/blog_os/tree/post-11"><code>post-11</code></a> dalında bulunabilir.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>İçindekiler</b></summary>
+        <ul>
+            <li>
+                <a href="#giris">Giriş</a>
+                <ul>
+                    <li>
+                        <a href="#tasarim-hedefleri">Tasarım Hedefleri</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#bump-allocator">Bump Allocator</a>
+                <ul>
+                    <li>
+                        <a href="#fikir">Fikir</a>
+                    </li><li>
+                        <a href="#uygulama">Uygulama</a>
+                    </li><li>
+                        <a href="#globalalloc-u-uygulamak">GlobalAlloc’u Uygulamak</a>
+                    </li><li>
+                        <a href="#kullanmak">Kullanmak</a>
+                    </li><li>
+                        <a href="#tartisma">Tartışma</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#linked-list-allocator">Bağlı Liste Allocator’ı</a>
+                <ul>
+                    <li>
+                        <a href="#uygulama-1">Uygulama</a>
+                    </li><li>
+                        <a href="#kullanmak-1">Kullanmak</a>
+                    </li><li>
+                        <a href="#tartisma-1">Tartışma</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#fixed-size-block-allocator">Sabit Boyutlu Blok Allocator’ı</a>
+                <ul>
+                    <li>
+                        <a href="#giris-1">Giriş</a>
+                    </li><li>
+                        <a href="#uygulama-2">Uygulama</a>
+                    </li><li>
+                        <a href="#kullanmak-2">Kullanmak</a>
+                    </li><li>
+                        <a href="#tartisma-2">Tartışma</a>
+                    </li><li>
+                        <a href="#cesitlemeler">Çeşitlemeler</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ozet">Özet</a>
+                
+            </li><li>
+                <a href="#sirada-ne-var">Sırada ne var?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+        </ul>
+    </details>
+
+<h2 id="giris"><a class="zola-anchor" href="#giris" aria-label="Anchor link for: giris">🔗</a>Giriş</h2>
+<p><a href="https://os.phil-opp.com/tr/heap-allocation/">Önceki yazıda</a>, kernel’imize temel heap ayırma desteği ekledik. Bunun için, sayfa tablolarında <a href="https://os.phil-opp.com/tr/heap-allocation/#creating-a-kernel-heap">yeni bir bellek bölgesi oluşturduk</a> ve o belleği yönetmek için <a href="https://os.phil-opp.com/tr/heap-allocation/#using-an-allocator-crate"><code>linked_list_allocator</code> crate’ini kullandık</a>. Artık çalışan bir heap’imiz olsa da, işin nasıl çalıştığını anlamaya çalışmadan çoğunu allocator crate’ine bıraktık.</p>
+<p>Bu yazıda, mevcut bir allocator crate’ine güvenmek yerine kendi heap allocator’ımızı sıfırdan nasıl oluşturacağımızı göstereceğiz. Basit bir <em>bump allocator</em> ve temel bir <em>sabit boyutlu blok allocator’ı</em> dahil olmak üzere farklı allocator tasarımlarını tartışacak ve bu bilgiyi (<code>linked_list_allocator</code> crate’ine kıyasla) geliştirilmiş performansa sahip bir allocator uygulamak için kullanacağız.</p>
+<h3 id="tasarim-hedefleri"><a class="zola-anchor" href="#tasarim-hedefleri" aria-label="Anchor link for: tasarim-hedefleri">🔗</a>Tasarım Hedefleri</h3>
+<p>Bir allocator’ın sorumluluğu, mevcut heap belleğini yönetmektir. <code>alloc</code> çağrılarında kullanılmayan belleği döndürmesi ve <code>dealloc</code> tarafından serbest bırakılan belleği takip etmesi gerekir, böylece tekrar yeniden kullanılabilir. En önemlisi, başka bir yerde zaten kullanımda olan belleği asla teslim etmemelidir; çünkü bu tanımsız davranışa neden olurdu.</p>
+<p>Doğruluğun yanı sıra, pek çok ikincil tasarım hedefi vardır. Örneğin, allocator mevcut belleği etkili bir şekilde kullanmalı ve <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)"><em>parçalanmayı (fragmentation)</em></a> düşük tutmalıdır. Ayrıca, eşzamanlı (concurrent) uygulamalar için iyi çalışmalı ve herhangi bir sayıda işlemciye ölçeklenmelidir. Maksimum performans için, <a href="https://www.geeksforgeeks.org/locality-of-reference-and-cache-operation-in-cache-memory/">önbellek konumsallığını (cache locality)</a> iyileştirmek ve <a href="https://mechanical-sympathy.blogspot.de/2011/07/false-sharing.html">yanlış paylaşımdan (false sharing)</a> kaçınmak için bellek düzenini CPU önbelleklerine göre bile optimize edebilir.</p>
+<p>Bu gereksinimler iyi allocator’ları çok karmaşık hale getirebilir. Örneğin, <a href="http://jemalloc.net/">jemalloc</a>’un 30.000’den fazla satır kodu var. Bu karmaşıklık, tek bir hatanın ciddi güvenlik açıklarına yol açabileceği kernel kodunda genellikle istenmez. Neyse ki, kernel kodunun ayırma örüntüleri genellikle kullanıcı alanı koduna kıyasla çok daha basittir, bu yüzden nispeten basit allocator tasarımları çoğu zaman yeterli olur.</p>
+<p>Aşağıda, üç olası kernel allocator tasarımını sunuyor ve avantaj ve dezavantajlarını açıklıyoruz.</p>
+<h2 id="bump-allocator"><a class="zola-anchor" href="#bump-allocator" aria-label="Anchor link for: bump-allocator">🔗</a>Bump Allocator</h2>
+<p>En basit allocator tasarımı bir <em>bump allocator</em>’dır (<em>stack allocator</em> olarak da bilinir). Belleği doğrusal olarak ayırır ve yalnızca ayrılan bayt sayısını ve ayırma sayısını takip eder. Yalnızca çok belirli kullanım senaryolarında yararlıdır, çünkü ciddi bir sınırlaması vardır: yalnızca tüm belleği bir kerede serbest bırakabilir.</p>
+<h3 id="fikir"><a class="zola-anchor" href="#fikir" aria-label="Anchor link for: fikir">🔗</a>Fikir</h3>
+<p>Bir bump allocator’ın arkasındaki fikir, kullanılmayan belleğin başlangıcına işaret eden bir <code>next</code> değişkenini artırarak (_“bump”_layarak) belleği doğrusal olarak ayırmaktır. Başlangıçta, <code>next</code>, heap’in başlangıç adresine eşittir. Her ayırmada, <code>next</code>, ayırma boyutu kadar artırılır; böylece her zaman kullanılan ve kullanılmayan bellek arasındaki sınıra işaret eder:</p>
+<p><img src="https://os.phil-opp.com/tr/allocator-designs/bump-allocation.svg" alt="Üç zaman noktasındaki heap bellek alanı: 1: Heap’in başında tek bir ayırma var; next işaretçisi onun sonuna işaret eder. 2: İlkinin hemen ardına ikinci bir ayırma eklendi; next işaretçisi ikinci ayırmanın sonuna işaret eder. 3: İkincinin hemen ardına üçüncü bir ayırma eklendi; next işaretçisi üçüncü ayırmanın sonuna işaret eder." /></p>
+<p><code>next</code> işaretçisi yalnızca tek bir yönde hareket eder ve böylece aynı bellek bölgesini asla iki kez teslim etmez. Heap’in sonuna ulaştığında, daha fazla bellek ayrılamaz ve bir sonraki ayırmada bellek-yetersiz (out-of-memory) hatasıyla sonuçlanır.</p>
+<p>Bir bump allocator genellikle, her <code>alloc</code> çağrısında 1 artırılan ve her <code>dealloc</code> çağrısında 1 azaltılan bir ayırma sayacıyla uygulanır. Ayırma sayacı sıfıra ulaştığında, bu, heap’teki tüm ayırmaların deallocate edildiği anlamına gelir. Bu durumda, <code>next</code> işaretçisi heap’in başlangıç adresine sıfırlanabilir; böylece tüm heap belleği yeniden ayırmalar için kullanılabilir olur.</p>
+<h3 id="uygulama"><a class="zola-anchor" href="#uygulama" aria-label="Anchor link for: uygulama">🔗</a>Uygulama</h3>
+<p>Uygulamamıza yeni bir <code>allocator::bump</code> alt modülü bildirerek başlıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>bump;
+</span></code></pre>
+<p>Alt modülün içeriği, aşağıdaki içerikle oluşturduğumuz yeni bir <code>src/allocator/bump.rs</code> dosyasında bulunur:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/bump.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>BumpAllocator {
+</span><span>    heap_start: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    heap_end: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    next: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    allocations: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>BumpAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Yeni, boş bir bump allocator oluşturur.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        BumpAllocator {
+</span><span>            heap_start: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            heap_end: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            next: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>            allocations: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Bump allocator&#39;ı verilen heap sınırlarıyla başlatır.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Bu metot unsafe&#39;tir, çünkü çağıranın verilen bellek aralığının
+</span><span>    </span><span style="color:#608b4e;">/// kullanılmadığından emin olması gerekir. Ayrıca, bu metot yalnızca bir
+</span><span>    </span><span style="color:#608b4e;">/// kez çağrılmalıdır.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        self.heap_start = heap_start;
+</span><span>        self.heap_end = heap_start + heap_size;
+</span><span>        self.next = heap_start;
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>heap_start</code> ve <code>heap_end</code> alanları, heap bellek bölgesinin alt ve üst sınırlarını takip eder. Çağıranın bu adreslerin geçerli olduğundan emin olması gerekir; aksi takdirde allocator geçersiz bellek döndürür. Bu nedenle, <code>init</code> fonksiyonunun çağrılması <code>unsafe</code> olmalıdır.</p>
+<p><code>next</code> alanının amacı her zaman heap’in ilk kullanılmayan baytına, yani bir sonraki ayırmanın başlangıç adresine işaret etmektir. <code>init</code> fonksiyonunda <code>heap_start</code>’a ayarlanır, çünkü başlangıçta tüm heap kullanılmamıştır. Her ayırmada, bu alan aynı bellek bölgesini iki kez döndürmediğimizden emin olmak için ayırma boyutu kadar artırılacak (_“bump”_lanacak).</p>
+<p><code>allocations</code> alanı, son ayırma serbest bırakıldıktan sonra allocator’ı sıfırlamak amacıyla aktif ayırmalar için basit bir sayaçtır. 0 ile başlatılır.</p>
+<p>Başlatmayı doğrudan <code>new</code>’de yapmak yerine ayrı bir <code>init</code> fonksiyonu oluşturmayı, arayüzü <code>linked_list_allocator</code> crate’inin sağladığı allocator ile aynı tutmak için seçtik. Bu sayede, allocator’lar ek kod değişikliği olmadan değiştirilebilir.</p>
+<h3 id="globalalloc-u-uygulamak"><a class="zola-anchor" href="#globalalloc-u-uygulamak" aria-label="Anchor link for: globalalloc-u-uygulamak">🔗</a><code>GlobalAlloc</code>’u Uygulamak</h3>
+<p><a href="https://os.phil-opp.com/tr/heap-allocation/#the-allocator-interface">Önceki yazıda açıklandığı gibi</a>, tüm heap allocator’ların şu şekilde tanımlanan <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait’ini uygulaması gerekir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub unsafe trait </span><span>GlobalAlloc {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8</span><span>;
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc_zeroed(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>realloc(
+</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self,
+</span><span>        ptr: </span><span style="color:#569cd6;">*mut u8</span><span>,
+</span><span>        layout: Layout,
+</span><span>        new_size: </span><span style="color:#569cd6;">usize
+</span><span>    ) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
+</span><span>}
+</span></code></pre>
+<p>Yalnızca <code>alloc</code> ve <code>dealloc</code> metotları gereklidir; diğer iki metodun varsayılan uygulamaları vardır ve atlanabilir.</p>
+<h4 id="ilk-uygulama-denemesi"><a class="zola-anchor" href="#ilk-uygulama-denemesi" aria-label="Anchor link for: ilk-uygulama-denemesi">🔗</a>İlk Uygulama Denemesi</h4>
+<p><code>BumpAllocator</code>’ımız için <code>alloc</code> metodunu uygulamayı deneyelim:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/bump.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>BumpAllocator {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// TODO hizalama ve sınır kontrolü
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = self.next;
+</span><span>        self.next = alloc_start + layout.size();
+</span><span>        self.allocations += </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>        alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>İlk olarak, ayırmamız için başlangıç adresi olarak <code>next</code> alanını kullanıyoruz. Ardından <code>next</code> alanını, heap’teki bir sonraki kullanılmayan adres olan ayırmanın bitiş adresine işaret edecek şekilde güncelliyoruz. Ayırmanın başlangıç adresini bir <code>*mut u8</code> işaretçisi olarak döndürmeden önce, <code>allocations</code> sayacını 1 artırıyoruz.</p>
+<p>Herhangi bir sınır kontrolü veya hizalama ayarlaması yapmadığımıza dikkat edin, bu yüzden bu uygulama henüz güvenli değil. Bu pek önemli değil, çünkü zaten aşağıdaki hatayla derlenmiyor:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0594]: cannot assign to `self.next` which is behind a `&amp;` reference
+</span><span>  --&gt; src/allocator/bump.rs:29:9
+</span><span>   |
+</span><span>29 |         self.next = alloc_start + layout.size();
+</span><span>   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `self` is a `&amp;` reference, so the data it refers to cannot be written
+</span></code></pre>
+<p>(Aynı hata <code>self.allocations += 1</code> satırı için de oluşur. Kısalık adına onu burada atladık.)</p>
+<p>Hata, <code>GlobalAlloc</code> trait’inin <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.alloc"><code>alloc</code></a> ve <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> metotlarının yalnızca değiştirilemez bir <code>&amp;self</code> referansı üzerinde çalışması nedeniyle oluşur, bu yüzden <code>next</code> ve <code>allocations</code> alanlarını güncellemek mümkün değildir. Bu sorunludur, çünkü <code>next</code>’i her ayırmada güncellemek bir bump allocator’ın temel ilkesidir.</p>
+<h4 id="globalalloc-and-mutability"><a class="zola-anchor" href="#globalalloc-and-mutability" aria-label="Anchor link for: globalalloc-and-mutability">🔗</a><code>GlobalAlloc</code> ve Değiştirilebilirlik</h4>
+<p>Bu değiştirilebilirlik (mutability) sorununa olası bir çözüme bakmadan önce, <code>GlobalAlloc</code> trait metotlarının neden <code>&amp;self</code> argümanlarıyla tanımlandığını anlamaya çalışalım: <a href="https://os.phil-opp.com/tr/heap-allocation/#the-global-allocator-attribute">Önceki yazıda gördüğümüz gibi</a>, global heap allocator, <code>#[global_allocator]</code> özniteliğini <code>GlobalAlloc</code> trait’ini uygulayan bir <code>static</code>’e ekleyerek tanımlanır. Statik değişkenler Rust’ta değiştirilemezdir, bu yüzden statik allocator üzerinde <code>&amp;mut self</code> alan bir metodu çağırmanın bir yolu yoktur. Bu nedenle, <code>GlobalAlloc</code>’un tüm metotları yalnızca değiştirilemez bir <code>&amp;self</code> referansı alır.</p>
+<p>Neyse ki, bir <code>&amp;self</code> referansından bir <code>&amp;mut self</code> referansı elde etmenin bir yolu var: Allocator’ı bir <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html"><code>spin::Mutex</code></a> spinlock’ında sararak senkronize <a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html">iç değiştirilebilirlik (interior mutability)</a> kullanabiliriz. Bu tip, <a href="https://en.wikipedia.org/wiki/Mutual_exclusion">karşılıklı dışlama (mutual exclusion)</a> gerçekleştiren ve böylece bir <code>&amp;self</code> referansını güvenli bir şekilde bir <code>&amp;mut self</code> referansına dönüştüren bir <code>lock</code> metodu sağlar. Sarmalayıcı tipi kernel’imizde birçok kez kullandık zaten, örneğin <a href="https://os.phil-opp.com/tr/vga-text-mode/#spinlocks">VGA metin arabelleği</a> için.</p>
+<h4 id="a-locked-wrapper-type"><a class="zola-anchor" href="#a-locked-wrapper-type" aria-label="Anchor link for: a-locked-wrapper-type">🔗</a>Bir <code>Locked</code> Sarmalayıcı Tipi</h4>
+<p><code>spin::Mutex</code> sarmalayıcı tipinin yardımıyla, bump allocator’ımız için <code>GlobalAlloc</code> trait’ini uygulayabiliriz. Püf nokta, trait’i doğrudan <code>BumpAllocator</code> için değil, sarmalanmış <code>spin::Mutex&lt;BumpAllocator&gt;</code> tipi için uygulamaktır:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>spin::Mutex&lt;BumpAllocator&gt; {…}
+</span></code></pre>
+<p>Ne yazık ki bu yine de çalışmaz, çünkü Rust derleyicisi başka crate’lerde tanımlanan tipler için trait uygulamalarına izin vermez:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0117]: only traits defined in the current crate can be implemented for arbitrary types
+</span><span>  --&gt; src/allocator/bump.rs:28:1
+</span><span>   |
+</span><span>28 | unsafe impl GlobalAlloc for spin::Mutex&lt;BumpAllocator&gt; {
+</span><span>   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^--------------------------
+</span><span>   | |                           |
+</span><span>   | |                           `spin::mutex::Mutex` is not defined in the current crate
+</span><span>   | impl doesn&#39;t use only types from inside the current crate
+</span><span>   |
+</span><span>   = note: define and implement a trait or new type instead
+</span></code></pre>
+<p>Bunu düzeltmek için, <code>spin::Mutex</code> etrafında kendi sarmalayıcı tipimizi oluşturmamız gerekir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">/// Trait uygulamalarına izin vermek için spin::Mutex etrafında bir sarmalayıcı.
+</span><span style="color:#569cd6;">pub struct </span><span>Locked&lt;A&gt; {
+</span><span>    inner: spin::Mutex&lt;A&gt;,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl</span><span>&lt;A&gt; Locked&lt;A&gt; {
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new(inner: A) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        Locked {
+</span><span>            inner: spin::Mutex::new(inner),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>lock(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; spin::MutexGuard&lt;A&gt; {
+</span><span>        self.inner.lock()
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Tip, bir <code>spin::Mutex&lt;A&gt;</code> etrafında generic bir sarmalayıcıdır. Sarmalanan <code>A</code> tipine hiçbir kısıtlama getirmez, bu yüzden yalnızca allocator’ları değil, her türlü tipi sarmalamak için kullanılabilir. Verilen bir değeri sarmalayan basit bir <code>new</code> yapıcı fonksiyonu sağlar. Kolaylık için, sarmalanan <code>Mutex</code> üzerinde <code>lock</code> çağıran bir <code>lock</code> fonksiyonu da sağlar. <code>Locked</code> tipi diğer allocator uygulamaları için de yararlı olacak kadar genel olduğundan, onu üst <code>allocator</code> modülüne koyuyoruz.</p>
+<h4 id="locked-bumpallocator-icin-uygulama"><a class="zola-anchor" href="#locked-bumpallocator-icin-uygulama" aria-label="Anchor link for: locked-bumpallocator-icin-uygulama">🔗</a><code>Locked&lt;BumpAllocator&gt;</code> için Uygulama</h4>
+<p><code>Locked</code> tipi (<code>spin::Mutex</code>’in aksine) kendi crate’imizde tanımlanmıştır, bu yüzden onu bump allocator’ımız için <code>GlobalAlloc</code>’u uygulamak amacıyla kullanabiliriz. Tam uygulama şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/bump.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::{align_up, Locked};
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;BumpAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> bump = self.lock(); </span><span style="color:#608b4e;">// değiştirilebilir bir referans al
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = align_up(bump.next, layout.align());
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_end = </span><span style="color:#569cd6;">match</span><span> alloc_start.checked_add(layout.size()) {
+</span><span>            Some(end) </span><span style="color:#569cd6;">=&gt;</span><span> end,
+</span><span>            None </span><span style="color:#569cd6;">=&gt; return </span><span>ptr::null_mut(),
+</span><span>        };
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if</span><span> alloc_end &gt; bump.heap_end {
+</span><span>            ptr::null_mut() </span><span style="color:#608b4e;">// bellek yetersiz
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            bump.next = alloc_end;
+</span><span>            bump.allocations += </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>            alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> bump = self.lock(); </span><span style="color:#608b4e;">// değiştirilebilir bir referans al
+</span><span>
+</span><span>        bump.allocations -= </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>        </span><span style="color:#569cd6;">if</span><span> bump.allocations == </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>            bump.next = bump.heap_start;
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Hem <code>alloc</code> hem de <code>dealloc</code> için ilk adım, sarmalanan allocator tipine değiştirilebilir bir referans almak amacıyla <code>inner</code> alanı aracılığıyla <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> metodunu çağırmaktır. Örnek, metodun sonuna kadar kilitli kalır, böylece çok thread’li bağlamlarda hiçbir veri yarışı meydana gelemez (yakında thread desteği ekleyeceğiz).</p>
+<p>Önceki prototiple karşılaştırıldığında, <code>alloc</code> uygulaması artık hizalama gereksinimlerine uyuyor ve ayırmaların heap bellek bölgesinin içinde kalmasını sağlamak için bir sınır kontrolü gerçekleştiriyor. İlk adım, <code>next</code> adresini <code>Layout</code> argümanı tarafından belirtilen hizalamaya yuvarlamaktır. <code>align_up</code> fonksiyonunun kodu birazdan gösterilecek. Ardından, ayırmanın bitiş adresini elde etmek için istenen ayırma boyutunu <code>alloc_start</code>’a ekliyoruz. Büyük ayırmalarda tamsayı taşmasını (integer overflow) önlemek için <a href="https://doc.rust-lang.org/std/primitive.usize.html#method.checked_add"><code>checked_add</code></a> metodunu kullanıyoruz. Bir taşma meydana gelirse veya ayırmanın elde edilen bitiş adresi heap’in bitiş adresinden büyükse, bir bellek-yetersiz durumunu bildirmek için null bir işaretçi döndürürüz. Aksi takdirde, <code>next</code> adresini güncelliyor ve önceki gibi <code>allocations</code> sayacını 1 artırıyoruz. Son olarak, bir <code>*mut u8</code> işaretçisine dönüştürülmüş <code>alloc_start</code> adresini döndürüyoruz.</p>
+<p><code>dealloc</code> fonksiyonu, verilen işaretçi ve <code>Layout</code> argümanlarını yok sayar. Bunun yerine, yalnızca <code>allocations</code> sayacını azaltır. Sayaç tekrar <code>0</code>’a ulaşırsa, bu, tüm ayırmaların tekrar serbest bırakıldığı anlamına gelir. Bu durumda, tüm heap belleğini yeniden kullanılabilir kılmak için <code>next</code> adresini <code>heap_start</code> adresine sıfırlar.</p>
+<h4 id="adres-hizalama"><a class="zola-anchor" href="#adres-hizalama" aria-label="Anchor link for: adres-hizalama">🔗</a>Adres Hizalama</h4>
+<p><code>align_up</code> fonksiyonu, onu üst <code>allocator</code> modülüne koyabileceğimiz kadar geneldir. Temel bir uygulama şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">/// Verilen `addr` adresini `align` hizalamasına yukarı doğru hizala.
+</span><span style="color:#569cd6;">fn </span><span>align_up(addr: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> remainder = addr % align;
+</span><span>    </span><span style="color:#569cd6;">if</span><span> remainder == </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>        addr </span><span style="color:#608b4e;">// addr zaten hizalı
+</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>        addr - remainder + align
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Fonksiyon önce <code>addr</code>’ın <code>align</code>’a bölümünün <a href="https://en.wikipedia.org/wiki/Euclidean_division">kalanını (remainder)</a> hesaplar. Kalan <code>0</code> ise, adres verilen hizalamayla zaten hizalanmıştır. Aksi takdirde, kalanı çıkararak (böylece yeni kalan 0 olur) ve ardından hizalamayı ekleyerek (böylece adres orijinal adresten küçük olmaz) adresi hizalarız.</p>
+<p>Bunun bu fonksiyonu uygulamanın en verimli yolu olmadığına dikkat edin. Çok daha hızlı bir uygulama şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">/// Verilen `addr` adresini `align` hizalamasına yukarı doğru hizala.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// `align`&#39;ın ikinin bir kuvveti olmasını gerektirir.
+</span><span style="color:#569cd6;">fn </span><span>align_up(addr: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>    (addr + align - </span><span style="color:#b5cea8;">1</span><span>) </span><span style="color:#569cd6;">&amp; !</span><span>(align - </span><span style="color:#b5cea8;">1</span><span>)
+</span><span>}
+</span></code></pre>
+<p>Bu yöntem <code>align</code>’ın ikinin bir kuvveti olmasını gerektirir; bu da <code>GlobalAlloc</code> trait’inden (ve onun <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> parametresinden) yararlanarak garanti edilebilir. Bu, adresi çok verimli bir şekilde hizalamak için bir <a href="https://en.wikipedia.org/wiki/Mask_(computing)">bit maskesi (bitmask)</a> oluşturmayı mümkün kılar. Nasıl çalıştığını anlamak için, sağ taraftan başlayarak adım adım gidelim:</p>
+<ul>
+<li><code>align</code> ikinin bir kuvveti olduğundan, <a href="https://en.wikipedia.org/wiki/Binary_number#Representation">ikili gösteriminin</a> yalnızca tek bir biti ayarlıdır (örneğin <code>0b000100000</code>). Bu, <code>align - 1</code>’in tüm alt bitlerinin ayarlı olduğu anlamına gelir (örneğin <code>0b00011111</code>).</li>
+<li><code>!</code> operatörü aracılığıyla <a href="https://en.wikipedia.org/wiki/Bitwise_operation#NOT">bit düzeyinde <code>NOT</code></a> oluşturarak, <code>align</code>’dan düşük bitler hariç tüm bitleri ayarlı olan bir sayı elde ederiz (örneğin <code>0b…111111111100000</code>).</li>
+<li>Bir adres ile <code>!(align - 1)</code> üzerinde <a href="https://en.wikipedia.org/wiki/Bitwise_operation#AND">bit düzeyinde <code>AND</code></a> gerçekleştirerek, adresi <em>aşağı doğru</em> hizalarız. Bu, <code>align</code>’dan düşük olan tüm bitleri temizleyerek çalışır.</li>
+<li>Aşağı doğru değil yukarı doğru hizalamak istediğimiz için, bit düzeyinde <code>AND</code> gerçekleştirmeden önce <code>addr</code>’ı <code>align - 1</code> kadar artırırız. Bu sayede, zaten hizalı adresler aynı kalırken, hizalı olmayan adresler bir sonraki hizalama sınırına yuvarlanır.</li>
+</ul>
+<p>Hangi varyantı seçeceğiniz size kalmış. Her ikisi de yalnızca farklı yöntemler kullanarak aynı sonucu hesaplar.</p>
+<h3 id="kullanmak"><a class="zola-anchor" href="#kullanmak" aria-label="Anchor link for: kullanmak">🔗</a>Kullanmak</h3>
+<p><code>linked_list_allocator</code> crate’i yerine bump allocator’ı kullanmak için, <code>allocator.rs</code>’teki <code>ALLOCATOR</code> static’ini güncellememiz gerekir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>bump::BumpAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;BumpAllocator&gt; = Locked::new(BumpAllocator::new());
+</span></code></pre>
+<p>Burada <code>BumpAllocator::new</code> ve <code>Locked::new</code>’i <a href="https://doc.rust-lang.org/reference/items/functions.html#const-functions"><code>const</code> fonksiyonları</a> olarak bildirmiş olmamız önemli hale gelir. Eğer normal fonksiyonlar olsalardı, bir <code>static</code>’in başlatma ifadesinin derleme zamanında değerlendirilebilir olması gerektiği için bir derleme hatası oluşurdu.</p>
+<p><code>init_heap</code> fonksiyonumuzdaki <code>ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE)</code> çağrısını değiştirmemize gerek yok, çünkü bump allocator, <code>linked_list_allocator</code>’ın sağladığı allocator ile aynı arayüzü sağlar.</p>
+<p>Artık kernel’imiz bump allocator’ımızı kullanıyor! Önceki yazıda oluşturduğumuz <a href="https://os.phil-opp.com/tr/heap-allocation/#adding-a-test"><code>heap_allocation</code> testleri</a> dahil her şey hâlâ çalışmalı:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>[…]
+</span><span>Running 3 tests
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span></code></pre>
+<h3 id="tartisma"><a class="zola-anchor" href="#tartisma" aria-label="Anchor link for: tartisma">🔗</a>Tartışma</h3>
+<p>Bump ayırmanın büyük avantajı çok hızlı olmasıdır. Uygun bir bellek bloğunu aktif olarak araması ve <code>alloc</code> ile <code>dealloc</code>’ta çeşitli kayıt tutma görevleri gerçekleştirmesi gereken diğer allocator tasarımlarına (aşağıya bakın) kıyasla, bir bump allocator yalnızca birkaç assembly komutuna <a href="https://fitzgeraldnick.com/2019/11/01/always-bump-downwards.html">optimize edilebilir</a>. Bu, bump allocator’ları ayırma performansını optimize etmek için yararlı kılar; örneğin bir <a href="https://hacks.mozilla.org/2019/03/fast-bump-allocated-virtual-doms-with-rust-and-wasm/">sanal DOM kütüphanesi</a> oluştururken.</p>
+<p>Bir bump allocator nadiren global allocator olarak kullanılsa da, bump ayırma ilkesi genellikle <a href="https://mgravell.github.io/Pipelines.Sockets.Unofficial/docs/arenas.html">arena ayırma (arena allocation)</a> biçiminde uygulanır; bu da temelde performansı iyileştirmek için tek tek ayırmaları bir araya toplar. Rust için bir arena allocator örneği <a href="https://docs.rs/toolshed/0.8.1/toolshed/index.html"><code>toolshed</code></a> crate’inde bulunur.</p>
+<h4 id="bump-allocator-in-dezavantaji"><a class="zola-anchor" href="#bump-allocator-in-dezavantaji" aria-label="Anchor link for: bump-allocator-in-dezavantaji">🔗</a>Bump Allocator’ın Dezavantajı</h4>
+<p>Bir bump allocator’ın ana sınırlaması, deallocate edilmiş belleği yalnızca tüm ayırmalar serbest bırakıldıktan sonra yeniden kullanabilmesidir. Bu, tek bir uzun ömürlü ayırmanın bile bellek yeniden kullanımını önlemeye yettiği anlamına gelir. Bunu, <code>many_boxes</code> testinin bir varyasyonunu eklediğimizde görebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs içinde
+</span><span>
+</span><span>#[test_case]
+</span><span style="color:#569cd6;">fn </span><span>many_boxes_long_lived() {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> long_lived = Box::new(</span><span style="color:#b5cea8;">1</span><span>); </span><span style="color:#608b4e;">// yeni
+</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">HEAP_SIZE </span><span>{
+</span><span>        </span><span style="color:#569cd6;">let</span><span> x = Box::new(i);
+</span><span>        assert_eq!(*x, i);
+</span><span>    }
+</span><span>    assert_eq!(*long_lived, </span><span style="color:#b5cea8;">1</span><span>); </span><span style="color:#608b4e;">// yeni
+</span><span>}
+</span></code></pre>
+<p><code>many_boxes</code> testi gibi, bu test de allocator serbest bırakılan belleği yeniden kullanmazsa bir bellek-yetersiz hatasına yol açmak için çok sayıda ayırma oluşturur. Buna ek olarak, test, döngünün tüm yürütülmesi boyunca var olan bir <code>long_lived</code> ayırması oluşturur.</p>
+<p>Yeni testimizi çalıştırmaya çalıştığımızda, gerçekten başarısız olduğunu görüyoruz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>Running 4 tests
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [failed]
+</span><span>
+</span><span>Error: panicked at &#39;allocation error: Layout { size_: 8, align_: 8 }&#39;, src/lib.rs:86:5
+</span></code></pre>
+<p>Bu başarısızlığın neden meydana geldiğini ayrıntılı olarak anlamaya çalışalım: İlk olarak, <code>long_lived</code> ayırması heap’in başında oluşturulur ve böylece <code>allocations</code> sayacını 1 artırır. Döngünün her yinelemesi için, kısa ömürlü bir ayırma oluşturulur ve bir sonraki yineleme başlamadan önce doğrudan tekrar serbest bırakılır. Bu, <code>allocations</code> sayacının bir yinelemenin başında geçici olarak 2’ye yükseltildiği ve sonunda 1’e düşürüldüğü anlamına gelir. Şimdi sorun şu ki, bump allocator belleği yalnızca <em>tüm</em> ayırmalar serbest bırakıldıktan sonra, yani <code>allocations</code> sayacı 0’a düştüğünde yeniden kullanabilir. Bu, döngünün sonundan önce gerçekleşmediği için, her döngü yinelemesi yeni bir bellek bölgesi ayırır ve birkaç yinelemeden sonra bir bellek-yetersiz hatasına yol açar.</p>
+<h4 id="testi-duzeltmek"><a class="zola-anchor" href="#testi-duzeltmek" aria-label="Anchor link for: testi-duzeltmek">🔗</a>Testi Düzeltmek?</h4>
+<p>Bump allocator’ımız için testi düzeltmek amacıyla yararlanabileceğimiz iki potansiyel hile var:</p>
+<ul>
+<li><code>dealloc</code>’u, serbest bırakılan ayırmanın <code>alloc</code> tarafından döndürülen son ayırma olup olmadığını, bitiş adresini <code>next</code> işaretçisiyle karşılaştırarak kontrol edecek şekilde güncelleyebilirdik. Eşit olmaları durumunda, <code>next</code>’i serbest bırakılan ayırmanın başlangıç adresine güvenle sıfırlayabiliriz. Bu sayede, her döngü yinelemesi aynı bellek bloğunu yeniden kullanır.</li>
+<li>Ek bir <code>next_back</code> alanı kullanarak heap’in <em>sonundan</em> bellek ayıran bir <code>alloc_back</code> metodu ekleyebilirdik. Sonra bu ayırma metodunu tüm uzun ömürlü ayırmalar için elle kullanabilir ve böylece heap’te kısa ömürlü ve uzun ömürlü ayırmaları ayırabilirdik. Bu ayrımın yalnızca her ayırmanın ne kadar süre var olacağı önceden açıksa işe yaradığını unutmayın. Bu yaklaşımın bir başka dezavantajı, ayırmaları elle gerçekleştirmenin zahmetli ve potansiyel olarak güvensiz olmasıdır.</li>
+</ul>
+<p>Bu yaklaşımların ikisi de testi düzeltmek için işe yarasa da, yalnızca çok belirli durumlarda belleği yeniden kullanabildikleri için genel bir çözüm değildirler. Soru şu: <em>Serbest</em> bırakılan tüm belleği yeniden kullanan genel bir çözüm var mı?</p>
+<h4 id="serbest-birakilan-tum-bellegi-yeniden-kullanmak"><a class="zola-anchor" href="#serbest-birakilan-tum-bellegi-yeniden-kullanmak" aria-label="Anchor link for: serbest-birakilan-tum-bellegi-yeniden-kullanmak">🔗</a>Serbest Bırakılan Tüm Belleği Yeniden Kullanmak?</h4>
+<p><a href="https://os.phil-opp.com/tr/heap-allocation/#dynamic-memory">Önceki yazıda öğrendiğimiz gibi</a>, ayırmalar keyfi olarak uzun süre var olabilir ve keyfi bir sırada serbest bırakılabilir. Bu, aşağıdaki örnekte gösterildiği gibi, potansiyel olarak sınırsız sayıda sürekli olmayan, kullanılmayan bellek bölgesini takip etmemiz gerektiği anlamına gelir:</p>
+<p><img src="https://os.phil-opp.com/tr/allocator-designs/allocation-fragmentation.svg" alt="" /></p>
+<p>Grafik, heap’i zaman içinde gösterir. Başlangıçta, tüm heap kullanılmamıştır ve <code>next</code> adresi <code>heap_start</code>’a eşittir (satır 1). Ardından ilk ayırma meydana gelir (satır 2). Satır 3’te, ikinci bir bellek bloğu ayrılır ve ilk ayırma serbest bırakılır. Satır 4’te çok daha fazla ayırma eklenir. Yarısı çok kısa ömürlüdür ve satır 5’te zaten serbest bırakılır; burada başka bir yeni ayırma da eklenir.</p>
+<p>Satır 5 temel sorunu gösterir: Farklı boyutlarda beş kullanılmayan bellek bölgemiz var, ancak <code>next</code> işaretçisi yalnızca son bölgenin başlangıcına işaret edebilir. Bu örnek için diğer kullanılmayan bellek bölgelerinin başlangıç adreslerini ve boyutlarını boyutu 4 olan bir dizide saklayabilsek de, bu genel bir çözüm değildir; çünkü 8, 16 veya 1000 kullanılmayan bellek bölgesi olan bir örnek kolayca oluşturabilirdik.</p>
+<p>Normalde, potansiyel olarak sınırsız sayıda öğemiz olduğunda, yalnızca heap’te ayrılmış bir koleksiyon kullanabiliriz. Bu bizim durumumuzda gerçekten mümkün değildir, çünkü heap allocator kendisine bağımlı olamaz (bu, bitmeyen özyinelemeye veya deadlock’lara neden olurdu). Bu yüzden farklı bir çözüm bulmamız gerekir.</p>
+<h2 id="linked-list-allocator"><a class="zola-anchor" href="#linked-list-allocator" aria-label="Anchor link for: linked-list-allocator">🔗</a>Bağlı Liste Allocator’ı</h2>
+<p>Allocator’ları uygularken keyfi sayıda boş bellek alanını takip etmenin yaygın bir hilesi, bu alanların kendilerini destek deposu (backing storage) olarak kullanmaktır. Bu, bölgelerin hâlâ bir sanal adrese eşlenmiş ve fiziksel bir frame tarafından desteklenmiş olduğu, ancak saklanan bilgiye artık ihtiyaç duyulmadığı gerçeğinden yararlanır. Serbest bırakılan bölge hakkındaki bilgiyi bölgenin kendisinde saklayarak, ek belleğe ihtiyaç duymadan sınırsız sayıda serbest bırakılan bölgeyi takip edebiliriz.</p>
+<p>En yaygın uygulama yaklaşımı, her düğümü serbest bırakılan bir bellek bölgesi olan tek bağlı bir liste (single linked list) oluşturmaktır:</p>
+<p><img src="https://os.phil-opp.com/tr/allocator-designs/linked-list-allocation.svg" alt="" /></p>
+<p>Her liste düğümü iki alan içerir: bellek bölgesinin boyutu ve bir sonraki kullanılmayan bellek bölgesine bir işaretçi. Bu yaklaşımla, sayılarından bağımsız olarak tüm kullanılmayan bölgeleri takip etmek için yalnızca ilk kullanılmayan bölgeye (<code>head</code> adı verilen) bir işaretçiye ihtiyacımız var. Elde edilen veri yapısına genellikle <a href="https://en.wikipedia.org/wiki/Free_list"><em>free list</em></a> denir.</p>
+<p>Adından tahmin edebileceğiniz gibi, bu, <code>linked_list_allocator</code> crate’inin kullandığı tekniktir. Bu tekniği kullanan allocator’lara genellikle <em>havuz allocator’ları (pool allocators)</em> da denir.</p>
+<h3 id="uygulama-1"><a class="zola-anchor" href="#uygulama-1" aria-label="Anchor link for: uygulama-1">🔗</a>Uygulama</h3>
+<p>Aşağıda, serbest bırakılan bellek bölgelerini takip etmek için yukarıdaki yaklaşımı kullanan kendi basit <code>LinkedListAllocator</code> tipimizi oluşturacağız. Yazının bu kısmı gelecekteki yazılar için gerekli değildir, bu yüzden isterseniz uygulama ayrıntılarını atlayabilirsiniz.</p>
+<h4 id="the-allocator-type"><a class="zola-anchor" href="#the-allocator-type" aria-label="Anchor link for: the-allocator-type">🔗</a>Allocator Tipi</h4>
+<p>Yeni bir <code>allocator::linked_list</code> alt modülünde özel bir <code>ListNode</code> struct’ı oluşturarak başlıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>linked_list;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>ListNode {
+</span><span>    size: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    next: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;,
+</span><span>}
+</span></code></pre>
+<p>Grafikte olduğu gibi, bir liste düğümünün bir <code>size</code> alanı ve <code>Option&lt;&amp;'static mut ListNode&gt;</code> tipiyle temsil edilen, bir sonraki düğüme isteğe bağlı bir işaretçisi vardır. <code>&amp;'static mut</code> tipi, anlamsal olarak bir işaretçinin arkasındaki <a href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html">sahipli (owned)</a> bir nesneyi tanımlar. Temelde, kapsamın sonunda nesneyi serbest bırakan bir yıkıcısı (destructor) olmayan bir <a href="https://doc.rust-lang.org/alloc/boxed/index.html"><code>Box</code></a>’tır.</p>
+<p><code>ListNode</code> için aşağıdaki metot kümesini uyguluyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>ListNode {
+</span><span>    </span><span style="color:#569cd6;">const fn </span><span>new(size: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        ListNode { size, next: None }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>start_addr(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>        self </span><span style="color:#569cd6;">as *const Self as usize
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>end_addr(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
+</span><span>        self.start_addr() + self.size
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Tipin <code>new</code> adında basit bir yapıcı fonksiyonu ve temsil edilen bölgenin başlangıç ve bitiş adreslerini hesaplayan metotları vardır. <code>new</code> fonksiyonunu, statik bir bağlı liste allocator’ı oluştururken daha sonra gerekli olacak bir <a href="https://doc.rust-lang.org/reference/items/functions.html#const-functions">const fonksiyonu</a> yapıyoruz.</p>
+<p><code>ListNode</code> struct’ını bir yapı taşı olarak kullanarak, artık <code>LinkedListAllocator</code> struct’ını oluşturabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>LinkedListAllocator {
+</span><span>    head: ListNode,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Boş bir LinkedListAllocator oluşturur.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>            head: ListNode::new(</span><span style="color:#b5cea8;">0</span><span>),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Allocator&#39;ı verilen heap sınırlarıyla başlatır.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Bu fonksiyon unsafe&#39;tir, çünkü çağıranın verilen heap sınırlarının
+</span><span>    </span><span style="color:#608b4e;">/// geçerli olduğunu ve heap&#39;in kullanılmadığını garanti etmesi gerekir.
+</span><span>    </span><span style="color:#608b4e;">/// Bu metot yalnızca bir kez çağrılmalıdır.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            self.add_free_region(heap_start, heap_size);
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Verilen bellek bölgesini listenin başına ekler.
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>add_free_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, addr: </span><span style="color:#569cd6;">usize</span><span>, size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Struct, ilk heap bölgesine işaret eden bir <code>head</code> düğümü içerir. Yalnızca <code>next</code> işaretçisinin değeriyle ilgileniyoruz, bu yüzden <code>ListNode::new</code> fonksiyonunda <code>size</code>’ı 0’a ayarlıyoruz. <code>head</code>’i yalnızca bir <code>&amp;'static mut ListNode</code> yerine bir <code>ListNode</code> yapmanın, <code>alloc</code> metodunun uygulamasının daha basit olması avantajı vardır.</p>
+<p>Bump allocator’da olduğu gibi, <code>new</code> fonksiyonu allocator’ı heap sınırlarıyla başlatmaz. API uyumluluğunu korumanın yanı sıra, bunun nedeni başlatma rutininin heap belleğine bir düğüm yazmayı gerektirmesidir; ki bu yalnızca çalışma zamanında gerçekleşebilir. Ancak <code>new</code> fonksiyonu, <code>ALLOCATOR</code> static’ini başlatmak için kullanılacağından derleme zamanında değerlendirilebilen bir <a href="https://doc.rust-lang.org/reference/items/functions.html#const-functions"><code>const</code> fonksiyonu</a> olmalıdır. Bu nedenle, yine ayrı, sabit olmayan bir <code>init</code> metodu sağlıyoruz.</p>
+<p><code>init</code> metodu, uygulaması birazdan gösterilecek bir <code>add_free_region</code> metodu kullanır. Şimdilik, her zaman panic yapan bir yer tutucu uygulama sağlamak için <a href="https://doc.rust-lang.org/core/macro.todo.html"><code>todo!</code></a> makrosunu kullanıyoruz.</p>
+<h4 id="add-free-region-metodu"><a class="zola-anchor" href="#add-free-region-metodu" aria-label="Anchor link for: add-free-region-metodu">🔗</a><code>add_free_region</code> Metodu</h4>
+<p><code>add_free_region</code> metodu, bağlı liste üzerindeki temel <em>push</em> işlemini sağlar. Şu anda bu metodu yalnızca <code>init</code>’ten çağırıyoruz, ancak <code>dealloc</code> uygulamamızda da merkezi metot olacak. Hatırlayın, <code>dealloc</code> metodu ayrılmış bir bellek bölgesi tekrar serbest bırakıldığında çağrılır. Bu serbest bırakılan bellek bölgesini takip etmek için, onu bağlı listeye push’lamak istiyoruz.</p>
+<p><code>add_free_region</code> metodunun uygulaması şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::align_up;
+</span><span style="color:#569cd6;">use </span><span>core::mem;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Verilen bellek bölgesini listenin başına ekler.
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>add_free_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, addr: </span><span style="color:#569cd6;">usize</span><span>, size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#608b4e;">// serbest bırakılan bölgenin ListNode tutabilecek kapasitede olduğundan emin ol
+</span><span>        assert_eq!(align_up(addr, mem::align_of::&lt;ListNode&gt;()), addr);
+</span><span>        assert!(size &gt;= mem::size_of::&lt;ListNode&gt;());
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// yeni bir liste düğümü oluştur ve onu listenin başına ekle
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> node = ListNode::new(size);
+</span><span>        node.next = self.head.next.take();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> node_ptr = addr </span><span style="color:#569cd6;">as *mut</span><span> ListNode;
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            node_ptr.write(node);
+</span><span>            self.head.next = Some(</span><span style="color:#569cd6;">&amp;mut </span><span>*node_ptr)
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Metot, argüman olarak bir bellek bölgesinin adresini ve boyutunu alır ve onu listenin başına ekler. İlk olarak, verilen bölgenin bir <code>ListNode</code> saklamak için gereken boyuta ve hizalamaya sahip olduğundan emin olur. Ardından düğümü oluşturur ve aşağıdaki adımlarla listeye ekler:</p>
+<p><img src="https://os.phil-opp.com/tr/allocator-designs/linked-list-allocator-push.svg" alt="" /></p>
+<p>Adım 0, <code>add_free_region</code> çağrılmadan önceki heap durumunu gösterir. Adım 1’de, metot grafikte <code>freed</code> olarak işaretlenmiş bellek bölgesiyle çağrılır. İlk kontrollerden sonra, metot kendi stack’inde serbest bırakılan bölgenin boyutuyla yeni bir <code>node</code> oluşturur. Ardından düğümün <code>next</code> işaretçisini mevcut <code>head</code> işaretçisine ayarlamak için <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a> metodunu kullanır ve böylece <code>head</code> işaretçisini <code>None</code>’a sıfırlar.</p>
+<p>Adım 2’de, metot yeni oluşturulan <code>node</code>’u <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write"><code>write</code></a> metodu aracılığıyla serbest bırakılan bellek bölgesinin başına yazar. Ardından <code>head</code> işaretçisini yeni düğüme yönlendirir. Elde edilen işaretçi yapısı biraz kaotik görünür, çünkü serbest bırakılan bölge her zaman listenin başına eklenir; ancak işaretçileri takip edersek, her boş bölgenin hâlâ <code>head</code> işaretçisinden ulaşılabilir olduğunu görürüz.</p>
+<h4 id="find-region-metodu"><a class="zola-anchor" href="#find-region-metodu" aria-label="Anchor link for: find-region-metodu">🔗</a><code>find_region</code> Metodu</h4>
+<p>Bir bağlı liste üzerindeki ikinci temel işlem, bir girdi bulmak ve onu listeden kaldırmaktır. Bu, <code>alloc</code> metodunu uygulamak için gereken merkezi işlemdir. İşlemi bir <code>find_region</code> metodu olarak şu şekilde uyguluyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Verilen boyut ve hizalamaya sahip boş bir bölge arar ve onu listeden
+</span><span>    </span><span style="color:#608b4e;">/// kaldırır.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Liste düğümünün ve ayırmanın başlangıç adresinin bir tuple&#39;ını döndürür.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>find_region(</span><span style="color:#569cd6;">&amp;mut </span><span>self, size: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>)
+</span><span>        -&gt; Option&lt;(</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode, </span><span style="color:#569cd6;">usize</span><span>)&gt;
+</span><span>    {
+</span><span>        </span><span style="color:#608b4e;">// mevcut liste düğümüne referans, her yineleme için güncellenir
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> current = </span><span style="color:#569cd6;">&amp;mut </span><span>self.head;
+</span><span>        </span><span style="color:#608b4e;">// bağlı listede yeterince büyük bir bellek bölgesi ara
+</span><span>        </span><span style="color:#569cd6;">while let </span><span>Some(</span><span style="color:#569cd6;">ref mut</span><span> region) = current.next {
+</span><span>            </span><span style="color:#569cd6;">if let </span><span>Ok(alloc_start) = </span><span style="color:#569cd6;">Self</span><span>::alloc_from_region(</span><span style="color:#569cd6;">&amp;</span><span>region, size, align) {
+</span><span>                </span><span style="color:#608b4e;">// bölge ayırma için uygun -&gt; düğümü listeden kaldır
+</span><span>                </span><span style="color:#569cd6;">let</span><span> next = region.next.take();
+</span><span>                </span><span style="color:#569cd6;">let</span><span> ret = Some((current.next.take().unwrap(), alloc_start));
+</span><span>                current.next = next;
+</span><span>                </span><span style="color:#569cd6;">return</span><span> ret;
+</span><span>            } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>                </span><span style="color:#608b4e;">// bölge uygun değil -&gt; bir sonraki bölgeyle devam et
+</span><span>                current = current.next.as_mut().unwrap();
+</span><span>            }
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// uygun bölge bulunamadı
+</span><span>        None
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Metot, liste elemanları üzerinde iterasyon yapmak için bir <code>current</code> değişkeni ve bir <a href="https://doc.rust-lang.org/reference/expressions/loop-expr.html#while-let-patterns"><code>while let</code> döngüsü</a> kullanır. Başlangıçta, <code>current</code>, (sahte) <code>head</code> düğümüne ayarlanır. Her yinelemede, ardından (<code>else</code> bloğunda) mevcut düğümün <code>next</code> alanına güncellenir. Bölge, verilen boyut ve hizalamaya sahip bir ayırma için uygunsa, bölge listeden kaldırılır ve <code>alloc_start</code> adresiyle birlikte döndürülür.</p>
+<p><code>current.next</code> işaretçisi <code>None</code> olduğunda, döngü çıkar. Bu, tüm liste üzerinde iterasyon yaptığımız ancak bir ayırma için uygun bölge bulamadığımız anlamına gelir. Bu durumda, <code>None</code> döndürürüz. Bir bölgenin uygun olup olmadığı, uygulaması birazdan gösterilecek <code>alloc_from_region</code> fonksiyonu tarafından kontrol edilir.</p>
+<p>Uygun bir bölgenin listeden nasıl kaldırıldığına daha ayrıntılı bir göz atalım:</p>
+<p><img src="https://os.phil-opp.com/tr/allocator-designs/linked-list-allocator-remove-region.svg" alt="" /></p>
+<p>Adım 0, herhangi bir işaretçi ayarlamasından önceki durumu gösterir. <code>region</code> ve <code>current</code> bölgeleri ile <code>region.next</code> ve <code>current.next</code> işaretçileri grafikte işaretlenmiştir. Adım 1’de, hem <code>region.next</code> hem de <code>current.next</code> işaretçileri <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a> metodu kullanılarak <code>None</code>’a sıfırlanır. Orijinal işaretçiler <code>next</code> ve <code>ret</code> adlı yerel değişkenlerde saklanır.</p>
+<p>Adım 2’de, <code>current.next</code> işaretçisi, orijinal <code>region.next</code> işaretçisi olan yerel <code>next</code> işaretçisine ayarlanır. Etkisi, <code>current</code>’in artık doğrudan <code>region</code>’dan sonraki bölgeye işaret etmesidir; böylece <code>region</code> artık bağlı listenin bir elemanı değildir. Fonksiyon daha sonra yerel <code>ret</code> değişkeninde saklanan <code>region</code>’a işaretçiyi döndürür.</p>
+<h5 id="alloc-from-region-fonksiyonu"><a class="zola-anchor" href="#alloc-from-region-fonksiyonu" aria-label="Anchor link for: alloc-from-region-fonksiyonu">🔗</a><code>alloc_from_region</code> Fonksiyonu</h5>
+<p><code>alloc_from_region</code> fonksiyonu, bir bölgenin verilen bir boyut ve hizalamaya sahip bir ayırma için uygun olup olmadığını döndürür. Şu şekilde tanımlanır:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Verilen bölgeyi verilen boyut ve hizalamaya sahip bir ayırma için
+</span><span>    </span><span style="color:#608b4e;">/// kullanmayı dener.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Başarı durumunda ayırma başlangıç adresini döndürür.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>alloc_from_region(region: </span><span style="color:#569cd6;">&amp;</span><span>ListNode, size: </span><span style="color:#569cd6;">usize</span><span>, align: </span><span style="color:#569cd6;">usize</span><span>)
+</span><span>        -&gt; Result&lt;</span><span style="color:#569cd6;">usize</span><span>, ()&gt;
+</span><span>    {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_start = align_up(region.start_addr(), align);
+</span><span>        </span><span style="color:#569cd6;">let</span><span> alloc_end = alloc_start.checked_add(size).ok_or(())</span><span style="color:#569cd6;">?</span><span>;
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if</span><span> alloc_end &gt; region.end_addr() {
+</span><span>            </span><span style="color:#608b4e;">// bölge çok küçük
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Err(());
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">let</span><span> excess_size = region.end_addr() - alloc_end;
+</span><span>        </span><span style="color:#569cd6;">if</span><span> excess_size &gt; </span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">&amp;&amp;</span><span> excess_size &lt; mem::size_of::&lt;ListNode&gt;() {
+</span><span>            </span><span style="color:#608b4e;">// bölgenin geri kalanı bir ListNode tutamayacak kadar küçük (gerekli,
+</span><span>            </span><span style="color:#608b4e;">// çünkü ayırma bölgeyi kullanılan ve boş bir parçaya böler)
+</span><span>            </span><span style="color:#569cd6;">return </span><span>Err(());
+</span><span>        }
+</span><span>
+</span><span>        </span><span style="color:#608b4e;">// bölge ayırma için uygun
+</span><span>        Ok(alloc_start)
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>İlk olarak, fonksiyon daha önce tanımladığımız <code>align_up</code> fonksiyonunu ve <a href="https://doc.rust-lang.org/std/primitive.usize.html#method.checked_add"><code>checked_add</code></a> metodunu kullanarak potansiyel bir ayırmanın başlangıç ve bitiş adresini hesaplar. Bir taşma meydana gelirse veya bitiş adresi bölgenin bitiş adresinin gerisindeyse, ayırma bölgeye sığmaz ve bir hata döndürürüz.</p>
+<p>Fonksiyon bundan sonra daha az bariz bir kontrol gerçekleştirir. Bu kontrol gereklidir, çünkü çoğu zaman bir ayırma uygun bir bölgeye mükemmel şekilde sığmaz, bu yüzden bölgenin bir kısmı ayırmadan sonra kullanılabilir kalır. Bölgenin bu kısmı ayırmadan sonra kendi <code>ListNode</code>’unu saklamalıdır, bu yüzden bunu yapacak kadar büyük olmalıdır. Kontrol tam olarak bunu doğrular: ya ayırma mükemmel şekilde sığar (<code>excess_size == 0</code>) ya da fazla boyut bir <code>ListNode</code> saklayacak kadar büyüktür.</p>
+<h4 id="globalalloc-u-uygulamak-1"><a class="zola-anchor" href="#globalalloc-u-uygulamak-1" aria-label="Anchor link for: globalalloc-u-uygulamak-1">🔗</a><code>GlobalAlloc</code>’u Uygulamak</h4>
+<p><code>add_free_region</code> ve <code>find_region</code> metotlarının sağladığı temel işlemlerle, artık nihayet <code>GlobalAlloc</code> trait’ini uygulayabiliriz. Bump allocator’da olduğu gibi, trait’i doğrudan <code>LinkedListAllocator</code> için değil, yalnızca sarmalanmış bir <code>Locked&lt;LinkedListAllocator&gt;</code> için uyguluyoruz. <a href="https://os.phil-opp.com/tr/allocator-designs/#a-locked-wrapper-type"><code>Locked</code> sarmalayıcısı</a>, bir spinlock aracılığıyla iç değiştirilebilirlik ekler; bu da <code>alloc</code> ve <code>dealloc</code> metotları yalnızca <code>&amp;self</code> referansları alsa bile allocator örneğini değiştirmemize olanak tanır.</p>
+<p>Uygulama şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::Locked;
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;LinkedListAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#608b4e;">// layout ayarlamalarını gerçekleştir
+</span><span>        </span><span style="color:#569cd6;">let </span><span>(size, align) = LinkedListAllocator::size_align(layout);
+</span><span>        </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">if let </span><span>Some((region, alloc_start)) = allocator.find_region(size, align) {
+</span><span>            </span><span style="color:#569cd6;">let</span><span> alloc_end = alloc_start.checked_add(size).expect(</span><span style="color:#d69d85;">&quot;overflow&quot;</span><span>);
+</span><span>            </span><span style="color:#569cd6;">let</span><span> excess_size = region.end_addr() - alloc_end;
+</span><span>            </span><span style="color:#569cd6;">if</span><span> excess_size &gt; </span><span style="color:#b5cea8;">0 </span><span>{
+</span><span>                </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                    allocator.add_free_region(alloc_end, excess_size);
+</span><span>                }
+</span><span>            }
+</span><span>            alloc_start </span><span style="color:#569cd6;">as *mut u8
+</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
+</span><span>            ptr::null_mut()
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>        </span><span style="color:#608b4e;">// layout ayarlamalarını gerçekleştir
+</span><span>        </span><span style="color:#569cd6;">let </span><span>(size, </span><span style="color:#569cd6;">_</span><span>) = LinkedListAllocator::size_align(layout);
+</span><span>
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{ self.lock().add_free_region(ptr </span><span style="color:#569cd6;">as usize</span><span>, size) }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Daha basit olduğu için <code>dealloc</code> metoduyla başlayalım: İlk olarak, birazdan açıklayacağımız bazı layout ayarlamaları gerçekleştirir. Ardından, <a href="https://os.phil-opp.com/tr/allocator-designs/#a-locked-wrapper-type"><code>Locked</code> sarmalayıcısı</a> üzerinde <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> fonksiyonunu çağırarak bir <code>&amp;mut LinkedListAllocator</code> referansı alır. Son olarak, deallocate edilen bölgeyi free list’e eklemek için <code>add_free_region</code> fonksiyonunu çağırır.</p>
+<p><code>alloc</code> metodu biraz daha karmaşıktır. Aynı layout ayarlamalarıyla başlar ve değiştirilebilir bir allocator referansı almak için <a href="https://docs.rs/spin/0.5.0/spin/struct.Mutex.html#method.lock"><code>Mutex::lock</code></a> fonksiyonunu da çağırır. Ardından ayırma için uygun bir bellek bölgesi bulmak ve onu listeden kaldırmak için <code>find_region</code> metodunu kullanır. Bu başarılı olmazsa ve <code>None</code> döndürülürse, uygun bir bellek bölgesi olmadığı için bir hatayı bildirmek üzere <code>null_mut</code> döndürür.</p>
+<p>Başarı durumunda, <code>find_region</code> metodu uygun bölgenin (artık listede değil) ve ayırmanın başlangıç adresinin bir tuple’ını döndürür. <code>alloc_start</code>’ı, ayırma boyutunu ve bölgenin bitiş adresini kullanarak, ayırmanın bitiş adresini ve fazla boyutu yeniden hesaplar. Fazla boyut sıfır değilse, bellek bölgesinin fazla boyutunu free list’e geri eklemek için <code>add_free_region</code> çağırır. Son olarak, bir <code>*mut u8</code> işaretçisi olarak dönüştürülmüş <code>alloc_start</code> adresini döndürür.</p>
+<h4 id="layout-ayarlamalari"><a class="zola-anchor" href="#layout-ayarlamalari" aria-label="Anchor link for: layout-ayarlamalari">🔗</a>Layout Ayarlamaları</h4>
+<p>Peki hem <code>alloc</code> hem de <code>dealloc</code>’un başında yaptığımız bu layout ayarlamaları nedir? Bunlar, ayrılan her bloğun bir <code>ListNode</code> saklayabilir olmasını sağlar. Bu önemlidir, çünkü bellek bloğu bir noktada deallocate edilecek; o noktada ona bir <code>ListNode</code> yazmak isteriz. Blok bir <code>ListNode</code>’dan küçükse veya doğru hizalamaya sahip değilse, tanımsız davranış meydana gelebilir.</p>
+<p>Layout ayarlamaları, şu şekilde tanımlanan <code>size_align</code> fonksiyonu tarafından gerçekleştirilir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/linked_list.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>LinkedListAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Verilen layout&#39;u, elde edilen ayrılmış bellek bölgesi bir `ListNode`
+</span><span>    </span><span style="color:#608b4e;">/// saklayabilecek şekilde de ayarlar.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Ayarlanan boyut ve hizalamayı bir (size, align) tuple&#39;ı olarak döndürür.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>size_align(layout: Layout) -&gt; (</span><span style="color:#569cd6;">usize</span><span>, </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> layout = layout
+</span><span>            .align_to(mem::align_of::&lt;ListNode&gt;())
+</span><span>            .expect(</span><span style="color:#d69d85;">&quot;adjusting alignment failed&quot;</span><span>)
+</span><span>            .pad_to_align();
+</span><span>        </span><span style="color:#569cd6;">let</span><span> size = layout.size().max(mem::size_of::&lt;ListNode&gt;());
+</span><span>        (size, layout.align())
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>İlk olarak, fonksiyon geçirilen <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> üzerinde <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.align_to"><code>align_to</code></a> metodunu kullanarak, gerekirse hizalamayı bir <code>ListNode</code>’un hizalamasına yükseltir. Ardından, bir sonraki bellek bloğunun başlangıç adresinin de bir <code>ListNode</code> saklamak için doğru hizalamaya sahip olmasını sağlamak amacıyla boyutu hizalamanın bir katına yuvarlamak için <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.pad_to_align"><code>pad_to_align</code></a> metodunu kullanır.
+İkinci adımda, <code>mem::size_of::&lt;ListNode&gt;</code> minimum ayırma boyutunu zorunlu kılmak için <a href="https://doc.rust-lang.org/std/cmp/trait.Ord.html#method.max"><code>max</code></a> metodunu kullanır. Bu sayede, <code>dealloc</code> fonksiyonu serbest bırakılan bellek bloğuna güvenle bir <code>ListNode</code> yazabilir.</p>
+<h3 id="kullanmak-1"><a class="zola-anchor" href="#kullanmak-1" aria-label="Anchor link for: kullanmak-1">🔗</a>Kullanmak</h3>
+<p>Artık <code>allocator</code> modülündeki <code>ALLOCATOR</code> static’ini yeni <code>LinkedListAllocator</code>’ımızı kullanacak şekilde güncelleyebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>linked_list::LinkedListAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;LinkedListAllocator&gt; =
+</span><span>    Locked::new(LinkedListAllocator::new());
+</span></code></pre>
+<p><code>init</code> fonksiyonu bump ve bağlı liste allocator’ları için aynı şekilde davrandığından, <code>init_heap</code>’teki <code>init</code> çağrısını değiştirmemize gerek yok.</p>
+<p><code>heap_allocation</code> testlerimizi şimdi tekrar çalıştırdığımızda, bump allocator ile başarısız olan <code>many_boxes_long_lived</code> testi dahil tüm testlerin artık geçtiğini görüyoruz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [ok]
+</span></code></pre>
+<p>Bu, bağlı liste allocator’ımızın serbest bırakılan belleği sonraki ayırmalar için yeniden kullanabildiğini gösterir.</p>
+<h3 id="tartisma-1"><a class="zola-anchor" href="#tartisma-1" aria-label="Anchor link for: tartisma-1">🔗</a>Tartışma</h3>
+<p>Bump allocator’ın aksine, bağlı liste allocator’ı genel amaçlı bir allocator olarak çok daha uygundur; esas olarak serbest bırakılan belleği doğrudan yeniden kullanabildiği için. Ancak bazı dezavantajları da vardır. Bazıları yalnızca temel uygulamamızdan kaynaklanır, ancak allocator tasarımının kendisinin de temel dezavantajları vardır.</p>
+<h4 id="merging-freed-blocks"><a class="zola-anchor" href="#merging-freed-blocks" aria-label="Anchor link for: merging-freed-blocks">🔗</a>Serbest Bırakılan Blokları Birleştirmek</h4>
+<p>Uygulamamızın ana sorunu, heap’i yalnızca daha küçük bloklara bölmesi ama onları asla tekrar birleştirmemesidir. Şu örneği düşünün:</p>
+<p><img src="https://os.phil-opp.com/tr/allocator-designs/linked-list-allocator-fragmentation-on-dealloc.svg" alt="" /></p>
+<p>İlk satırda, heap’te üç ayırma oluşturulur. Bunlardan ikisi satır 2’de tekrar serbest bırakılır ve üçüncüsü satır 3’te serbest bırakılır. Artık tüm heap tekrar kullanılmamıştır, ancak hâlâ dört ayrı bloğa bölünmüştür. Bu noktada, dört bloğun hiçbiri yeterince büyük olmadığı için büyük bir ayırma artık mümkün olmayabilir. Zamanla süreç devam eder ve heap giderek daha küçük bloklara bölünür. Bir noktada, heap o kadar parçalanır ki normal boyutlu ayırmalar bile başarısız olur.</p>
+<p>Bu sorunu düzeltmek için, bitişik serbest bırakılan blokları tekrar birleştirmemiz gerekir. Yukarıdaki örnek için bu, şu anlama gelirdi:</p>
+<p><img src="https://os.phil-opp.com/tr/allocator-designs/linked-list-allocator-merge-on-dealloc.svg" alt="" /></p>
+<p>Önceki gibi, üç ayırmanın ikisi satır <code>2</code>’de serbest bırakılır. Parçalanmış heap’i tutmak yerine, artık en sağdaki iki bloğu tekrar birleştirmek için satır <code>2a</code>’da ek bir adım gerçekleştiriyoruz. Satır <code>3</code>’te, üçüncü ayırma (önceki gibi) serbest bırakılır ve üç ayrı blokla temsil edilen tamamen kullanılmayan bir heap ile sonuçlanır. Satır <code>3a</code>’daki ek bir birleştirme adımında, ardından üç bitişik bloğu tekrar birleştiririz.</p>
+<p><code>linked_list_allocator</code> crate’i bu birleştirme stratejisini şu şekilde uygular: <code>deallocate</code>’te serbest bırakılan bellek bloklarını bağlı listenin başına eklemek yerine, listeyi her zaman başlangıç adresine göre sıralı tutar. Bu sayede, birleştirme doğrudan <code>deallocate</code> çağrısında, listedeki iki komşu bloğun adreslerini ve boyutlarını inceleyerek gerçekleştirilebilir. Tabii ki, deallocation işlemi bu şekilde daha yavaştır, ancak yukarıda gördüğümüz heap parçalanmasını önler.</p>
+<h4 id="performans"><a class="zola-anchor" href="#performans" aria-label="Anchor link for: performans">🔗</a>Performans</h4>
+<p>Yukarıda öğrendiğimiz gibi, bump allocator son derece hızlıdır ve yalnızca birkaç assembly işlemine optimize edilebilir. Bağlı liste allocator’ı bu kategoride çok daha kötü performans gösterir. Sorun, bir ayırma isteğinin uygun bir blok bulana kadar tüm bağlı liste üzerinde dolaşması gerekebilmesidir.</p>
+<p>Liste uzunluğu kullanılmayan bellek bloklarının sayısına bağlı olduğundan, performans farklı programlar için aşırı değişebilir. Yalnızca birkaç ayırma oluşturan bir program nispeten hızlı ayırma performansı yaşar. Ancak heap’i çok sayıda ayırmayla parçalayan bir program için, ayırma performansı çok kötü olacaktır; çünkü bağlı liste çok uzun olacak ve çoğunlukla çok küçük bloklar içerecektir.</p>
+<p>Bu performans sorununun temel uygulamamızdan kaynaklanan bir sorun değil, bağlı liste yaklaşımının temel bir sorunu olduğunu belirtmekte fayda var. Ayırma performansı kernel seviyesindeki kod için çok önemli olabileceğinden, aşağıda azalan bellek kullanımı karşılığında geliştirilmiş performans sunan üçüncü bir allocator tasarımını inceliyoruz.</p>
+<h2 id="fixed-size-block-allocator"><a class="zola-anchor" href="#fixed-size-block-allocator" aria-label="Anchor link for: fixed-size-block-allocator">🔗</a>Sabit Boyutlu Blok Allocator’ı</h2>
+<p>Aşağıda, ayırma isteklerini karşılamak için sabit boyutlu bellek blokları kullanan bir allocator tasarımı sunuyoruz. Bu sayede, allocator genellikle ayırmalar için gerekenden daha büyük bloklar döndürür; bu da <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">iç parçalanma (internal fragmentation)</a> nedeniyle israf edilen bellekle sonuçlanır. Öte yandan, (bağlı liste allocator’ına kıyasla) uygun bir blok bulmak için gereken süreyi büyük ölçüde azaltır ve çok daha iyi ayırma performansıyla sonuçlanır.</p>
+<h3 id="giris-1"><a class="zola-anchor" href="#giris-1" aria-label="Anchor link for: giris-1">🔗</a>Giriş</h3>
+<p>Bir <em>sabit boyutlu blok allocator’ının</em> arkasındaki fikir şudur: İstenen kadar tam olarak bellek ayırmak yerine, az sayıda blok boyutu tanımlarız ve her ayırmayı bir sonraki blok boyutuna yuvarlarız. Örneğin, 16, 64 ve 512 baytlık blok boyutlarıyla, 4 baytlık bir ayırma 16 baytlık bir blok, 48 baytlık bir ayırma 64 baytlık bir blok ve 128 baytlık bir ayırma 512 baytlık bir blok döndürürdü.</p>
+<p>Bağlı liste allocator’ı gibi, kullanılmayan bellekte bir bağlı liste oluşturarak kullanılmayan belleği takip ederiz. Ancak, farklı blok boyutlarına sahip tek bir liste kullanmak yerine, her boyut sınıfı için ayrı bir liste oluştururuz. Her liste daha sonra yalnızca tek bir boyuttaki blokları saklar. Örneğin, 16, 64 ve 512 blok boyutlarıyla, bellekte üç ayrı bağlı liste olurdu:</p>
+<p><img src="https://os.phil-opp.com/tr/allocator-designs/fixed-size-block-example.svg" alt="" />.</p>
+<p>Tek bir <code>head</code> işaretçisi yerine, her biri karşılık gelen boyuttaki ilk kullanılmayan bloğa işaret eden <code>head_16</code>, <code>head_64</code> ve <code>head_512</code> olmak üzere üç head işaretçisine sahibiz. Tek bir listedeki tüm düğümler aynı boyuttadır. Örneğin, <code>head_16</code> işaretçisiyle başlatılan liste yalnızca 16 baytlık bloklar içerir. Bu, boyutu zaten head işaretçisinin adıyla belirtildiği için artık her liste düğümünde boyutu saklamamıza gerek olmadığı anlamına gelir.</p>
+<p>Bir listedeki her eleman aynı boyutta olduğundan, her liste elemanı bir ayırma isteği için eşit derecede uygundur. Bu, aşağıdaki adımları kullanarak bir ayırmayı çok verimli bir şekilde gerçekleştirebileceğimiz anlamına gelir:</p>
+<ul>
+<li>İstenen ayırma boyutunu bir sonraki blok boyutuna yuvarla. Örneğin, 12 baytlık bir ayırma istendiğinde, yukarıdaki örnekte 16 blok boyutunu seçerdik.</li>
+<li>Liste için head işaretçisini al; örneğin blok boyutu 16 için <code>head_16</code>’yı kullanmamız gerekir.</li>
+<li>İlk bloğu listeden kaldır ve onu döndür.</li>
+</ul>
+<p>En önemlisi, her zaman listenin ilk elemanını döndürebiliriz ve artık tüm liste üzerinde dolaşmamıza gerek yoktur. Böylece, ayırmalar bağlı liste allocator’ına göre çok daha hızlıdır.</p>
+<h4 id="blok-boyutlari-ve-israf-edilen-bellek"><a class="zola-anchor" href="#blok-boyutlari-ve-israf-edilen-bellek" aria-label="Anchor link for: blok-boyutlari-ve-israf-edilen-bellek">🔗</a>Blok Boyutları ve İsraf Edilen Bellek</h4>
+<p>Blok boyutlarına bağlı olarak, yuvarlama yaparak çok fazla bellek kaybederiz. Örneğin, 128 baytlık bir ayırma için 512 baytlık bir blok döndürüldüğünde, ayrılan belleğin dörtte üçü kullanılmaz. Makul blok boyutları tanımlayarak, israf edilen bellek miktarını bir dereceye kadar sınırlamak mümkündür. Örneğin, blok boyutu olarak 2’nin kuvvetlerini (4, 8, 16, 32, 64, 128, …) kullandığımızda, bellek israfını en kötü durumda ayırma boyutunun yarısıyla ve ortalama durumda ayırma boyutunun dörtte biriyle sınırlayabiliriz.</p>
+<p>Blok boyutlarını bir programdaki yaygın ayırma boyutlarına göre optimize etmek de yaygındır. Örneğin, sık sık 24 baytlık ayırmalar yapan programlar için bellek kullanımını iyileştirmek amacıyla buna ek olarak 24 blok boyutunu ekleyebiliriz. Bu sayede, israf edilen bellek miktarı genellikle performans avantajları kaybedilmeden azaltılabilir.</p>
+<h4 id="deallocation-serbest-birakma"><a class="zola-anchor" href="#deallocation-serbest-birakma" aria-label="Anchor link for: deallocation-serbest-birakma">🔗</a>Deallocation (Serbest Bırakma)</h4>
+<p>Tıpkı ayırma gibi, deallocation da çok performanslıdır. Aşağıdaki adımları içerir:</p>
+<ul>
+<li>Serbest bırakılan ayırma boyutunu bir sonraki blok boyutuna yuvarla. Bu gereklidir, çünkü derleyici <code>dealloc</code>’a yalnızca istenen ayırma boyutunu geçirir, <code>alloc</code> tarafından döndürülen bloğun boyutunu değil. Hem <code>alloc</code> hem de <code>dealloc</code>’ta aynı boyut ayarlama fonksiyonunu kullanarak, her zaman doğru miktarda belleği serbest bıraktığımızdan emin olabiliriz.</li>
+<li>Liste için head işaretçisini al.</li>
+<li>Head işaretçisini güncelleyerek serbest bırakılan bloğu listenin başına ekle.</li>
+</ul>
+<p>En önemlisi, deallocation için de listede dolaşmaya gerek yoktur. Bu, bir <code>dealloc</code> çağrısı için gereken sürenin liste uzunluğundan bağımsız olarak aynı kaldığı anlamına gelir.</p>
+<h4 id="yedek-fallback-allocator"><a class="zola-anchor" href="#yedek-fallback-allocator" aria-label="Anchor link for: yedek-fallback-allocator">🔗</a>Yedek (Fallback) Allocator</h4>
+<p>Büyük ayırmaların (&gt;2 KB) genellikle, özellikle işletim sistemi kernel’lerinde nadir olduğu göz önüne alındığında, bu ayırmalar için farklı bir allocator’a geri dönmek (fall back) mantıklı olabilir. Örneğin, bellek israfını azaltmak için 2048 bayttan büyük ayırmalar için bir bağlı liste allocator’ına geri dönebiliriz. O boyutta yalnızca çok az ayırma beklendiğinden, bağlı liste küçük kalır ve (de)allocation’lar yine de makul ölçüde hızlı olur.</p>
+<h4 id="creating-new-blocks"><a class="zola-anchor" href="#creating-new-blocks" aria-label="Anchor link for: creating-new-blocks">🔗</a>Yeni Bloklar Oluşturmak</h4>
+<p>Yukarıda, her zaman tüm ayırma isteklerini karşılamak için listede belirli bir boyutta yeterli blok olduğunu varsaydık. Ancak bir noktada, belirli bir blok boyutu için bağlı liste boşalır. Bu noktada, bir ayırma isteğini karşılamak için belirli bir boyutta yeni kullanılmayan bloklar oluşturmanın iki yolu vardır:</p>
+<ul>
+<li>Yedek allocator’dan yeni bir blok ayır (eğer varsa).</li>
+<li>Farklı bir listeden daha büyük bir bloğu böl. Bu, en iyi blok boyutları 2’nin kuvvetleriyse işe yarar. Örneğin, 32 baytlık bir blok iki adet 16 baytlık bloğa bölünebilir.</li>
+</ul>
+<p>Uygulamamız için, uygulaması çok daha basit olduğundan yeni blokları yedek allocator’dan ayıracağız.</p>
+<h3 id="uygulama-2"><a class="zola-anchor" href="#uygulama-2" aria-label="Anchor link for: uygulama-2">🔗</a>Uygulama</h3>
+<p>Artık bir sabit boyutlu blok allocator’ının nasıl çalıştığını bildiğimize göre, uygulamamıza başlayabiliriz. Önceki bölümde oluşturulan bağlı liste allocator’ının uygulamasına bağımlı olmayacağız, bu yüzden bağlı liste allocator’ı uygulamasını atladıysanız bile bu kısmı takip edebilirsiniz.</p>
+<h4 id="liste-dugumu-list-node"><a class="zola-anchor" href="#liste-dugumu-list-node" aria-label="Anchor link for: liste-dugumu-list-node">🔗</a>Liste Düğümü (List Node)</h4>
+<p>Uygulamamıza yeni bir <code>allocator::fixed_size_block</code> modülünde bir <code>ListNode</code> tipi oluşturarak başlıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub mod </span><span>fixed_size_block;
+</span></code></pre>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>ListNode {
+</span><span>    next: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;,
+</span><span>}
+</span></code></pre>
+<p>Bu tip, <a href="https://os.phil-opp.com/tr/allocator-designs/#the-allocator-type">bağlı liste allocator’ı uygulamamızdaki</a> <code>ListNode</code> tipine benzer; farkı, bir <code>size</code> alanımız olmamasıdır. Sabit boyutlu blok allocator tasarımıyla bir listedeki her blok aynı boyutta olduğu için ona ihtiyaç yoktur.</p>
+<h4 id="blok-boyutlari"><a class="zola-anchor" href="#blok-boyutlari" aria-label="Anchor link for: blok-boyutlari">🔗</a>Blok Boyutları</h4>
+<p>Sonra, uygulamamız için kullanılan blok boyutlarıyla sabit bir <code>BLOCK_SIZES</code> dilimi tanımlıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">/// Kullanılacak blok boyutları.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// Boyutların her biri 2&#39;nin bir kuvveti olmalıdır, çünkü aynı zamanda blok
+</span><span style="color:#608b4e;">/// hizalaması olarak da kullanılırlar (hizalamalar her zaman 2&#39;nin kuvveti olmalıdır).
+</span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">usize</span><span>] = </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#b5cea8;">8</span><span>, </span><span style="color:#b5cea8;">16</span><span>, </span><span style="color:#b5cea8;">32</span><span>, </span><span style="color:#b5cea8;">64</span><span>, </span><span style="color:#b5cea8;">128</span><span>, </span><span style="color:#b5cea8;">256</span><span>, </span><span style="color:#b5cea8;">512</span><span>, </span><span style="color:#b5cea8;">1024</span><span>, </span><span style="color:#b5cea8;">2048</span><span>];
+</span></code></pre>
+<p>Blok boyutları olarak, 8’den 2048’e kadar 2’nin kuvvetlerini kullanıyoruz. 8’den küçük hiçbir blok boyutu tanımlamıyoruz, çünkü her blok serbest bırakıldığında bir sonraki bloğa 64-bit bir işaretçi saklayabilir olmalıdır. 2048 bayttan büyük ayırmalar için bir bağlı liste allocator’ına geri döneceğiz.</p>
+<p>Uygulamayı basitleştirmek için, bir bloğun boyutunu bellekteki gerekli hizalaması olarak tanımlıyoruz. Yani 16 baytlık bir blok her zaman 16 baytlık bir sınırda hizalanır ve 512 baytlık bir blok 512 baytlık bir sınırda hizalanır. Hizalamaların her zaman 2’nin kuvveti olması gerektiğinden, bu diğer tüm blok boyutlarını dışlar. Gelecekte 2’nin kuvveti olmayan blok boyutlarına ihtiyaç duyarsak, uygulamamızı bunun için yine de ayarlayabiliriz (örneğin ikinci bir <code>BLOCK_ALIGNMENTS</code> dizisi tanımlayarak).</p>
+<h4 id="the-allocator-type-2"><a class="zola-anchor" href="#the-allocator-type-2" aria-label="Anchor link for: the-allocator-type-2">🔗</a>Allocator Tipi</h4>
+<p><code>ListNode</code> tipini ve <code>BLOCK_SIZES</code> dilimini kullanarak, artık allocator tipimizi tanımlayabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>FixedSizeBlockAllocator {
+</span><span>    list_heads: [Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt;; BLOCK_SIZES.len()],
+</span><span>    fallback_allocator: linked_list_allocator::Heap,
+</span><span>}
+</span></code></pre>
+<p><code>list_heads</code> alanı, her blok boyutu için bir tane olmak üzere <code>head</code> işaretçilerinden oluşan bir dizidir. Bu, dizi uzunluğu olarak <code>BLOCK_SIZES</code> diliminin <code>len()</code>’i kullanılarak uygulanır. En büyük blok boyutundan daha büyük ayırmalar için bir yedek allocator olarak, <code>linked_list_allocator</code>’ın sağladığı allocator’ı kullanırız. Bunun yerine kendi uyguladığımız <code>LinkedListAllocator</code>’ı da kullanabilirdik, ancak onun <a href="https://os.phil-opp.com/tr/allocator-designs/#merging-freed-blocks">serbest bırakılan blokları birleştirmeme</a> dezavantajı vardır.</p>
+<p>Bir <code>FixedSizeBlockAllocator</code> oluşturmak için, diğer allocator tipleri için de uyguladığımız aynı <code>new</code> ve <code>init</code> fonksiyonlarını sağlıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>FixedSizeBlockAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Boş bir FixedSizeBlockAllocator oluşturur.
+</span><span>    </span><span style="color:#569cd6;">pub const fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
+</span><span>        </span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">EMPTY</span><span>: Option&lt;</span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> ListNode&gt; = None;
+</span><span>        FixedSizeBlockAllocator {
+</span><span>            list_heads: [</span><span style="color:#b4cea8;">EMPTY</span><span>; </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>.len()],
+</span><span>            fallback_allocator: linked_list_allocator::Heap::empty(),
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#608b4e;">/// Allocator&#39;ı verilen heap sınırlarıyla başlatır.
+</span><span>    </span><span style="color:#608b4e;">///
+</span><span>    </span><span style="color:#608b4e;">/// Bu fonksiyon unsafe&#39;tir, çünkü çağıranın verilen heap sınırlarının
+</span><span>    </span><span style="color:#608b4e;">/// geçerli olduğunu ve heap&#39;in kullanılmadığını garanti etmesi gerekir.
+</span><span>    </span><span style="color:#608b4e;">/// Bu metot yalnızca bir kez çağrılmalıdır.
+</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(</span><span style="color:#569cd6;">&amp;mut </span><span>self, heap_start: </span><span style="color:#569cd6;">usize</span><span>, heap_size: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{ self.fallback_allocator.init(heap_start, heap_size); }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>new</code> fonksiyonu yalnızca <code>list_heads</code> dizisini boş düğümlerle başlatır ve <code>fallback_allocator</code> olarak <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.empty">boş</a> bir bağlı liste allocator’ı oluşturur. <code>EMPTY</code> sabiti, Rust derleyicisine diziyi sabit bir değerle başlatmak istediğimizi söylemek için gereklidir. Diziyi doğrudan <code>[None; BLOCK_SIZES.len()]</code> olarak başlatmak çalışmaz, çünkü o zaman derleyici <code>Option&lt;&amp;'static mut ListNode&gt;</code>’un <code>Copy</code> trait’ini uygulamasını gerektirir; ki uygulamaz. Bu, Rust derleyicisinin gelecekte ortadan kalkabilecek mevcut bir sınırlamasıdır.</p>
+<p>Unsafe <code>init</code> fonksiyonu, <code>list_heads</code> dizisinin herhangi bir ek başlatmasını yapmadan yalnızca <code>fallback_allocator</code>’ın <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> fonksiyonunu çağırır. Bunun yerine, listeleri <code>alloc</code> ve <code>dealloc</code> çağrılarında tembelce (lazily) başlatacağız.</p>
+<p>Kolaylık için, <code>fallback_allocator</code>’ı kullanarak ayırma yapan özel bir <code>fallback_alloc</code> metodu da oluşturuyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::Layout;
+</span><span style="color:#569cd6;">use </span><span>core::ptr;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>FixedSizeBlockAllocator {
+</span><span>    </span><span style="color:#608b4e;">/// Yedek allocator&#39;ı kullanarak ayırır.
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>fallback_alloc(</span><span style="color:#569cd6;">&amp;mut </span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        </span><span style="color:#569cd6;">match </span><span>self.fallback_allocator.allocate_first_fit(layout) {
+</span><span>            Ok(ptr) </span><span style="color:#569cd6;">=&gt;</span><span> ptr.as_ptr(),
+</span><span>            Err(</span><span style="color:#569cd6;">_</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>ptr::null_mut(),
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>linked_list_allocator</code> crate’inin <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a> tipi <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>’u uygulamaz (<a href="https://os.phil-opp.com/tr/allocator-designs/#globalalloc-and-mutability">kilitleme olmadan mümkün olmadığı</a> için). Bunun yerine, biraz farklı bir arayüze sahip bir <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.allocate_first_fit"><code>allocate_first_fit</code></a> metodu sağlar. Bir <code>*mut u8</code> döndürmek ve bir hatayı bildirmek için null bir işaretçi kullanmak yerine, bir <code>Result&lt;NonNull&lt;u8&gt;, ()&gt;</code> döndürür. <a href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html"><code>NonNull</code></a> tipi, null bir işaretçi olmayacağı garanti edilen bir ham işaretçi için bir soyutlamadır. <code>Ok</code> durumunu <a href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html#method.as_ptr"><code>NonNull::as_ptr</code></a> metoduna ve <code>Err</code> durumunu null bir işaretçiye eşleyerek, bunu kolayca bir <code>*mut u8</code> tipine geri çevirebiliriz.</p>
+<h4 id="liste-indeksini-hesaplamak"><a class="zola-anchor" href="#liste-indeksini-hesaplamak" aria-label="Anchor link for: liste-indeksini-hesaplamak">🔗</a>Liste İndeksini Hesaplamak</h4>
+<p><code>GlobalAlloc</code> trait’ini uygulamadan önce, verilen bir <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> için mümkün olan en düşük blok boyutunu döndüren bir <code>list_index</code> yardımcı fonksiyonu tanımlıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">/// Verilen layout için uygun bir blok boyutu seç.
+</span><span style="color:#608b4e;">///
+</span><span style="color:#608b4e;">/// `BLOCK_SIZES` dizisine bir indeks döndürür.
+</span><span style="color:#569cd6;">fn </span><span>list_index(layout: </span><span style="color:#569cd6;">&amp;</span><span>Layout) -&gt; Option&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; {
+</span><span>    </span><span style="color:#569cd6;">let</span><span> required_block_size = layout.size().max(layout.align());
+</span><span>    </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>.iter().position(|</span><span style="color:#569cd6;">&amp;</span><span>s| s &gt;= required_block_size)
+</span><span>}
+</span></code></pre>
+<p>Blok, en az verilen <code>Layout</code> tarafından gereken boyut ve hizalamaya sahip olmalıdır. Blok boyutunun aynı zamanda onun hizalaması olduğunu tanımladığımız için, bu, <code>required_block_size</code>’ın layout’un <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.size"><code>size()</code></a> ve <a href="https://doc.rust-lang.org/core/alloc/struct.Layout.html#method.align"><code>align()</code></a> özniteliklerinin <a href="https://doc.rust-lang.org/core/cmp/trait.Ord.html#method.max">maksimumu</a> olduğu anlamına gelir. <code>BLOCK_SIZES</code> dilimindeki bir sonraki daha büyük bloğu bulmak için, önce bir iterator almak üzere <a href="https://doc.rust-lang.org/std/primitive.slice.html#method.iter"><code>iter()</code></a> metodunu, ardından en az <code>required_block_size</code> kadar büyük olan ilk bloğun indeksini bulmak için <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.position"><code>position()</code></a> metodunu kullanıyoruz.</p>
+<p>Blok boyutunun kendisini değil, <code>BLOCK_SIZES</code> dilimine indeksi döndürdüğümüze dikkat edin. Bunun nedeni, döndürülen indeksi <code>list_heads</code> dizisine bir indeks olarak kullanmak istememizdir.</p>
+<h4 id="globalalloc-u-uygulamak-2"><a class="zola-anchor" href="#globalalloc-u-uygulamak-2" aria-label="Anchor link for: globalalloc-u-uygulamak-2">🔗</a><code>GlobalAlloc</code>’u Uygulamak</h4>
+<p>Son adım, <code>GlobalAlloc</code> trait’ini uygulamaktır:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use super</span><span>::Locked;
+</span><span style="color:#569cd6;">use </span><span>alloc::alloc::GlobalAlloc;
+</span><span>
+</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Locked&lt;FixedSizeBlockAllocator&gt; {
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>        todo!();
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>        todo!();
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Diğer allocator’larda olduğu gibi, <code>GlobalAlloc</code> trait’ini doğrudan allocator tipimiz için uygulamıyoruz, senkronize iç değiştirilebilirlik eklemek için <a href="https://os.phil-opp.com/tr/allocator-designs/#a-locked-wrapper-type"><code>Locked</code> sarmalayıcısını</a> kullanıyoruz. <code>alloc</code> ve <code>dealloc</code> uygulamaları nispeten büyük olduğundan, onları aşağıda tek tek tanıtıyoruz.</p>
+<h5 id="alloc"><a class="zola-anchor" href="#alloc" aria-label="Anchor link for: alloc">🔗</a><code>alloc</code></h5>
+<p><code>alloc</code> metodunun uygulaması şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs&#39;teki `impl` bloğunda
+</span><span>
+</span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>    </span><span style="color:#569cd6;">match </span><span>list_index(</span><span style="color:#569cd6;">&amp;</span><span>layout) {
+</span><span>        Some(index) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">match</span><span> allocator.list_heads[index].take() {
+</span><span>                Some(node) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                    allocator.list_heads[index] = node.next.take();
+</span><span>                    node </span><span style="color:#569cd6;">as *mut</span><span> ListNode </span><span style="color:#569cd6;">as *mut u8
+</span><span>                }
+</span><span>                None </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                    </span><span style="color:#608b4e;">// listede blok yok =&gt; yeni blok ayır
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> block_size = </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index];
+</span><span>                    </span><span style="color:#608b4e;">// yalnızca tüm blok boyutları 2&#39;nin kuvvetiyse çalışır
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> block_align = block_size;
+</span><span>                    </span><span style="color:#569cd6;">let</span><span> layout = Layout::from_size_align(block_size, block_align)
+</span><span>                        .unwrap();
+</span><span>                    allocator.fallback_alloc(layout)
+</span><span>                }
+</span><span>            }
+</span><span>        }
+</span><span>        None </span><span style="color:#569cd6;">=&gt;</span><span> allocator.fallback_alloc(layout),
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Adım adım gidelim:</p>
+<p>İlk olarak, sarmalanan allocator örneğine değiştirilebilir bir referans almak için <code>Locked::lock</code> metodunu kullanıyoruz. Sonra, verilen layout için uygun blok boyutunu hesaplamak ve <code>list_heads</code> dizisine karşılık gelen indeksi almak için az önce tanımladığımız <code>list_index</code> fonksiyonunu çağırıyoruz. Bu indeks <code>None</code> ise, ayırma için uygun bir blok boyutu yoktur, bu yüzden <code>fallback_alloc</code> fonksiyonunu kullanarak <code>fallback_allocator</code>’ı kullanıyoruz.</p>
+<p>Liste indeksi <code>Some</code> ise, <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a> metodunu kullanarak <code>list_heads[index]</code> ile başlatılan karşılık gelen listedeki ilk düğümü kaldırmaya çalışıyoruz. Liste boş değilse, <code>match</code> ifadesinin <code>Some(node)</code> dalına gireriz; burada listenin head işaretçisini pop’lanan <code>node</code>’un ardılına yönlendiririz (yine <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>take</code></a> kullanarak). Son olarak, pop’lanan <code>node</code> işaretçisini bir <code>*mut u8</code> olarak döndürürüz.</p>
+<p>Liste head’i <code>None</code> ise, bu, blok listesinin boş olduğunu gösterir. Bu, <a href="https://os.phil-opp.com/tr/allocator-designs/#creating-new-blocks">yukarıda açıklandığı gibi</a> yeni bir blok oluşturmamız gerektiği anlamına gelir. Bunun için, önce <code>BLOCK_SIZES</code> diliminden mevcut blok boyutunu alıyor ve onu yeni blok için hem boyut hem de hizalama olarak kullanıyoruz. Sonra ondan yeni bir <code>Layout</code> oluşturuyor ve ayırmayı gerçekleştirmek için <code>fallback_alloc</code> metodunu çağırıyoruz. Layout ve hizalamayı ayarlamanın nedeni, bloğun deallocation’da blok listesine ekleneceği olmasıdır.</p>
+<h4 id="dealloc"><a class="zola-anchor" href="#dealloc" aria-label="Anchor link for: dealloc">🔗</a><code>dealloc</code></h4>
+<p><code>dealloc</code> metodunun uygulaması şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator/fixed_size_block.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::{mem, ptr::NonNull};
+</span><span>
+</span><span style="color:#608b4e;">// `unsafe impl GlobalAlloc` bloğunun içinde
+</span><span>
+</span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout) {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> allocator = self.lock();
+</span><span>    </span><span style="color:#569cd6;">match </span><span>list_index(</span><span style="color:#569cd6;">&amp;</span><span>layout) {
+</span><span>        Some(index) </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">let</span><span> new_node = ListNode {
+</span><span>                next: allocator.list_heads[index].take(),
+</span><span>            };
+</span><span>            </span><span style="color:#608b4e;">// bloğun düğümü saklamak için gereken boyut ve hizalamaya sahip olduğunu doğrula
+</span><span>            assert!(mem::size_of::&lt;ListNode&gt;() &lt;= </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index]);
+</span><span>            assert!(mem::align_of::&lt;ListNode&gt;() &lt;= </span><span style="color:#b4cea8;">BLOCK_SIZES</span><span>[index]);
+</span><span>            </span><span style="color:#569cd6;">let</span><span> new_node_ptr = ptr </span><span style="color:#569cd6;">as *mut</span><span> ListNode;
+</span><span>            </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                new_node_ptr.write(new_node);
+</span><span>                allocator.list_heads[index] = Some(</span><span style="color:#569cd6;">&amp;mut </span><span>*new_node_ptr);
+</span><span>            }
+</span><span>        }
+</span><span>        None </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>            </span><span style="color:#569cd6;">let</span><span> ptr = NonNull::new(ptr).unwrap();
+</span><span>            </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>                allocator.fallback_allocator.deallocate(ptr, layout);
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>alloc</code>’ta olduğu gibi, önce değiştirilebilir bir allocator referansı almak için <code>lock</code> metodunu, ardından verilen <code>Layout</code>’a karşılık gelen blok listesini almak için <code>list_index</code> fonksiyonunu kullanıyoruz. İndeks <code>None</code> ise, <code>BLOCK_SIZES</code>’ta uygun bir blok boyutu yoktur; bu da ayırmanın yedek allocator tarafından oluşturulduğunu gösterir. Bu nedenle, belleği tekrar serbest bırakmak için onun <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.deallocate"><code>deallocate</code></a>’ini kullanıyoruz. Metot bir <code>*mut u8</code> yerine bir <a href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html"><code>NonNull</code></a> bekler, bu yüzden önce işaretçiyi dönüştürmemiz gerekir. (<code>unwrap</code> çağrısı yalnızca işaretçi null olduğunda başarısız olur; ki bu, derleyici <code>dealloc</code>’u çağırdığında asla olmamalıdır.)</p>
+<p><code>list_index</code> bir blok indeksi döndürürse, serbest bırakılan bellek bloğunu listeye eklememiz gerekir. Bunun için, önce mevcut liste head’ine işaret eden yeni bir <code>ListNode</code> oluşturuyoruz (yine <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a> kullanarak). Yeni düğümü serbest bırakılan bellek bloğuna yazmadan önce, <code>index</code> tarafından belirtilen mevcut blok boyutunun bir <code>ListNode</code> saklamak için gereken boyut ve hizalamaya sahip olduğunu doğrularız. Ardından verilen <code>*mut u8</code> işaretçisini bir <code>*mut ListNode</code> işaretçisine dönüştürerek ve sonra onun üzerinde unsafe <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write"><code>write</code></a> metodunu çağırarak yazmayı gerçekleştiririz. Son adım, üzerinde <code>take</code> çağırdığımız için şu anda <code>None</code> olan listenin head işaretçisini, yeni yazdığımız <code>ListNode</code>’a ayarlamaktır. Bunun için, ham <code>new_node_ptr</code>’yi değiştirilebilir bir referansa dönüştürürüz.</p>
+<p>Belirtmeye değer birkaç şey var:</p>
+<ul>
+<li>Bir blok listesinden ayrılan bloklar ile yedek allocator’dan ayrılan blokları ayırt etmiyoruz. Bu, <code>alloc</code>’ta oluşturulan yeni blokların <code>dealloc</code>’ta blok listesine eklendiği ve böylece o boyuttaki blokların sayısının arttığı anlamına gelir.</li>
+<li><code>alloc</code> metodu, uygulamamızda yeni blokların oluşturulduğu tek yerdir. Bu, başlangıçta boş blok listeleriyle başladığımız ve bu listeleri yalnızca kendi blok boyutlarında ayırmalar yapıldığında tembelce doldurduğumuz anlamına gelir.</li>
+<li>Bazı <code>unsafe</code> işlemler gerçekleştirsek de, <code>alloc</code> ve <code>dealloc</code>’ta <code>unsafe</code> bloklara ihtiyacımız yok. Bunun nedeni, Rust’ın şu anda unsafe fonksiyonların tüm gövdesini bir büyük <code>unsafe</code> blok olarak ele almasıdır. Açık <code>unsafe</code> bloklar kullanmanın, hangi işlemlerin unsafe olduğunun ve hangilerinin olmadığının belli olması avantajı olduğundan, bu davranışı değiştirmek için <a href="https://github.com/rust-lang/rfcs/pull/2585">önerilen bir RFC</a> var.</li>
+</ul>
+<h3 id="kullanmak-2"><a class="zola-anchor" href="#kullanmak-2" aria-label="Anchor link for: kullanmak-2">🔗</a>Kullanmak</h3>
+<p>Yeni <code>FixedSizeBlockAllocator</code>’ımızı kullanmak için, <code>allocator</code> modülündeki <code>ALLOCATOR</code> static’ini güncellememiz gerekir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>fixed_size_block::FixedSizeBlockAllocator;
+</span><span>
+</span><span>#[global_allocator]
+</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Locked&lt;FixedSizeBlockAllocator&gt; = Locked::new(
+</span><span>    FixedSizeBlockAllocator::new());
+</span></code></pre>
+<p><code>init</code> fonksiyonu uyguladığımız tüm allocator’lar için aynı şekilde davrandığından, <code>init_heap</code>’teki <code>init</code> çağrısını değiştirmemize gerek yok.</p>
+<p><code>heap_allocation</code> testlerimizi şimdi tekrar çalıştırdığımızda, tüm testler hâlâ geçmelidir:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
+</span><span>simple_allocation... [ok]
+</span><span>large_vec... [ok]
+</span><span>many_boxes... [ok]
+</span><span>many_boxes_long_lived... [ok]
+</span></code></pre>
+<p>Yeni allocator’ımız çalışıyor gibi görünüyor!</p>
+<h3 id="tartisma-2"><a class="zola-anchor" href="#tartisma-2" aria-label="Anchor link for: tartisma-2">🔗</a>Tartışma</h3>
+<p>Sabit boyutlu blok yaklaşımı bağlı liste yaklaşımından çok daha iyi performansa sahip olsa da, blok boyutu olarak 2’nin kuvvetlerini kullanırken belleğin yarısına kadarını israf eder. Bu ödünleşimin (tradeoff) buna değip değmediği büyük ölçüde uygulama türüne bağlıdır. Performansın kritik olduğu bir işletim sistemi kernel’i için, sabit boyutlu blok yaklaşımı daha iyi bir seçim gibi görünür.</p>
+<p>Uygulama tarafında, mevcut uygulamamızda iyileştirebileceğimiz çeşitli şeyler var:</p>
+<ul>
+<li>Yalnızca yedek allocator’ı kullanarak blokları tembelce ayırmak yerine, ilk ayırmaların performansını iyileştirmek için listeleri önceden doldurmak daha iyi olabilir.</li>
+<li>Uygulamayı basitleştirmek için, yalnızca 2’nin kuvveti olan blok boyutlarına izin verdik; böylece onları blok hizalaması olarak da kullanabildik. Hizalamayı farklı bir şekilde saklayarak (veya hesaplayarak), keyfi diğer blok boyutlarına da izin verebiliriz. Bu sayede, israf edilen belleği en aza indirmek için, örneğin yaygın ayırma boyutları için daha fazla blok boyutu ekleyebiliriz.</li>
+<li>Şu anda yalnızca yeni bloklar oluşturuyoruz, ancak onları asla tekrar serbest bırakmıyoruz. Bu, parçalanmaya yol açar ve sonunda büyük ayırmalar için ayırma başarısızlığıyla sonuçlanabilir. Her blok boyutu için maksimum bir liste uzunluğu zorunlu kılmak mantıklı olabilir. Maksimum uzunluğa ulaşıldığında, sonraki deallocation’lar listeye eklenmek yerine yedek allocator kullanılarak serbest bırakılır.</li>
+<li>Bir bağlı liste allocator’ına geri dönmek yerine, 4 KiB’tan büyük ayırmalar için özel bir allocator’a sahip olabiliriz. Fikir, sürekli bir sanal bellek bloğunu sürekli olmayan fiziksel frame’lere eşlemek için 4 KiB sayfalarla çalışan <a href="https://os.phil-opp.com/tr/paging-introduction/">paging</a>’den yararlanmaktır. Bu sayede, kullanılmayan belleğin parçalanması büyük ayırmalar için artık bir sorun olmaz.</li>
+<li>Böyle bir sayfa allocator’ıyla, 4 KiB’a kadar blok boyutları eklemek ve bağlı liste allocator’ını tamamen bırakmak mantıklı olabilir. Bunun ana avantajları, azalan parçalanma ve geliştirilmiş performans öngörülebilirliği, yani daha iyi en kötü durum performansı olurdu.</li>
+</ul>
+<p>Yukarıda özetlenen uygulama iyileştirmelerinin yalnızca öneri olduğunu belirtmek önemlidir. İşletim sistemi kernel’lerinde kullanılan allocator’lar tipik olarak kernel’in belirli iş yükü için yüksek düzeyde optimize edilir; ki bu yalnızca kapsamlı profilleme (profiling) ile mümkündür.</p>
+<h3 id="cesitlemeler"><a class="zola-anchor" href="#cesitlemeler" aria-label="Anchor link for: cesitlemeler">🔗</a>Çeşitlemeler</h3>
+<p>Sabit boyutlu blok allocator tasarımının pek çok çeşitlemesi de vardır. İki popüler örnek, Linux gibi popüler kernel’lerde de kullanılan <em>slab allocator</em> ve <em>buddy allocator</em>’dır. Aşağıda, bu iki tasarıma kısa bir giriş yapıyoruz.</p>
+<h4 id="slab-allocator"><a class="zola-anchor" href="#slab-allocator" aria-label="Anchor link for: slab-allocator">🔗</a>Slab Allocator</h4>
+<p>Bir <a href="https://en.wikipedia.org/wiki/Slab_allocation">slab allocator</a>’ın arkasındaki fikir, doğrudan kernel’deki seçili tiplere karşılık gelen blok boyutları kullanmaktır. Bu sayede, o tiplerin ayırmaları bir blok boyutuna tam olarak sığar ve hiç bellek israf edilmez. Bazen, performansı daha da iyileştirmek için kullanılmayan bloklarda tip örneklerini önceden başlatmak bile mümkün olabilir.</p>
+<p>Slab ayırma genellikle diğer allocator’larla birleştirilir. Örneğin, bellek israfını azaltmak amacıyla ayrılmış bir bloğu daha da bölmek için bir sabit boyutlu blok allocator’ıyla birlikte kullanılabilir. Tek bir büyük ayırmanın üzerine bir <a href="https://en.wikipedia.org/wiki/Object_pool_pattern">nesne havuzu örüntüsü (object pool pattern)</a> uygulamak için de sıklıkla kullanılır.</p>
+<h4 id="buddy-allocator"><a class="zola-anchor" href="#buddy-allocator" aria-label="Anchor link for: buddy-allocator">🔗</a>Buddy Allocator</h4>
+<p>Serbest bırakılan blokları yönetmek için bir bağlı liste kullanmak yerine, <a href="https://en.wikipedia.org/wiki/Buddy_memory_allocation">buddy allocator</a> tasarımı 2’nin kuvveti blok boyutlarıyla birlikte bir <a href="https://en.wikipedia.org/wiki/Binary_tree">ikili ağaç (binary tree)</a> veri yapısı kullanır. Belirli bir boyutta yeni bir blok gerektiğinde, daha büyük boyutlu bir bloğu iki yarıya böler ve böylece ağaçta iki alt düğüm oluşturur. Bir blok tekrar serbest bırakıldığında, ağaçtaki komşu bloğu analiz edilir. Komşu da boşsa, iki blok iki katı boyutta bir blok oluşturmak için tekrar birleştirilir.</p>
+<p>Bu birleştirme sürecinin avantajı, <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#External_fragmentation">dış parçalanmanın (external fragmentation)</a> azaltılması ve böylece küçük serbest bırakılan blokların büyük bir ayırma için yeniden kullanılabilmesidir. Ayrıca bir yedek allocator kullanmaz, bu yüzden performans daha öngörülebilirdir. En büyük dezavantajı, yalnızca 2’nin kuvveti blok boyutlarının mümkün olmasıdır; bu da <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">iç parçalanma (internal fragmentation)</a> nedeniyle büyük miktarda israf edilen bellekle sonuçlanabilir. Bu nedenle, buddy allocator’lar genellikle ayrılmış bir bloğu birden çok daha küçük bloğa daha da bölmek için bir slab allocator’ıyla birleştirilir.</p>
+<h2 id="ozet"><a class="zola-anchor" href="#ozet" aria-label="Anchor link for: ozet">🔗</a>Özet</h2>
+<p>Bu yazı, farklı allocator tasarımlarına genel bir bakış yaptı. Tek bir <code>next</code> işaretçisini artırarak belleği doğrusal olarak teslim eden temel bir <a href="https://os.phil-opp.com/tr/allocator-designs/#bump-allocator">bump allocator</a>’ın nasıl uygulanacağını öğrendik. Bump ayırma çok hızlı olsa da, belleği yalnızca tüm ayırmalar serbest bırakıldıktan sonra yeniden kullanabilir. Bu nedenle, nadiren global allocator olarak kullanılır.</p>
+<p>Sonra, bir bağlı liste oluşturmak için serbest bırakılan bellek bloklarının kendilerini kullanan bir <a href="https://os.phil-opp.com/tr/allocator-designs/#linked-list-allocator">bağlı liste allocator’ı</a>, yani <em>free list</em> oluşturduk. Bu liste, farklı boyutlarda keyfi sayıda serbest bırakılan bloğu saklamayı mümkün kılar. Hiçbir bellek israfı meydana gelmese de, bir ayırma isteği listenin tam bir taranmasını gerektirebileceği için yaklaşım kötü performanstan muzdariptir. Uygulamamız ayrıca, bitişik serbest bırakılan blokları tekrar birleştirmediği için <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#External_fragmentation">dış parçalanmadan</a> da muzdariptir.</p>
+<p>Bağlı liste yaklaşımının performans sorunlarını düzeltmek için, sabit bir blok boyutu kümesini önceden tanımlayan bir <a href="https://os.phil-opp.com/tr/allocator-designs/#fixed-size-block-allocator">sabit boyutlu blok allocator’ı</a> oluşturduk. Her blok boyutu için ayrı bir <a href="https://en.wikipedia.org/wiki/Free_list">free list</a> vardır; böylece ayırmalar ve deallocation’lar yalnızca listenin başına ekleme/çıkarma yapması gerekir ve bu yüzden çok hızlıdır. Her ayırma bir sonraki daha büyük blok boyutuna yuvarlandığından, <a href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">iç parçalanma</a> nedeniyle bir miktar bellek israf edilir.</p>
+<p>Farklı ödünleşimlere sahip çok daha fazla allocator tasarımı var. <a href="https://os.phil-opp.com/tr/allocator-designs/#slab-allocator">Slab ayırma</a>, yaygın sabit boyutlu yapıların ayrılmasını optimize etmek için iyi çalışır, ancak her durumda uygulanabilir değildir. <a href="https://os.phil-opp.com/tr/allocator-designs/#buddy-allocator">Buddy ayırma</a>, serbest bırakılan blokları tekrar birleştirmek için bir ikili ağaç kullanır, ancak yalnızca 2’nin kuvveti blok boyutlarını desteklediği için büyük miktarda bellek israf eder. Her kernel uygulamasının benzersiz bir iş yükü olduğunu, bu yüzden tüm durumlara uyan “en iyi” bir allocator tasarımı olmadığını da hatırlamak önemlidir.</p>
+<h2 id="sirada-ne-var"><a class="zola-anchor" href="#sirada-ne-var" aria-label="Anchor link for: sirada-ne-var">🔗</a>Sırada ne var?</h2>
+<p>Bu yazıyla, şimdilik bellek yönetimi uygulamamızı sonuçlandırıyoruz. Sonra, <a href="https://rust-lang.github.io/async-book/01_getting_started/04_async_await_primer.html"><em>async/await</em></a> biçiminde işbirlikçi çoklu görevle (cooperative multitasking) başlayarak <a href="https://en.wikipedia.org/wiki/Computer_multitasking"><em>çoklu görevi (multitasking)</em></a> incelemeye başlayacağız. Sonraki yazılarda, ardından <a href="https://en.wikipedia.org/wiki/Thread_(computing)"><em>thread’leri</em></a>, <a href="https://en.wikipedia.org/wiki/Multiprocessing"><em>çoklu işlemeyi (multiprocessing)</em></a> ve <a href="https://en.wikipedia.org/wiki/Process_(computing)"><em>süreçleri (processes)</em></a> inceleyeceğiz.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Beni Destekle</h2>
+<p>Bu blogu ve ilişkili kütüphaneleri oluşturmak ve sürdürmek çok emek gerektiriyor, ve bunu yapmaktan gerçekten zevk alıyorum. Beni destekleyerek yeni içerik, yeni özellikler ve sürekli bakım için daha fazla zaman ayırmama olanak tanıyorsunuz. Beni desteklemenin en iyi yolu <a href="https://github.com/sponsors/phil-opp"><em>GitHub'da sponsor olmak</em></a>. Teşekkürler!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/tr/heap-allocation/">&laquo; Heap Ayırma</a>
+        
+        
+            <a class="next" href="/tr/async-await/">Async&#x2F;Await &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Yorumlar</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Bir sorunuz mu var, geri bildirim paylaşmak veya fikirlerinizi tartışmak mı istiyorsunuz? Buraya yorum bırakmaktan çekinmeyin! Lütfen İngilizce kullanın ve Rust'ın <a href="https://www.rust-lang.org/policies/code-of-conduct">davranış kurallarına</a> uyun. Bu yorum dizisi doğrudan <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Allocator%20Designs%20%28tr%29%22%20in%3Atitle"><em>GitHub'daki bir tartışmaya</em></a> bağlıdır, dolayısıyla isterseniz oraya da yorum yapabilirsiniz.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="Allocator Designs (tr)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="tr"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22Allocator%20Designs%20%28tr%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Mümkünse yorumlarınızı İngilizce bırakınız.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/allocator-designs/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ar" class=""><a href="https://os.phil-opp.com/ar/allocator-designs/">
+                        العربية
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/allocator-designs/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/allocator-designs/ja/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/allocator-designs/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="ru" class=""><a href="https://os.phil-opp.com/ru/allocator-designs/">
+                        Russian
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/allocator-designs/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

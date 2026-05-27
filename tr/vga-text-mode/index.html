@@ -1,0 +1,763 @@
+<!doctype html>
+
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="VGA metin modu, ekrana metin yazdırmanın basit bir yoludur. Bu yazıda, tüm güvensizliği (unsafety) ayrı bir modülde kapsülleyerek onun kullanımını güv…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/tr/vga-text-mode/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>VGA Metin Modu | Rust ile İşletim Sistemi Yazıyoruz</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Rust ile İşletim Sistemi Yazıyoruz</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/tr" title="All Posts">« Tüm Yazılar</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>İçindekiler</h2>
+    <ol>
+        <li>
+            <a href="#vga-metin-arabellegi">VGA Metin Arabelleği</a>
+            
+        </li><li>
+            <a href="#bir-rust-modulu">Bir Rust Modülü</a>
+            <ol>
+                <li>
+                    <a href="#renkler">Renkler</a>
+                </li><li>
+                    <a href="#metin-arabellegi">Metin Arabelleği</a>
+                </li><li>
+                    <a href="#yazdirma">Yazdırma</a>
+                </li><li>
+                    <a href="#volatile">Volatile</a>
+                </li><li>
+                    <a href="#bicimlendirme-makrolari">Biçimlendirme Makroları</a>
+                </li><li>
+                    <a href="#yeni-satirlar">Yeni Satırlar</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#a-global-interface">Global Bir Arayüz</a>
+            <ol>
+                <li>
+                    <a href="#lazy-statics">Lazy Statics</a>
+                </li><li>
+                    <a href="#spinlocks">Spinlock’lar</a>
+                </li><li>
+                    <a href="#guvenlik">Güvenlik</a>
+                </li><li>
+                    <a href="#bir-println-makrosu">Bir println Makrosu</a>
+                </li><li>
+                    <a href="#println-ile-hello-world">println ile Hello World</a>
+                </li><li>
+                    <a href="#panic-mesajlarini-yazdirma">Panic Mesajlarını Yazdırma</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#ozet">Özet</a>
+            
+        </li><li>
+            <a href="#sirada-ne-var">Sırada ne var?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>VGA Metin Modu</h1>
+    <time datetime="2018-02-26" class="post-date">
+        Feb 26, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Çevrilmiş İçerik:</b>
+            Bu, <strong><a href="https://os.phil-opp.com/vga-text-mode/">VGA Text Mode</a></strong> adlı gönderinin topluluk tarafından yapılmış bir çevirisidir. Eksik, güncel olmayan veya hata içeriyor olabilir. Lütfen herhangi bir sorunu bildirin!
+            </p>
+            <p>
+                Translation by <a href="https://github.com/rhotav">@rhotav</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p><a href="https://en.wikipedia.org/wiki/VGA-compatible_text_mode">VGA metin modu</a>, ekrana metin yazdırmanın basit bir yoludur. Bu yazıda, tüm güvensizliği (unsafety) ayrı bir modülde kapsülleyerek onun kullanımını güvenli ve basit hale getiren bir arayüz oluşturuyoruz. Ayrıca Rust’ın <a href="https://doc.rust-lang.org/std/fmt/#related-macros">biçimlendirme makrolarına</a> yönelik destek de uyguluyoruz.</p>
+<span id="continue-reading"></span>
+<p>Bu blog <a href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/vga-text-mode/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a href="https://github.com/phil-opp/blog_os/tree/post-03"><code>post-03</code></a> dalında bulunabilir.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>İçindekiler</b></summary>
+        <ul>
+            <li>
+                <a href="#vga-metin-arabellegi">VGA Metin Arabelleği</a>
+                
+            </li><li>
+                <a href="#bir-rust-modulu">Bir Rust Modülü</a>
+                <ul>
+                    <li>
+                        <a href="#renkler">Renkler</a>
+                    </li><li>
+                        <a href="#metin-arabellegi">Metin Arabelleği</a>
+                    </li><li>
+                        <a href="#yazdirma">Yazdırma</a>
+                    </li><li>
+                        <a href="#volatile">Volatile</a>
+                    </li><li>
+                        <a href="#bicimlendirme-makrolari">Biçimlendirme Makroları</a>
+                    </li><li>
+                        <a href="#yeni-satirlar">Yeni Satırlar</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#a-global-interface">Global Bir Arayüz</a>
+                <ul>
+                    <li>
+                        <a href="#lazy-statics">Lazy Statics</a>
+                    </li><li>
+                        <a href="#spinlocks">Spinlock’lar</a>
+                    </li><li>
+                        <a href="#guvenlik">Güvenlik</a>
+                    </li><li>
+                        <a href="#bir-println-makrosu">Bir println Makrosu</a>
+                    </li><li>
+                        <a href="#println-ile-hello-world">println ile Hello World</a>
+                    </li><li>
+                        <a href="#panic-mesajlarini-yazdirma">Panic Mesajlarını Yazdırma</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#ozet">Özet</a>
+                
+            </li><li>
+                <a href="#sirada-ne-var">Sırada ne var?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+        </ul>
+    </details>
+
+<h2 id="vga-metin-arabellegi"><a class="zola-anchor" href="#vga-metin-arabellegi" aria-label="Anchor link for: vga-metin-arabellegi">🔗</a>VGA Metin Arabelleği</h2>
+<p>VGA metin modunda ekrana bir karakter yazdırmak için, onun VGA donanımının metin arabelleğine yazılması gerekir. VGA metin arabelleği, doğrudan ekrana işlenen, tipik olarak 25 satır ve 80 sütundan oluşan iki boyutlu bir dizidir. Her dizi girdisi, tek bir ekran karakterini aşağıdaki biçim aracılığıyla tanımlar:</p>
+<table><thead><tr><th>Bit(ler)</th><th>Değer</th></tr></thead><tbody>
+<tr><td>0-7</td><td>ASCII kod noktası</td></tr>
+<tr><td>8-11</td><td>Ön plan rengi</td></tr>
+<tr><td>12-14</td><td>Arka plan rengi</td></tr>
+<tr><td>15</td><td>Yanıp sönme</td></tr>
+</tbody></table>
+<p>İlk bayt, <a href="https://en.wikipedia.org/wiki/ASCII">ASCII kodlamasıyla</a> yazdırılması gereken karakteri temsil eder. Daha açık olmak gerekirse, bu tam olarak ASCII değildir; bazı ek karakterler ve küçük değişikliklerle <a href="https://en.wikipedia.org/wiki/Code_page_437"><em>code page 437</em></a> adlı bir karakter kümesidir. Basitlik için, bu yazıda ona ASCII karakter demeye devam edeceğiz.</p>
+<p>İkinci bayt, karakterin nasıl görüntüleneceğini tanımlar. İlk dört bit ön plan rengini, sonraki üç bit arka plan rengini ve son bit ise karakterin yanıp sönüp sönmeyeceğini tanımlar. Aşağıdaki renkler kullanılabilir:</p>
+<table><thead><tr><th>Sayı</th><th>Renk</th><th>Sayı + Parlaklık Biti</th><th>Parlak Renk</th></tr></thead><tbody>
+<tr><td>0x0</td><td>Siyah</td><td>0x8</td><td>Koyu Gri</td></tr>
+<tr><td>0x1</td><td>Mavi</td><td>0x9</td><td>Açık Mavi</td></tr>
+<tr><td>0x2</td><td>Yeşil</td><td>0xa</td><td>Açık Yeşil</td></tr>
+<tr><td>0x3</td><td>Camgöbeği</td><td>0xb</td><td>Açık Camgöbeği</td></tr>
+<tr><td>0x4</td><td>Kırmızı</td><td>0xc</td><td>Açık Kırmızı</td></tr>
+<tr><td>0x5</td><td>Macenta</td><td>0xd</td><td>Pembe</td></tr>
+<tr><td>0x6</td><td>Kahverengi</td><td>0xe</td><td>Sarı</td></tr>
+<tr><td>0x7</td><td>Açık Gri</td><td>0xf</td><td>Beyaz</td></tr>
+</tbody></table>
+<ol start="4">
+<li>bit, örneğin maviyi açık maviye dönüştüren <em>parlaklık bitidir (bright bit)</em>. Arka plan rengi için bu bit, yanıp sönme biti olarak yeniden kullanılır.</li>
+</ol>
+<p>VGA metin arabelleğine, <code>0xb8000</code> adresine <a href="https://en.wikipedia.org/wiki/Memory-mapped_I/O">belleğe eşlenmiş G/Ç (memory-mapped I/O)</a> aracılığıyla erişilebilir. Bu, o adrese yapılan okuma ve yazmaların RAM’e erişmediği, doğrudan VGA donanımındaki metin arabelleğine eriştiği anlamına gelir. Yani onu, o adrese yapılan normal bellek işlemleri aracılığıyla okuyup yazabiliriz.</p>
+<p>Belleğe eşlenmiş donanımın tüm normal RAM işlemlerini desteklemeyebileceğini unutmayın. Örneğin, bir cihaz yalnızca bayt bazında okumaları destekleyebilir ve bir <code>u64</code> okunduğunda çöp değer döndürebilir. Neyse ki metin arabelleği <a href="https://web.stanford.edu/class/cs140/projects/pintos/specs/freevga/vga/vgamem.htm#manip">normal okuma ve yazmaları destekler</a>, bu yüzden onu özel bir şekilde ele almamıza gerek yok.</p>
+<h2 id="bir-rust-modulu"><a class="zola-anchor" href="#bir-rust-modulu" aria-label="Anchor link for: bir-rust-modulu">🔗</a>Bir Rust Modülü</h2>
+<p>Artık VGA arabelleğinin nasıl çalıştığını bildiğimize göre, yazdırma işlemini yönetmek için bir Rust modülü oluşturabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span style="color:#569cd6;">mod </span><span>vga_buffer;
+</span></code></pre>
+<p>Bu modülün içeriği için yeni bir <code>src/vga_buffer.rs</code> dosyası oluşturuyoruz. Aşağıdaki tüm kodlar (aksi belirtilmedikçe) yeni modülümüzün içine girer.</p>
+<h3 id="renkler"><a class="zola-anchor" href="#renkler" aria-label="Anchor link for: renkler">🔗</a>Renkler</h3>
+<p>İlk olarak, farklı renkleri bir enum kullanarak temsil ediyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[allow(dead_code)]
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(u8)]
+</span><span style="color:#569cd6;">pub enum </span><span>Color {
+</span><span>    Black = </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>    Blue = </span><span style="color:#b5cea8;">1</span><span>,
+</span><span>    Green = </span><span style="color:#b5cea8;">2</span><span>,
+</span><span>    Cyan = </span><span style="color:#b5cea8;">3</span><span>,
+</span><span>    Red = </span><span style="color:#b5cea8;">4</span><span>,
+</span><span>    Magenta = </span><span style="color:#b5cea8;">5</span><span>,
+</span><span>    Brown = </span><span style="color:#b5cea8;">6</span><span>,
+</span><span>    LightGray = </span><span style="color:#b5cea8;">7</span><span>,
+</span><span>    DarkGray = </span><span style="color:#b5cea8;">8</span><span>,
+</span><span>    LightBlue = </span><span style="color:#b5cea8;">9</span><span>,
+</span><span>    LightGreen = </span><span style="color:#b5cea8;">10</span><span>,
+</span><span>    LightCyan = </span><span style="color:#b5cea8;">11</span><span>,
+</span><span>    LightRed = </span><span style="color:#b5cea8;">12</span><span>,
+</span><span>    Pink = </span><span style="color:#b5cea8;">13</span><span>,
+</span><span>    Yellow = </span><span style="color:#b5cea8;">14</span><span>,
+</span><span>    White = </span><span style="color:#b5cea8;">15</span><span>,
+</span><span>}
+</span></code></pre>
+<p>Her renk için sayıyı açıkça belirtmek amacıyla burada <a href="https://doc.rust-lang.org/rust-by-example/custom_types/enum/c_like.html">C benzeri bir enum</a> kullanıyoruz. <code>repr(u8)</code> özniteliği sayesinde, her enum varyantı bir <code>u8</code> olarak saklanır. Aslında 4 bit yeterli olurdu, ancak Rust’ta bir <code>u4</code> tipi yok.</p>
+<p>Normalde derleyici, kullanılmayan her varyant için bir uyarı verirdi. <code>#[allow(dead_code)]</code> özniteliğini kullanarak, <code>Color</code> enum’ı için bu uyarıları devre dışı bırakıyoruz.</p>
+<p><a href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><code>Copy</code></a>, <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html"><code>Clone</code></a>, <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Debug.html"><code>Debug</code></a>, <a href="https://doc.rust-lang.org/nightly/core/cmp/trait.PartialEq.html"><code>PartialEq</code></a> ve <a href="https://doc.rust-lang.org/nightly/core/cmp/trait.Eq.html"><code>Eq</code></a> trait’lerini <a href="https://doc.rust-lang.org/rust-by-example/trait/derive.html">türeterek (deriving)</a>, tip için <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/ownership.html#copy-types">copy semantiğini</a> etkinleştiriyor ve onu yazdırılabilir ve karşılaştırılabilir hale getiriyoruz.</p>
+<p>Ön plan ve arka plan rengini belirten tam bir renk kodunu temsil etmek için, <code>u8</code>’in üzerine bir <a href="https://doc.rust-lang.org/rust-by-example/generics/new_types.html">newtype</a> oluşturuyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(transparent)]
+</span><span style="color:#569cd6;">struct </span><span>ColorCode(</span><span style="color:#569cd6;">u8</span><span>);
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>ColorCode {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>new(foreground: Color, background: Color) -&gt; ColorCode {
+</span><span>        ColorCode((background </span><span style="color:#569cd6;">as u8</span><span>) &lt;&lt; </span><span style="color:#b5cea8;">4 </span><span style="color:#569cd6;">| </span><span>(foreground </span><span style="color:#569cd6;">as u8</span><span>))
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>ColorCode</code> struct’ı, ön plan ve arka plan rengini içeren tam renk baytını barındırır. Öncekine benzer şekilde, onun için <code>Copy</code> ve <code>Debug</code> trait’lerini türetiyoruz. <code>ColorCode</code>’un tam olarak bir <code>u8</code> ile aynı veri yerleşimine sahip olmasını sağlamak için <a href="https://doc.rust-lang.org/nomicon/other-reprs.html#reprtransparent"><code>repr(transparent)</code></a> özniteliğini kullanıyoruz.</p>
+<h3 id="metin-arabellegi"><a class="zola-anchor" href="#metin-arabellegi" aria-label="Anchor link for: metin-arabellegi">🔗</a>Metin Arabelleği</h3>
+<p>Artık bir ekran karakterini ve metin arabelleğini temsil edecek yapıları ekleyebiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+</span><span>#[repr(C)]
+</span><span style="color:#569cd6;">struct </span><span>ScreenChar {
+</span><span>    ascii_character: </span><span style="color:#569cd6;">u8</span><span>,
+</span><span>    color_code: ColorCode,
+</span><span>}
+</span><span>
+</span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">BUFFER_HEIGHT</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">25</span><span>;
+</span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">BUFFER_WIDTH</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">80</span><span>;
+</span><span>
+</span><span>#[repr(transparent)]
+</span><span style="color:#569cd6;">struct </span><span>Buffer {
+</span><span>    chars: [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],
+</span><span>}
+</span></code></pre>
+<p>Rust’ta varsayılan struct’larda alan sıralaması tanımsız olduğundan, <a href="https://doc.rust-lang.org/nightly/nomicon/other-reprs.html#reprc"><code>repr(C)</code></a> özniteliğine ihtiyacımız var. Bu öznitelik, struct’ın alanlarının tıpkı bir C struct’ındaki gibi yerleştirilmesini garanti eder ve böylece doğru alan sıralamasını güvence altına alır. <code>Buffer</code> struct’ı için, onun tek alanıyla aynı bellek yerleşimine sahip olmasını sağlamak amacıyla yine <a href="https://doc.rust-lang.org/nomicon/other-reprs.html#reprtransparent"><code>repr(transparent)</code></a> kullanıyoruz.</p>
+<p>Gerçekten ekrana yazmak için, şimdi bir writer (yazıcı) tipi oluşturuyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub struct </span><span>Writer {
+</span><span>    column_position: </span><span style="color:#569cd6;">usize</span><span>,
+</span><span>    color_code: ColorCode,
+</span><span>    buffer: </span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> Buffer,
+</span><span>}
+</span></code></pre>
+<p>Writer her zaman son satıra yazacak ve bir satır dolduğunda (veya <code>\n</code> durumunda) satırları yukarı kaydıracak. <code>column_position</code> alanı, son satırdaki mevcut konumu takip eder. Mevcut ön plan ve arka plan renkleri <code>color_code</code> tarafından belirtilir ve VGA arabelleğine bir referans <code>buffer</code> içinde saklanır. Burada, referansın ne kadar süre geçerli olduğunu derleyiciye bildirmek için <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html#lifetime-annotation-syntax">açık bir ömre (explicit lifetime)</a> ihtiyacımız olduğunu unutmayın. <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html#the-static-lifetime"><code>'static</code></a> ömrü, referansın tüm program çalışma süresi boyunca geçerli olduğunu belirtir (VGA metin arabelleği için bu doğrudur).</p>
+<h3 id="yazdirma"><a class="zola-anchor" href="#yazdirma" aria-label="Anchor link for: yazdirma">🔗</a>Yazdırma</h3>
+<p>Artık arabelleğin karakterlerini değiştirmek için <code>Writer</code>’ı kullanabiliriz. İlk olarak, tek bir ASCII baytı yazmak için bir metot oluşturuyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>write_byte(</span><span style="color:#569cd6;">&amp;mut </span><span>self, byte: </span><span style="color:#569cd6;">u8</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">match</span><span> byte {
+</span><span>            </span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&#39;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&#39; </span><span style="color:#569cd6;">=&gt; </span><span>self.new_line(),
+</span><span>            byte </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                </span><span style="color:#569cd6;">if </span><span>self.column_position &gt;= </span><span style="color:#b4cea8;">BUFFER_WIDTH </span><span>{
+</span><span>                    self.new_line();
+</span><span>                }
+</span><span>
+</span><span>                </span><span style="color:#569cd6;">let</span><span> row = </span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>                </span><span style="color:#569cd6;">let</span><span> col = self.column_position;
+</span><span>
+</span><span>                </span><span style="color:#569cd6;">let</span><span> color_code = self.color_code;
+</span><span>                self.buffer.chars[row][col] = ScreenChar {
+</span><span>                    ascii_character: byte,
+</span><span>                    color_code,
+</span><span>                };
+</span><span>                self.column_position += </span><span style="color:#b5cea8;">1</span><span>;
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>new_line(</span><span style="color:#569cd6;">&amp;mut </span><span>self) {</span><span style="color:#608b4e;">/* TODO */</span><span>}
+</span><span>}
+</span></code></pre>
+<p>Bayt, <a href="https://en.wikipedia.org/wiki/Newline">yeni satır (newline)</a> baytı <code>\n</code> ise, writer hiçbir şey yazdırmaz. Bunun yerine, daha sonra uygulayacağımız bir <code>new_line</code> metodunu çağırır. Diğer baytlar ise ikinci <code>match</code> durumunda ekrana yazdırılır.</p>
+<p>Bir bayt yazdırırken writer, mevcut satırın dolu olup olmadığını kontrol eder. Bu durumda, satırı kaydırmak için bir <code>new_line</code> çağrısı kullanılır. Ardından mevcut konuma arabelleğe yeni bir <code>ScreenChar</code> yazar. Son olarak, mevcut sütun konumu ilerletilir.</p>
+<p>Tam dizeleri yazdırmak için, onları baytlara dönüştürüp tek tek yazdırabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>write_string(</span><span style="color:#569cd6;">&amp;mut </span><span>self, s: </span><span style="color:#569cd6;">&amp;str</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">for</span><span> byte </span><span style="color:#569cd6;">in</span><span> s.bytes() {
+</span><span>            </span><span style="color:#569cd6;">match</span><span> byte {
+</span><span>                </span><span style="color:#608b4e;">// yazdırılabilir ASCII baytı veya yeni satır
+</span><span>                </span><span style="color:#b5cea8;">0x20</span><span style="color:#569cd6;">..</span><span>=</span><span style="color:#b5cea8;">0x7e </span><span style="color:#569cd6;">| b</span><span style="color:#d69d85;">&#39;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&#39; </span><span style="color:#569cd6;">=&gt; </span><span>self.write_byte(byte),
+</span><span>                </span><span style="color:#608b4e;">// yazdırılabilir ASCII aralığının parçası değil
+</span><span>                </span><span style="color:#569cd6;">_ =&gt; </span><span>self.write_byte(</span><span style="color:#b5cea8;">0xfe</span><span>),
+</span><span>            }
+</span><span>
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>VGA metin arabelleği yalnızca ASCII’yi ve <a href="https://en.wikipedia.org/wiki/Code_page_437">code page 437</a>’nin ek baytlarını destekler. Rust dizeleri varsayılan olarak <a href="https://www.fileformat.info/info/unicode/utf8.htm">UTF-8</a>’dir, bu yüzden VGA metin arabelleği tarafından desteklenmeyen baytlar içerebilirler. Yazdırılabilir ASCII baytlarını (bir yeni satır ya da boşluk karakteri ile <code>~</code> karakteri arasındaki herhangi bir şey) ve yazdırılamaz baytları ayırt etmek için bir <code>match</code> kullanıyoruz. Yazdırılamaz baytlar için, VGA donanımında <code>0xfe</code> onaltılık koduna sahip olan bir <code>■</code> karakteri yazdırıyoruz.</p>
+<h4 id="deneyin"><a class="zola-anchor" href="#deneyin" aria-label="Anchor link for: deneyin">🔗</a>Deneyin!</h4>
+<p>Ekrana birkaç karakter yazmak için geçici bir fonksiyon oluşturabilirsiniz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>print_something() {
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> writer = Writer {
+</span><span>        column_position: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        color_code: ColorCode::new(Color::Yellow, Color::Black),
+</span><span>        buffer: </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*(</span><span style="color:#b5cea8;">0xb8000 </span><span style="color:#569cd6;">as *mut</span><span> Buffer) },
+</span><span>    };
+</span><span>
+</span><span>    writer.write_byte(</span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&#39;H&#39;</span><span>);
+</span><span>    writer.write_string(</span><span style="color:#d69d85;">&quot;ello &quot;</span><span>);
+</span><span>    writer.write_string(</span><span style="color:#d69d85;">&quot;Wörld!&quot;</span><span>);
+</span><span>}
+</span></code></pre>
+<p>Bu fonksiyon önce, <code>0xb8000</code> adresindeki VGA arabelleğine işaret eden yeni bir Writer oluşturur. Bunun söz dizimi biraz tuhaf görünebilir: İlk olarak, <code>0xb8000</code> tamsayısını değiştirilebilir bir <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">ham işaretçiye (raw pointer)</a> dönüştürüyoruz. Ardından onu (<code>*</code> aracılığıyla) dereference ederek ve hemen tekrar (<code>&amp;mut</code> aracılığıyla) ödünç alarak değiştirilebilir bir referansa dönüştürüyoruz. Derleyici, ham işaretçinin geçerli olduğunu garanti edemediğinden, bu dönüştürme bir <a href="https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html"><code>unsafe</code> bloğu</a> gerektirir.</p>
+<p>Ardından ona <code>b'H'</code> baytını yazar. <code>b</code> öneki, bir ASCII karakterini temsil eden bir <a href="https://doc.rust-lang.org/reference/tokens.html#byte-literals">bayt değişmezi (byte literal)</a> oluşturur. <code>"ello "</code> ve <code>"Wörld!"</code> dizelerini yazarak, <code>write_string</code> metodumuzu ve yazdırılamaz karakterlerin işlenmesini test ediyoruz. Çıktıyı görmek için, <code>print_something</code> fonksiyonunu <code>_start</code> fonksiyonumuzdan çağırmamız gerekir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    vga_buffer::print_something();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Projemizi şimdi çalıştırdığımızda, ekranın <em>sol alt</em> köşesinde sarı renkte bir <code>Hello W■■rld!</code> yazdırılmalı:</p>
+<p><img src="https://os.phil-opp.com/tr/vga-text-mode/vga-hello.png" alt="ekranın sol alt köşesinde sarı renkli bir Hello W■■rld! ile QEMU çıktısı" /></p>
+<p><code>ö</code>’nün iki <code>■</code> karakteri olarak yazdırıldığına dikkat edin. Bunun nedeni, <code>ö</code>’nün <a href="https://www.fileformat.info/info/unicode/utf8.htm">UTF-8</a>’de iki baytla temsil edilmesi ve bu baytların ikisinin de yazdırılabilir ASCII aralığına girmemesidir. Aslında bu, UTF-8’in temel bir özelliğidir: çok baytlı değerlerin tek tek baytları asla geçerli ASCII değildir.</p>
+<h3 id="volatile"><a class="zola-anchor" href="#volatile" aria-label="Anchor link for: volatile">🔗</a>Volatile</h3>
+<p>Mesajımızın doğru yazdırıldığını az önce gördük. Ancak bu, daha agresif optimizasyon yapan gelecekteki Rust derleyicileriyle çalışmayabilir.</p>
+<p>Sorun şu ki, biz yalnızca <code>Buffer</code>’a yazıyor ve ondan bir daha hiç okumuyoruz. Derleyici, gerçekten (normal RAM yerine) VGA arabellek belleğine eriştiğimizi bilmiyor ve bazı karakterlerin ekranda görünmesi gibi bir yan etkiden haberi yok. Bu yüzden bu yazma işlemlerinin gereksiz olduğuna ve atlanabileceğine karar verebilir. Bu hatalı optimizasyonu önlemek için, bu yazma işlemlerini <em><a href="https://en.wikipedia.org/wiki/Volatile_(computer_programming)">volatile</a></em> olarak belirtmemiz gerekir. Bu, derleyiciye yazma işleminin yan etkileri olduğunu ve optimize edilerek kaldırılmaması gerektiğini bildirir.</p>
+<p>VGA arabelleği için volatile yazmaları kullanmak amacıyla, <a href="https://docs.rs/volatile">volatile</a> kütüphanesini kullanıyoruz. Bu <em>crate</em> (Rust dünyasında paketler bu şekilde adlandırılır), <code>read</code> ve <code>write</code> metotlarına sahip bir <code>Volatile</code> sarmalayıcı (wrapper) tipi sağlar. Bu metotlar dahili olarak core kütüphanesinin <a href="https://doc.rust-lang.org/nightly/core/ptr/fn.read_volatile.html">read_volatile</a> ve <a href="https://doc.rust-lang.org/nightly/core/ptr/fn.write_volatile.html">write_volatile</a> fonksiyonlarını kullanır ve böylece okuma/yazma işlemlerinin optimize edilerek kaldırılmamasını garanti eder.</p>
+<p><code>volatile</code> crate’ine bir bağımlılık eklemeyi, onu <code>Cargo.toml</code> dosyamızın <code>dependencies</code> bölümüne ekleyerek yapabiliriz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">volatile </span><span>= </span><span style="color:#d69d85;">&quot;0.2.6&quot;
+</span></code></pre>
+<p><code>volatile</code>’in <code>0.2.6</code> sürümünü belirttiğinizden emin olun. Crate’in daha yeni sürümleri bu yazıyla uyumlu değildir.
+<code>0.2.6</code>, <a href="https://semver.org/">semantik</a> sürüm numarasıdır. Daha fazla bilgi için cargo belgelerinin <a href="https://doc.crates.io/specifying-dependencies.html">Bağımlılıkları Belirtme</a> kılavuzuna bakın.</p>
+<p>Onu, VGA arabelleğine yapılan yazma işlemlerini volatile hale getirmek için kullanalım. <code>Buffer</code> tipimizi aşağıdaki gibi güncelliyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>volatile::Volatile;
+</span><span>
+</span><span style="color:#569cd6;">struct </span><span>Buffer {
+</span><span>    chars: [[Volatile&lt;ScreenChar&gt;; BUFFER_WIDTH]; BUFFER_HEIGHT],
+</span><span>}
+</span></code></pre>
+<p>Bir <code>ScreenChar</code> yerine, artık bir <code>Volatile&lt;ScreenChar&gt;</code> kullanıyoruz. (<code>Volatile</code> tipi <a href="https://doc.rust-lang.org/book/ch10-01-syntax.html">generic</a>’tir ve (neredeyse) herhangi bir tipi sarmalayabilir.) Bu, ona yanlışlıkla “normal” bir şekilde yazamayacağımızı garanti eder. Bunun yerine, artık <code>write</code> metodunu kullanmamız gerekir.</p>
+<p>Bu, <code>Writer::write_byte</code> metodumuzu güncellememiz gerektiği anlamına gelir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>write_byte(</span><span style="color:#569cd6;">&amp;mut </span><span>self, byte: </span><span style="color:#569cd6;">u8</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">match</span><span> byte {
+</span><span>            </span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&#39;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&#39; </span><span style="color:#569cd6;">=&gt; </span><span>self.new_line(),
+</span><span>            byte </span><span style="color:#569cd6;">=&gt; </span><span>{
+</span><span>                </span><span style="color:#569cd6;">...
+</span><span>
+</span><span>                self.buffer.chars[row][col].write(ScreenChar {
+</span><span>                    ascii_character: byte,
+</span><span>                    color_code,
+</span><span>                });
+</span><span>                </span><span style="color:#569cd6;">...
+</span><span>            }
+</span><span>        }
+</span><span>    }
+</span><span>    </span><span style="color:#569cd6;">...
+</span><span>}
+</span></code></pre>
+<p><code>=</code> kullanan tipik bir atama yerine, artık <code>write</code> metodunu kullanıyoruz. Artık derleyicinin bu yazma işlemini asla optimize ederek kaldırmayacağını garanti edebiliriz.</p>
+<h3 id="bicimlendirme-makrolari"><a class="zola-anchor" href="#bicimlendirme-makrolari" aria-label="Anchor link for: bicimlendirme-makrolari">🔗</a>Biçimlendirme Makroları</h3>
+<p>Rust’ın biçimlendirme makrolarını da desteklemek güzel olurdu. Bu sayede, tamsayılar veya float’lar gibi farklı tipleri kolayca yazdırabiliriz. Onları desteklemek için, <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>core::fmt::Write</code></a> trait’ini uygulamamız gerekir. Bu trait’in gerekli tek metodu <code>write_str</code>’dir; bu metot, yalnızca <code>fmt::Result</code> dönüş tipiyle, <code>write_string</code> metodumuza oldukça benzer:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::fmt;
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>fmt::Write </span><span style="color:#569cd6;">for </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>write_str(</span><span style="color:#569cd6;">&amp;mut </span><span>self, s: </span><span style="color:#569cd6;">&amp;str</span><span>) -&gt; fmt::Result {
+</span><span>        self.write_string(s);
+</span><span>        Ok(())
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p><code>Ok(())</code>, yalnızca <code>()</code> tipini içeren bir <code>Ok</code> Result’tur.</p>
+<p>Artık Rust’ın yerleşik <code>write!</code>/<code>writeln!</code> biçimlendirme makrolarını kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub fn </span><span>print_something() {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#569cd6;">let mut</span><span> writer = Writer {
+</span><span>        column_position: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        color_code: ColorCode::new(Color::Yellow, Color::Black),
+</span><span>        buffer: </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*(</span><span style="color:#b5cea8;">0xb8000 </span><span style="color:#569cd6;">as *mut</span><span> Buffer) },
+</span><span>    };
+</span><span>
+</span><span>    writer.write_byte(</span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&#39;H&#39;</span><span>);
+</span><span>    writer.write_string(</span><span style="color:#d69d85;">&quot;ello! &quot;</span><span>);
+</span><span>    write!(writer, </span><span style="color:#d69d85;">&quot;The numbers are </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> and </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#b5cea8;">42</span><span>, </span><span style="color:#b5cea8;">1.0</span><span>/</span><span style="color:#b5cea8;">3.0</span><span>).unwrap();
+</span><span>}
+</span></code></pre>
+<p>Şimdi ekranın altında bir <code>Hello! The numbers are 42 and 0.3333333333333333</code> görmelisiniz. <code>write!</code> çağrısı, kullanılmadığında bir uyarıya neden olan bir <code>Result</code> döndürür, bu yüzden onun üzerinde, bir hata oluşursa panic’e neden olan <a href="https://doc.rust-lang.org/core/result/enum.Result.html#method.unwrap"><code>unwrap</code></a> fonksiyonunu çağırıyoruz. VGA arabelleğine yapılan yazmalar asla başarısız olmadığı için, bizim durumumuzda bu bir sorun değildir.</p>
+<h3 id="yeni-satirlar"><a class="zola-anchor" href="#yeni-satirlar" aria-label="Anchor link for: yeni-satirlar">🔗</a>Yeni Satırlar</h3>
+<p>Şu anda, yeni satırları ve artık satıra sığmayan karakterleri yalnızca yok sayıyoruz. Bunun yerine, her karakteri bir satır yukarı taşımak (en üst satır silinir) ve son satırın başından yeniden başlamak istiyoruz. Bunu yapmak için, <code>Writer</code>’ın <code>new_line</code> metodu için bir uygulama ekliyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>new_line(</span><span style="color:#569cd6;">&amp;mut </span><span>self) {
+</span><span>        </span><span style="color:#569cd6;">for</span><span> row </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">1</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>{
+</span><span>            </span><span style="color:#569cd6;">for</span><span> col </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">BUFFER_WIDTH </span><span>{
+</span><span>                </span><span style="color:#569cd6;">let</span><span> character = self.buffer.chars[row][col].read();
+</span><span>                self.buffer.chars[row - </span><span style="color:#b5cea8;">1</span><span>][col].write(character);
+</span><span>            }
+</span><span>        }
+</span><span>        self.clear_row(</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">1</span><span>);
+</span><span>        self.column_position = </span><span style="color:#b5cea8;">0</span><span>;
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>clear_row(</span><span style="color:#569cd6;">&amp;mut </span><span>self, row: </span><span style="color:#569cd6;">usize</span><span>) {</span><span style="color:#608b4e;">/* TODO */</span><span>}
+</span><span>}
+</span></code></pre>
+<p>Tüm ekran karakterleri üzerinde iterasyon yapıyor ve her karakteri bir satır yukarı taşıyoruz. Aralık gösteriminin (<code>..</code>) üst sınırının dışlayıcı (exclusive) olduğuna dikkat edin. Ayrıca 0. satırı atlıyoruz (ilk aralık <code>1</code>’den başlıyor), çünkü o, ekranın dışına kaydırılan satırdır.</p>
+<p>Yeni satır kodunu tamamlamak için, <code>clear_row</code> metodunu ekliyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">impl </span><span>Writer {
+</span><span>    </span><span style="color:#569cd6;">fn </span><span>clear_row(</span><span style="color:#569cd6;">&amp;mut </span><span>self, row: </span><span style="color:#569cd6;">usize</span><span>) {
+</span><span>        </span><span style="color:#569cd6;">let</span><span> blank = ScreenChar {
+</span><span>            ascii_character: </span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&#39; &#39;</span><span>,
+</span><span>            color_code: self.color_code,
+</span><span>        };
+</span><span>        </span><span style="color:#569cd6;">for</span><span> col </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">BUFFER_WIDTH </span><span>{
+</span><span>            self.buffer.chars[row][col].write(blank);
+</span><span>        }
+</span><span>    }
+</span><span>}
+</span></code></pre>
+<p>Bu metot, bir satırın tüm karakterlerinin üzerine bir boşluk karakteri yazarak onu temizler.</p>
+<h2 id="a-global-interface"><a class="zola-anchor" href="#a-global-interface" aria-label="Anchor link for: a-global-interface">🔗</a>Global Bir Arayüz</h2>
+<p>Bir <code>Writer</code> örneğini etrafta taşımadan diğer modüllerden bir arayüz olarak kullanılabilecek global bir writer sağlamak için, statik bir <code>WRITER</code> oluşturmayı deniyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">pub static </span><span style="color:#b4cea8;">WRITER</span><span>: Writer = Writer {
+</span><span>    column_position: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>    color_code: ColorCode::new(Color::Yellow, Color::Black),
+</span><span>    buffer: </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*(</span><span style="color:#b5cea8;">0xb8000 </span><span style="color:#569cd6;">as *mut</span><span> Buffer) },
+</span><span>};
+</span></code></pre>
+<p>Ancak onu şimdi derlemeye çalışırsak, aşağıdaki hatalar oluşur:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0015]: calls in statics are limited to constant functions, tuple structs and tuple variants
+</span><span> --&gt; src/vga_buffer.rs:7:17
+</span><span>  |
+</span><span>7 |     color_code: ColorCode::new(Color::Yellow, Color::Black),
+</span><span>  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+</span><span>
+</span><span>error[E0396]: raw pointers cannot be dereferenced in statics
+</span><span> --&gt; src/vga_buffer.rs:8:22
+</span><span>  |
+</span><span>8 |     buffer: unsafe { &amp;mut *(0xb8000 as *mut Buffer) },
+</span><span>  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ dereference of raw pointer in constant
+</span><span>
+</span><span>error[E0017]: references in statics may only refer to immutable values
+</span><span> --&gt; src/vga_buffer.rs:8:22
+</span><span>  |
+</span><span>8 |     buffer: unsafe { &amp;mut *(0xb8000 as *mut Buffer) },
+</span><span>  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ statics require immutable values
+</span><span>
+</span><span>error[E0017]: references in statics may only refer to immutable values
+</span><span> --&gt; src/vga_buffer.rs:8:13
+</span><span>  |
+</span><span>8 |     buffer: unsafe { &amp;mut *(0xb8000 as *mut Buffer) },
+</span><span>  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ statics require immutable values
+</span></code></pre>
+<p>Burada ne olduğunu anlamak için, statik değerlerin, çalışma zamanında başlatılan normal değişkenlerin aksine derleme zamanında başlatıldığını bilmemiz gerekir. Rust derleyicisinin bu tür başlatma ifadelerini değerlendiren bileşenine “<a href="https://rustc-dev-guide.rust-lang.org/const-eval.html">const evaluator</a>” denir. İşlevselliği hâlâ sınırlıdır, ancak onu genişletmek için, örneğin “<a href="https://github.com/rust-lang/rfcs/pull/2345">Allow panicking in constants</a>” RFC’sinde olduğu gibi devam eden çalışmalar vardır.</p>
+<p><code>ColorCode::new</code> ile ilgili sorun, <a href="https://doc.rust-lang.org/reference/const_eval.html#const-functions"><code>const</code> fonksiyonları</a> kullanılarak çözülebilirdi; ancak buradaki temel sorun, Rust’ın const evaluator’ının ham işaretçileri derleme zamanında referanslara dönüştürememesidir. Belki bir gün çalışacak, ama o zamana kadar başka bir çözüm bulmamız gerekiyor.</p>
+<h3 id="lazy-statics"><a class="zola-anchor" href="#lazy-statics" aria-label="Anchor link for: lazy-statics">🔗</a>Lazy Statics</h3>
+<p>Statik değerlerin, const olmayan fonksiyonlarla bir kerelik başlatılması Rust’ta yaygın bir sorundur. Neyse ki, <a href="https://docs.rs/lazy_static/1.0.1/lazy_static/">lazy_static</a> adlı bir crate’te zaten iyi bir çözüm mevcuttur. Bu crate, tembelce (lazily) başlatılan bir <code>static</code> tanımlayan bir <code>lazy_static!</code> makrosu sağlar. Değerini derleme zamanında hesaplamak yerine, <code>static</code> ilk kez erişildiğinde kendisini tembelce başlatır. Böylece başlatma çalışma zamanında gerçekleşir, bu yüzden keyfi olarak karmaşık başlatma kodu mümkündür.</p>
+<p><code>lazy_static</code> crate’ini projemize ekleyelim:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies.lazy_static</span><span>]
+</span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;1.0&quot;
+</span><span style="color:#569cd6;">features </span><span>= [</span><span style="color:#d69d85;">&quot;spin_no_std&quot;</span><span>]
+</span></code></pre>
+<p>Standart kütüphaneyi bağlamadığımız için <code>spin_no_std</code> özelliğine ihtiyacımız var.</p>
+<p><code>lazy_static</code> ile, statik <code>WRITER</code>’ımızı sorunsuzca tanımlayabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
+</span><span>
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">WRITER</span><span>: Writer = Writer {
+</span><span>        column_position: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        color_code: ColorCode::new(Color::Yellow, Color::Black),
+</span><span>        buffer: </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*(</span><span style="color:#b5cea8;">0xb8000 </span><span style="color:#569cd6;">as *mut</span><span> Buffer) },
+</span><span>    };
+</span><span>}
+</span></code></pre>
+<p>Ancak bu <code>WRITER</code> oldukça işe yaramaz, çünkü değiştirilemez (immutable). Bu, ona hiçbir şey yazamayacağımız anlamına gelir (çünkü tüm yazma metotları <code>&amp;mut self</code> alır). Olası bir çözüm, bir <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#accessing-or-modifying-a-mutable-static-variable">değiştirilebilir statik (mutable static)</a> kullanmak olurdu. Ama o zaman ona yapılan her okuma ve yazma unsafe olurdu, çünkü kolayca veri yarışlarına (data races) ve diğer kötü şeylere yol açabilirdi. <code>static mut</code> kullanmak kesinlikle önerilmez. Hatta onu <a href="https://internals.rust-lang.org/t/pre-rfc-remove-static-mut/1437">kaldırma</a> önerileri bile vardı. Peki alternatifler nelerdir? <a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html">İç değiştirilebilirlik (interior mutability)</a> sağlayan <a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html#keeping-track-of-borrows-at-runtime-with-refcellt">RefCell</a> ya da hatta <a href="https://doc.rust-lang.org/nightly/core/cell/struct.UnsafeCell.html">UnsafeCell</a> gibi bir cell tipiyle değiştirilemez bir statik kullanmayı deneyebilirdik. Ancak bu tipler <a href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html">Sync</a> değildir (haklı bir nedenle), bu yüzden onları statik değerlerde kullanamayız.</p>
+<h3 id="spinlocks"><a class="zola-anchor" href="#spinlocks" aria-label="Anchor link for: spinlocks">🔗</a>Spinlock’lar</h3>
+<p>Senkronize iç değiştirilebilirlik elde etmek için, standart kütüphanenin kullanıcıları <a href="https://doc.rust-lang.org/nightly/std/sync/struct.Mutex.html">Mutex</a> kullanabilir. Mutex, kaynak zaten kilitliyken thread’leri bloklayarak karşılıklı dışlama (mutual exclusion) sağlar. Ancak temel kernel’imizin herhangi bir bloklama desteği, hatta bir thread kavramı bile yok, bu yüzden onu da kullanamayız. Ancak bilgisayar biliminde, hiçbir işletim sistemi özelliği gerektirmeyen gerçekten temel bir mutex türü vardır: <a href="https://en.wikipedia.org/wiki/Spinlock">spinlock</a>. Bloklamak yerine, thread’ler sıkı bir döngüde onu tekrar tekrar kilitlemeye çalışır ve böylece mutex tekrar serbest kalana kadar CPU zamanı harcar.</p>
+<p>Dönen bir mutex (spinning mutex) kullanmak için, bağımlılık olarak <a href="https://crates.io/crates/spin">spin crate</a>’ini ekleyebiliriz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">spin </span><span>= </span><span style="color:#d69d85;">&quot;0.5.2&quot;
+</span></code></pre>
+<p>Ardından, statik <code>WRITER</code>’ımıza güvenli <a href="https://doc.rust-lang.org/book/ch15-05-interior-mutability.html">iç değiştirilebilirlik</a> eklemek için dönen mutex’i kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>spin::Mutex;
+</span><span style="color:#569cd6;">...
+</span><span>lazy_static! {
+</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">WRITER</span><span>: Mutex&lt;Writer&gt; = Mutex::new(Writer {
+</span><span>        column_position: </span><span style="color:#b5cea8;">0</span><span>,
+</span><span>        color_code: ColorCode::new(Color::Yellow, Color::Black),
+</span><span>        buffer: </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*(</span><span style="color:#b5cea8;">0xb8000 </span><span style="color:#569cd6;">as *mut</span><span> Buffer) },
+</span><span>    });
+</span><span>}
+</span></code></pre>
+<p>Artık <code>print_something</code> fonksiyonunu silebilir ve doğrudan <code>_start</code> fonksiyonumuzdan yazdırabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    vga_buffer::</span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_str(</span><span style="color:#d69d85;">&quot;Hello again&quot;</span><span>).unwrap();
+</span><span>    write!(vga_buffer::WRITER.lock(), </span><span style="color:#d69d85;">&quot;, some numbers: </span><span style="color:#b4cea8;">{} {}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#b5cea8;">42</span><span>, </span><span style="color:#b5cea8;">1.337</span><span>).unwrap();
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Fonksiyonlarını kullanabilmek için <code>fmt::Write</code> trait’ini içe aktarmamız gerekir.</p>
+<h3 id="guvenlik"><a class="zola-anchor" href="#guvenlik" aria-label="Anchor link for: guvenlik">🔗</a>Güvenlik</h3>
+<p>Kodumuzda yalnızca tek bir unsafe bloğumuz olduğuna dikkat edin; bu blok, <code>0xb8000</code>’e işaret eden bir <code>Buffer</code> referansı oluşturmak için gereklidir. Sonrasında tüm işlemler güvenlidir. Rust, dizi erişimleri için varsayılan olarak sınır denetimi (bounds checking) kullanır, bu yüzden yanlışlıkla arabelleğin dışına yazamayız. Böylece, gerekli koşulları tip sistemine kodladık ve dışarıya güvenli bir arayüz sağlayabiliyoruz.</p>
+<h3 id="bir-println-makrosu"><a class="zola-anchor" href="#bir-println-makrosu" aria-label="Anchor link for: bir-println-makrosu">🔗</a>Bir println Makrosu</h3>
+<p>Artık global bir writer’ımız olduğuna göre, kod tabanının her yerinden kullanılabilecek bir <code>println</code> makrosu ekleyebiliriz. Rust’ın <a href="https://doc.rust-lang.org/nightly/book/ch20-05-macros.html#declarative-macros-for-general-metaprogramming">makro söz dizimi</a> biraz tuhaftır, bu yüzden sıfırdan bir makro yazmaya çalışmayacağız. Bunun yerine, standart kütüphanedeki <a href="https://doc.rust-lang.org/nightly/std/macro.println!.html"><code>println!</code> makrosunun</a> kaynağına bakıyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[macro_export]
+</span><span>macro_rules! println {
+</span><span>    () </span><span style="color:#569cd6;">=&gt; </span><span>(print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>));
+</span><span>    (</span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>(print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, format_args!(</span><span style="color:#569cd6;">$</span><span>($arg)*)));
+</span><span>}
+</span></code></pre>
+<p>Makrolar, <code>match</code> kollarına benzer şekilde, bir veya daha fazla kural aracılığıyla tanımlanır. <code>println</code> makrosunun iki kuralı vardır: İlk kural, argümansız çağrılar içindir; örneğin <code>println!()</code>, <code>print!("\n")</code> olarak genişletilir ve böylece yalnızca bir yeni satır yazdırır. İkinci kural, <code>println!("Hello")</code> veya <code>println!("Number: {}", 4)</code> gibi parametreli çağrılar içindir. O da, tüm argümanları ve sona eklenen bir yeni satır <code>\n</code> geçirerek <code>print!</code> makrosunun bir çağrısına genişletilir.</p>
+<p><code>#[macro_export]</code> özniteliği, makroyu tüm crate’e (yalnızca tanımlandığı modüle değil) ve dış crate’lere kullanılabilir kılar. Ayrıca makroyu crate kök dizinine yerleştirir; bu da makroyu <code>std::macros::println</code> yerine <code>use std::println</code> aracılığıyla içe aktarmamız gerektiği anlamına gelir.</p>
+<p><a href="https://doc.rust-lang.org/nightly/std/macro.print!.html"><code>print!</code> makrosu</a> şöyle tanımlanır:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[macro_export]
+</span><span>macro_rules! print {
+</span><span>    (</span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::io::_print(format_args!(</span><span style="color:#569cd6;">$</span><span>($arg)*)));
+</span><span>}
+</span></code></pre>
+<p>Makro, <code>io</code> modülündeki <a href="https://github.com/rust-lang/rust/blob/29f5c699b11a6a148f097f82eaa05202f8799bbc/src/libstd/io/stdio.rs#L698"><code>_print</code> fonksiyonunun</a> bir çağrısına genişler. <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/macros.html#the-variable-crate"><code>$crate</code> değişkeni</a>, diğer crate’lerde kullanıldığında <code>std</code>’ye genişleyerek makronun <code>std</code> crate’inin dışından da çalışmasını sağlar.</p>
+<p><a href="https://doc.rust-lang.org/nightly/std/macro.format_args.html"><code>format_args</code> makrosu</a>, geçirilen argümanlardan bir <a href="https://doc.rust-lang.org/nightly/core/fmt/struct.Arguments.html">fmt::Arguments</a> tipi oluşturur ve bu, <code>_print</code>’e geçirilir. libstd’nin <a href="https://github.com/rust-lang/rust/blob/29f5c699b11a6a148f097f82eaa05202f8799bbc/src/libstd/io/stdio.rs#L698"><code>_print</code> fonksiyonu</a>, <code>print_to</code>’yu çağırır; bu da farklı <code>Stdout</code> cihazlarını desteklediği için oldukça karmaşıktır. Biz yalnızca VGA arabelleğine yazdırmak istediğimiz için o karmaşıklığa ihtiyacımız yok.</p>
+<p>VGA arabelleğine yazdırmak için, <code>println!</code> ve <code>print!</code> makrolarını yalnızca kopyalıyor, ancak kendi <code>_print</code> fonksiyonumuzu kullanacak şekilde değiştiriyoruz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/vga_buffer.rs içinde
+</span><span>
+</span><span>#[macro_export]
+</span><span>macro_rules! print {
+</span><span>    (</span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::vga_buffer::_print(format_args!(</span><span style="color:#569cd6;">$</span><span>($arg)*)));
+</span><span>}
+</span><span>
+</span><span>#[macro_export]
+</span><span>macro_rules! println {
+</span><span>    () </span><span style="color:#569cd6;">=&gt; </span><span>($crate::print</span><span style="color:#569cd6;">!</span><span>(</span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>));
+</span><span>    (</span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::print</span><span style="color:#569cd6;">!</span><span>(</span><span style="color:#d69d85;">&quot;{}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, format_args!(</span><span style="color:#569cd6;">$</span><span>($arg)*)));
+</span><span>}
+</span><span>
+</span><span>#[doc(hidden)]
+</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
+</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
+</span><span>    </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
+</span><span>}
+</span></code></pre>
+<p>Orijinal <code>println</code> tanımından değiştirdiğimiz bir şey, <code>print!</code> makrosunun çağrılarının önüne de <code>$crate</code> koymamızdır. Bu, yalnızca <code>println</code> kullanmak istiyorsak <code>print!</code> makrosunu da içe aktarmamıza gerek olmamasını sağlar.</p>
+<p>Standart kütüphanede olduğu gibi, her iki makroyu da crate’imizin her yerinde kullanılabilir kılmak için <code>#[macro_export]</code> özniteliğini ekliyoruz. Bunun makroları crate’in kök ad alanına (namespace) yerleştirdiğine dikkat edin, bu yüzden onları <code>use crate::vga_buffer::println</code> aracılığıyla içe aktarmak çalışmaz. Bunun yerine <code>use crate::println</code> yapmamız gerekir.</p>
+<p><code>_print</code> fonksiyonu, statik <code>WRITER</code>’ımızı kilitler ve onun üzerinde <code>write_fmt</code> metodunu çağırır. Bu metot, içe aktarmamız gereken <code>Write</code> trait’inden gelir. Sondaki ek <code>unwrap()</code>, yazdırma başarılı olmazsa panic’e neden olur. Ancak <code>write_str</code>’de her zaman <code>Ok</code> döndürdüğümüz için, bunun olmaması gerekir.</p>
+<p>Makroların <code>_print</code>’i modülün dışından çağırabilmesi gerektiğinden, fonksiyonun public olması gerekir. Ancak bunu özel (private) bir uygulama detayı olarak kabul ettiğimiz için, onu üretilen belgelerden gizlemek amacıyla <a href="https://doc.rust-lang.org/nightly/rustdoc/write-documentation/the-doc-attribute.html#hidden"><code>doc(hidden)</code> özniteliğini</a> ekliyoruz.</p>
+<h3 id="println-ile-hello-world"><a class="zola-anchor" href="#println-ile-hello-world" aria-label="Anchor link for: println-ile-hello-world">🔗</a><code>println</code> ile Hello World</h3>
+<p>Artık <code>_start</code> fonksiyonumuzda <code>println</code> kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Makroyu main fonksiyonunda içe aktarmamıza gerek olmadığına dikkat edin, çünkü o zaten kök ad alanında bulunur.</p>
+<p>Beklendiği gibi, artık ekranda bir <em>“Hello World!”</em> görüyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/vga-text-mode/vga-hello-world.png" alt="“Hello World!” yazdıran QEMU" /></p>
+<h3 id="panic-mesajlarini-yazdirma"><a class="zola-anchor" href="#panic-mesajlarini-yazdirma" aria-label="Anchor link for: panic-mesajlarini-yazdirma">🔗</a>Panic Mesajlarını Yazdırma</h3>
+<p>Artık bir <code>println</code> makromuz olduğuna göre, onu panic fonksiyonumuzda panic mesajını ve panic’in konumunu yazdırmak için kullanabiliriz:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// main.rs içinde
+</span><span>
+</span><span style="color:#608b4e;">/// Bu fonksiyon panic anında çağrılır.
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Şimdi <code>_start</code> fonksiyonumuza <code>panic!("Some panic message");</code> eklediğimizde, aşağıdaki çıktıyı alıyoruz:</p>
+<p><img src="https://os.phil-opp.com/tr/vga-text-mode/vga-panic.png" alt="“panicked at ‘Some panic message’, src/main.rs:28:5” yazdıran QEMU" /></p>
+<p>Böylece yalnızca bir panic oluştuğunu değil, aynı zamanda panic mesajını ve kodun neresinde gerçekleştiğini de biliyoruz.</p>
+<h2 id="ozet"><a class="zola-anchor" href="#ozet" aria-label="Anchor link for: ozet">🔗</a>Özet</h2>
+<p>Bu yazıda, VGA metin arabelleğinin yapısını ve ona <code>0xb8000</code> adresindeki bellek eşlemesi aracılığıyla nasıl yazılabileceğini öğrendik. Bu belleğe eşlenmiş arabelleğe yazmanın güvensizliğini kapsülleyen ve dışarıya güvenli ve kullanışlı bir arayüz sunan bir Rust modülü oluşturduk.</p>
+<p>Cargo sayesinde, üçüncü taraf kütüphanelere bağımlılık eklemenin ne kadar kolay olduğunu da gördük. Eklediğimiz iki bağımlılık, <code>lazy_static</code> ve <code>spin</code>, OS geliştirmede çok kullanışlıdır ve onları gelecekteki yazılarda daha fazla yerde kullanacağız.</p>
+<h2 id="sirada-ne-var"><a class="zola-anchor" href="#sirada-ne-var" aria-label="Anchor link for: sirada-ne-var">🔗</a>Sırada ne var?</h2>
+<p>Bir sonraki yazı, Rust’ın yerleşik birim test (unit test) çerçevesinin nasıl kurulacağını açıklar. Ardından, bu yazıdaki VGA arabellek modülü için bazı temel birim testleri oluşturacağız.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Beni Destekle</h2>
+<p>Bu blogu ve ilişkili kütüphaneleri oluşturmak ve sürdürmek çok emek gerektiriyor, ve bunu yapmaktan gerçekten zevk alıyorum. Beni destekleyerek yeni içerik, yeni özellikler ve sürekli bakım için daha fazla zaman ayırmama olanak tanıyorsunuz. Beni desteklemenin en iyi yolu <a href="https://github.com/sponsors/phil-opp"><em>GitHub'da sponsor olmak</em></a>. Teşekkürler!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/tr/minimal-rust-kernel/">&laquo; Minimal Bir Rust Kernel&#x27;i</a>
+        
+        
+            <a class="next" href="/tr/testing/">Test Etme &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Yorumlar</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Bir sorunuz mu var, geri bildirim paylaşmak veya fikirlerinizi tartışmak mı istiyorsunuz? Buraya yorum bırakmaktan çekinmeyin! Lütfen İngilizce kullanın ve Rust'ın <a href="https://www.rust-lang.org/policies/code-of-conduct">davranış kurallarına</a> uyun. Bu yorum dizisi doğrudan <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22VGA%20Text%20Mode%20%28tr%29%22%20in%3Atitle"><em>GitHub'daki bir tartışmaya</em></a> bağlıdır, dolayısıyla isterseniz oraya da yorum yapabilirsiniz.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="VGA Text Mode (tr)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="tr"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22VGA%20Text%20Mode%20%28tr%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Mümkünse yorumlarınızı İngilizce bırakınız.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/vga-text-mode/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ar" class=""><a href="https://os.phil-opp.com/ar/vga-text-mode/">
+                        العربية
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/modo-texto-vga/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/vga-text-mode/">
+                        Persian
+                    </a></li><li data-lang-switch-to="fr" class=""><a href="https://os.phil-opp.com/fr/vga-text-mode/">
+                        French
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/vga-text-mode/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/vga-text-mode/">
+                        Korean
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/vga-text-mode/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/vga-text-mode/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>

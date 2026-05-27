@@ -1,0 +1,559 @@
+<!doctype html>
+
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Bu yazıda, x86 mimarisi için minimal bir 64-bit Rust kernel’i oluşturuyoruz. Ekrana bir şeyler yazdıran, önyüklenebilir bir disk imajı oluşturmak için…">
+    <meta name="author" content="Philipp Oppermann">
+
+    
+        <link rel="canonical" href="https://os.phil-opp.com/tr/minimal-rust-kernel/" />
+    
+    <link href="/css/edition-2/main.css" rel="stylesheet">
+
+    <link rel="alternate" type="application/rss+xml" title="RSS feed for os.phil-opp.com" href="https://os.phil-opp.com/rss.xml" />
+
+    <script>
+        let theme = localStorage.getItem("theme");
+        if (theme != null) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+    </script>
+
+    <script async src="/js/edition-2/main.js"></script>
+
+    <title>Minimal Bir Rust Kernel&#x27;i | Rust ile İşletim Sistemi Yazıyoruz</title>
+</head>
+
+<body>
+    <div class="container content">
+        <header class="masthead">
+            <div style="position:relative">
+                <h2 class="masthead-title">
+                    <a href="https://os.phil-opp.com" title="Home">Rust ile İşletim Sistemi Yazıyoruz</a>
+                </h2>
+                <p><small>Philipp&nbsp;Oppermann's&nbsp;blog</small></p>
+                
+    <aside id="all-posts-link"><a href="https://os.phil-opp.com/tr" title="All Posts">« Tüm Yazılar</a></aside>
+
+            </div>
+        </header>
+
+        <div class="theme-switch">
+            <div class="light-switch" onclick="toggle_lights()" title="Switch between light and dark theme"></div>
+            <div class="light-switch-reset" onclick="clear_theme_override()" title="Clear the theme override and go back to the system theme"></div>
+        </div>
+
+        <div>
+            
+<aside id="toc-aside" class="">
+        <h2>İçindekiler</h2>
+    <ol>
+        <li>
+            <a href="#the-boot-process">Önyükleme Süreci</a>
+            <ol>
+                <li>
+                    <a href="#bios-onyuklemesi">BIOS Önyüklemesi</a>
+                </li><li>
+                    <a href="#uefi">UEFI</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#minimal-bir-kernel">Minimal Bir Kernel</a>
+            <ol>
+                <li>
+                    <a href="#installing-rust-nightly">Rust Nightly Kurulumu</a>
+                </li><li>
+                    <a href="#hedef-target-belirtimi">Hedef (Target) Belirtimi</a>
+                </li><li>
+                    <a href="#kernel-imizi-derlemek">Kernel’imizi Derlemek</a>
+                </li><li>
+                    <a href="#ekrana-yazdirmak">Ekrana Yazdırmak</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#kernel-imizi-calistirmak">Kernel’imizi Çalıştırmak</a>
+            <ol>
+                <li>
+                    <a href="#creating-a-bootimage">Bir Bootimage Oluşturmak</a>
+                </li><li>
+                    <a href="#qemu-da-onyukleme">QEMU’da Önyükleme</a>
+                </li><li>
+                    <a href="#gercek-makine">Gerçek Makine</a>
+                </li><li>
+                    <a href="#using-cargo-run">cargo run Kullanmak</a>
+                </li>
+            </ol>
+        </li><li>
+            <a href="#sirada-ne-var">Sırada ne var?</a>
+            
+        </li>
+        <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+    </ol>
+</aside>
+
+            <main>
+    <div class="">
+    <h1>Minimal Bir Rust Kernel&#x27;i</h1>
+    <time datetime="2018-02-10" class="post-date">
+        Feb 10, 2018
+        
+    </time>
+    </div>
+
+    
+        <div class="warning">
+            
+            
+            <p>
+            <b>Çevrilmiş İçerik:</b>
+            Bu, <strong><a href="https://os.phil-opp.com/minimal-rust-kernel/">A Minimal Rust Kernel</a></strong> adlı gönderinin topluluk tarafından yapılmış bir çevirisidir. Eksik, güncel olmayan veya hata içeriyor olabilir. Lütfen herhangi bir sorunu bildirin!
+            </p>
+            <p>
+                Translation by <a href="https://github.com/rhotav">@rhotav</a>.</p>
+            </div>
+    
+
+    <div class="">
+    <p>Bu yazıda, x86 mimarisi için minimal bir 64-bit Rust kernel’i oluşturuyoruz. Ekrana bir şeyler yazdıran, önyüklenebilir bir disk imajı oluşturmak için önceki yazıdaki <a href="https://os.phil-opp.com/tr/freestanding-rust-binary/">bağımsız Rust ikili dosyasının</a> üzerine inşa ediyoruz.</p>
+<span id="continue-reading"></span>
+<p>Bu blog <a href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/minimal-rust-kernel/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a href="https://github.com/phil-opp/blog_os/tree/post-02"><code>post-02</code></a> dalında bulunabilir.</p>
+<!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
+
+    <details id = "toc-inline">
+        <summary><b>İçindekiler</b></summary>
+        <ul>
+            <li>
+                <a href="#the-boot-process">Önyükleme Süreci</a>
+                <ul>
+                    <li>
+                        <a href="#bios-onyuklemesi">BIOS Önyüklemesi</a>
+                    </li><li>
+                        <a href="#uefi">UEFI</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#minimal-bir-kernel">Minimal Bir Kernel</a>
+                <ul>
+                    <li>
+                        <a href="#installing-rust-nightly">Rust Nightly Kurulumu</a>
+                    </li><li>
+                        <a href="#hedef-target-belirtimi">Hedef (Target) Belirtimi</a>
+                    </li><li>
+                        <a href="#kernel-imizi-derlemek">Kernel’imizi Derlemek</a>
+                    </li><li>
+                        <a href="#ekrana-yazdirmak">Ekrana Yazdırmak</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#kernel-imizi-calistirmak">Kernel’imizi Çalıştırmak</a>
+                <ul>
+                    <li>
+                        <a href="#creating-a-bootimage">Bir Bootimage Oluşturmak</a>
+                    </li><li>
+                        <a href="#qemu-da-onyukleme">QEMU’da Önyükleme</a>
+                    </li><li>
+                        <a href="#gercek-makine">Gerçek Makine</a>
+                    </li><li>
+                        <a href="#using-cargo-run">cargo run Kullanmak</a>
+                    </li>
+                </ul>
+            </li><li>
+                <a href="#sirada-ne-var">Sırada ne var?</a>
+                
+            </li>
+            <li class="toc-comments-link"><a href="#comments">Yorumlar</a></li>
+        </ul>
+    </details>
+
+<h2 id="the-boot-process"><a class="zola-anchor" href="#the-boot-process" aria-label="Anchor link for: the-boot-process">🔗</a>Önyükleme Süreci</h2>
+<p>Bir bilgisayarı açtığınızda, anakart <a href="https://en.wikipedia.org/wiki/Read-only_memory">ROM</a>’unda saklanan firmware kodunu çalıştırmaya başlar. Bu kod bir <a href="https://en.wikipedia.org/wiki/Power-on_self-test">açılış öz testi (power-on self-test)</a> gerçekleştirir, mevcut RAM’i tespit eder ve CPU ile donanımı ön başlatma işlemine tabi tutar. Ardından önyüklenebilir bir disk arar ve işletim sistemi kernel’ini önyüklemeye başlar.</p>
+<p>x86’da iki firmware standardı vardır: “Basic Input/Output System” (<strong><a href="https://en.wikipedia.org/wiki/BIOS">BIOS</a></strong>) ve daha yeni olan “Unified Extensible Firmware Interface” (<strong><a href="https://en.wikipedia.org/wiki/Unified_Extensible_Firmware_Interface">UEFI</a></strong>). BIOS standardı eski ve modası geçmiştir, ancak basittir ve 1980’lerden beri herhangi bir x86 makinesinde iyi desteklenir. UEFI ise buna karşılık daha moderndir ve çok daha fazla özelliğe sahiptir, ancak kurulumu daha karmaşıktır (en azından bana göre).</p>
+<p>Şu anda yalnızca BIOS desteği sağlıyoruz, ancak UEFI desteği de planlanıyor. Bu konuda bize yardım etmek isterseniz, <a href="https://github.com/phil-opp/blog_os/issues/349">Github issue</a>’ya göz atın.</p>
+<h3 id="bios-onyuklemesi"><a class="zola-anchor" href="#bios-onyuklemesi" aria-label="Anchor link for: bios-onyuklemesi">🔗</a>BIOS Önyüklemesi</h3>
+<p>Neredeyse tüm x86 sistemleri, öykünülmüş (emulated) bir BIOS kullanan daha yeni UEFI tabanlı makineler de dahil olmak üzere BIOS önyüklemesini destekler. Bu harika bir şey, çünkü geçen yüzyıldan kalma tüm makineler arasında aynı önyükleme mantığını kullanabilirsiniz. Ancak bu geniş uyumluluk aynı zamanda BIOS önyüklemesinin en büyük dezavantajıdır, çünkü bu, 1980’lerden kalma çok eski bootloader’ların hâlâ çalışabilmesi için, önyüklemeden önce CPU’nun <a href="https://en.wikipedia.org/wiki/Real_mode">real mode</a> adı verilen 16-bit bir uyumluluk moduna sokulması anlamına gelir.</p>
+<p>Ama en baştan başlayalım:</p>
+<p>Bir bilgisayarı açtığınızda, BIOS’u anakart üzerinde bulunan özel bir flash bellekten yükler. BIOS, donanımın öz testi ve başlatma rutinlerini çalıştırır, ardından önyüklenebilir diskler arar. Bir tane bulursa, kontrol onun <em>bootloader</em>’ına aktarılır; bu, diskin başında saklanan 512 baytlık bir çalıştırılabilir kod parçasıdır. Çoğu bootloader 512 bayttan büyüktür, bu yüzden bootloader’lar genellikle 512 bayta sığan küçük bir birinci aşamaya ve birinci aşama tarafından sonradan yüklenen bir ikinci aşamaya bölünür.</p>
+<p>Bootloader’ın, disk üzerindeki kernel imajının konumunu belirlemesi ve onu belleğe yüklemesi gerekir. Ayrıca CPU’yu önce 16-bit <a href="https://en.wikipedia.org/wiki/Real_mode">real mode</a>’dan 32-bit <a href="https://en.wikipedia.org/wiki/Protected_mode">protected mode</a>’a, ardından 64-bit register’ların ve tüm ana belleğin kullanılabilir olduğu 64-bit <a href="https://en.wikipedia.org/wiki/Long_mode">long mode</a>’a geçirmesi gerekir. Üçüncü görevi ise BIOS’tan belirli bilgileri (örneğin bir bellek haritası) sorgulayıp bunları OS kernel’ine iletmektir.</p>
+<p>Bir bootloader yazmak biraz zahmetlidir, çünkü assembly dili ve “şu sihirli değeri şu işlemci register’ına yaz” gibi pek çok aydınlatıcı olmayan adım gerektirir. Bu yüzden bu yazıda bootloader oluşturmayı ele almıyoruz; bunun yerine, kernel’inize otomatik olarak bir bootloader ekleyen <a href="https://github.com/rust-osdev/bootimage">bootimage</a> adlı bir araç sağlıyoruz.</p>
+<p>Kendi bootloader’ınızı oluşturmakla ilgileniyorsanız: Takipte kalın, bu konuda bir dizi yazı şimdiden planlanmış durumda! <!-- , check out our “_[Writing a Bootloader]_” posts, where we explain in detail how a bootloader is built. --></p>
+<h4 id="multiboot-standardi"><a class="zola-anchor" href="#multiboot-standardi" aria-label="Anchor link for: multiboot-standardi">🔗</a>Multiboot Standardı</h4>
+<p>Her işletim sisteminin yalnızca tek bir OS ile uyumlu olan kendi bootloader’ını uygulamasını önlemek için, <a href="https://en.wikipedia.org/wiki/Free_Software_Foundation">Free Software Foundation</a> 1995 yılında <a href="https://wiki.osdev.org/Multiboot">Multiboot</a> adlı açık bir bootloader standardı oluşturdu. Standart, bootloader ile işletim sistemi arasında bir arayüz tanımlar; böylece Multiboot uyumlu herhangi bir bootloader, Multiboot uyumlu herhangi bir işletim sistemini yükleyebilir. Referans uygulama, Linux sistemleri için en popüler bootloader olan <a href="https://en.wikipedia.org/wiki/GNU_GRUB">GNU GRUB</a>’dur.</p>
+<p>Bir kernel’i Multiboot uyumlu hale getirmek için, kernel dosyasının başına <a href="https://www.gnu.org/software/grub/manual/multiboot/multiboot.html#OS-image-format">Multiboot header</a> adı verilen bir başlık eklemek yeterlidir. Bu, bir OS’u GRUB’tan önyüklemeyi çok kolaylaştırır. Ancak GRUB ve Multiboot standardının bazı sorunları da vardır:</p>
+<ul>
+<li>Yalnızca 32-bit protected mode’u desteklerler. Bu, 64-bit long mode’a geçmek için yine de CPU yapılandırmasını yapmanız gerektiği anlamına gelir.</li>
+<li>Kernel’i değil, bootloader’ı basit kılacak şekilde tasarlanmışlardır. Örneğin kernel’in, <a href="https://wiki.osdev.org/Multiboot#Multiboot_2">ayarlanmış bir varsayılan sayfa boyutuyla</a> bağlanması gerekir, çünkü aksi takdirde GRUB Multiboot header’ını bulamaz. Başka bir örnek de kernel’e iletilen <a href="https://www.gnu.org/software/grub/manual/multiboot/multiboot.html#Boot-information-format">önyükleme bilgisinin</a>, temiz soyutlamalar sunmak yerine pek çok mimariye bağımlı yapı içermesidir.</li>
+<li>Hem GRUB hem de Multiboot standardı yalnızca yetersiz biçimde belgelenmiştir.</li>
+<li>Kernel dosyasından önyüklenebilir bir disk imajı oluşturmak için GRUB’un host sisteme kurulması gerekir. Bu, Windows veya Mac üzerinde geliştirmeyi zorlaştırır.</li>
+</ul>
+<p>Bu dezavantajlar nedeniyle GRUB veya Multiboot standardını kullanmamaya karar verdik. Ancak <a href="https://github.com/rust-osdev/bootimage">bootimage</a> aracımıza Multiboot desteği eklemeyi planlıyoruz; böylece kernel’inizi bir GRUB sisteminde de yüklemek mümkün olacak. Multiboot uyumlu bir kernel yazmakla ilgileniyorsanız, bu blog serisinin <a href="https://os.phil-opp.com/edition-1/">birinci sürümüne</a> göz atın.</p>
+<h3 id="uefi"><a class="zola-anchor" href="#uefi" aria-label="Anchor link for: uefi">🔗</a>UEFI</h3>
+<p>(Şu anda UEFI desteği sağlamıyoruz, ancak sağlamayı çok isteriz! Yardım etmek isterseniz lütfen <a href="https://github.com/phil-opp/blog_os/issues/349">Github issue</a>’da bize haber verin.)</p>
+<h2 id="minimal-bir-kernel"><a class="zola-anchor" href="#minimal-bir-kernel" aria-label="Anchor link for: minimal-bir-kernel">🔗</a>Minimal Bir Kernel</h2>
+<p>Artık bir bilgisayarın kabaca nasıl önyüklendiğini bildiğimize göre, kendi minimal kernel’imizi oluşturmanın zamanı geldi. Hedefimiz, önyüklendiğinde ekrana bir “Hello World!” yazdıran bir disk imajı oluşturmak. Bunu, önceki yazının <a href="https://os.phil-opp.com/tr/freestanding-rust-binary/">bağımsız Rust ikili dosyasını</a> genişleterek yapıyoruz.</p>
+<p>Hatırlayabileceğiniz gibi, bağımsız ikili dosyayı <code>cargo</code> aracılığıyla derledik; ancak işletim sistemine bağlı olarak farklı giriş noktası adlarına ve derleme bayraklarına ihtiyacımız oldu. Bunun nedeni, <code>cargo</code>’nun varsayılan olarak <em>host sistem</em> için, yani üzerinde çalıştığınız sistem için derleme yapmasıdır. Bu, kernel’imiz için istediğimiz bir şey değildir; çünkü örneğin Windows’un üzerinde çalışan bir kernel pek anlamlı değildir. Bunun yerine, açıkça tanımlanmış bir <em>hedef sistem (target system)</em> için derleme yapmak istiyoruz.</p>
+<h3 id="installing-rust-nightly"><a class="zola-anchor" href="#installing-rust-nightly" aria-label="Anchor link for: installing-rust-nightly">🔗</a>Rust Nightly Kurulumu</h3>
+<p>Rust’ın üç yayın kanalı vardır: <em>stable</em>, <em>beta</em> ve <em>nightly</em>. Rust Book bu kanallar arasındaki farkı gerçekten iyi açıklar, bu yüzden bir dakikanızı ayırıp <a href="https://doc.rust-lang.org/book/appendix-07-nightly-rust.html#choo-choo-release-channels-and-riding-the-trains">göz atın</a>. Bir işletim sistemi oluşturmak için, yalnızca nightly kanalında bulunan bazı deneysel özelliklere ihtiyacımız olacak, bu yüzden Rust’ın bir nightly sürümünü kurmamız gerekiyor.</p>
+<p>Rust kurulumlarını yönetmek için kesinlikle <a href="https://www.rustup.rs/">rustup</a>’ı tavsiye ederim. Nightly, beta ve stable derleyicileri yan yana kurmanıza olanak tanır ve bunları güncellemeyi kolaylaştırır. rustup ile, <code>rustup override set nightly</code> komutunu çalıştırarak mevcut dizin için bir nightly derleyici kullanabilirsiniz. Alternatif olarak, projenin kök dizinine <code>nightly</code> içeriğine sahip <code>rust-toolchain</code> adında bir dosya ekleyebilirsiniz. Kurulu bir nightly sürümünüz olduğunu <code>rustc --version</code> komutunu çalıştırarak kontrol edebilirsiniz: Sürüm numarası sonunda <code>-nightly</code> içermelidir.</p>
+<p>Nightly derleyici, dosyamızın başında <em>özellik bayrakları (feature flags)</em> adı verilen şeyleri kullanarak çeşitli deneysel özellikleri etkinleştirmemize olanak tanır. Örneğin, <code>main.rs</code> dosyamızın başına <code>#![feature(asm)]</code> ekleyerek satır içi assembly için deneysel <a href="https://doc.rust-lang.org/stable/reference/inline-assembly.html"><code>asm!</code> makrosunu</a> etkinleştirebilirdik. Bu tür deneysel özelliklerin tamamen kararsız olduğunu unutmayın; bu, gelecekteki Rust sürümlerinin bunları önceden uyarı olmaksızın değiştirebileceği veya kaldırabileceği anlamına gelir. Bu nedenle, onları yalnızca kesinlikle gerekli olduğunda kullanacağız.</p>
+<h3 id="hedef-target-belirtimi"><a class="zola-anchor" href="#hedef-target-belirtimi" aria-label="Anchor link for: hedef-target-belirtimi">🔗</a>Hedef (Target) Belirtimi</h3>
+<p>Cargo, <code>--target</code> parametresi aracılığıyla farklı hedef sistemleri destekler. Hedef, CPU mimarisini, satıcıyı, işletim sistemini ve <a href="https://stackoverflow.com/a/2456882">ABI</a>’yi tanımlayan <em><a href="https://clang.llvm.org/docs/CrossCompilation.html#target-triple">target triple</a></em> adı verilen bir şeyle açıklanır. Örneğin, <code>x86_64-unknown-linux-gnu</code> target triple’ı; bir <code>x86_64</code> CPU’ya, belirli bir satıcısı olmayan ve GNU ABI’li bir Linux işletim sistemine sahip bir sistemi tanımlar. Rust, Android için <code>arm-linux-androideabi</code> veya <a href="https://www.hellorust.com/setup/wasm-target/">WebAssembly için <code>wasm32-unknown-unknown</code></a> dahil olmak üzere <a href="https://forge.rust-lang.org/release/platform-support.html">pek çok farklı target triple’ı</a> destekler.</p>
+<p>Ancak hedef sistemimiz için bazı özel yapılandırma parametrelerine ihtiyacımız var (örneğin alttaki bir OS olmaması), bu yüzden <a href="https://forge.rust-lang.org/release/platform-support.html">mevcut target triple’lardan</a> hiçbiri uymuyor. Neyse ki Rust, bir JSON dosyası aracılığıyla <a href="https://doc.rust-lang.org/nightly/rustc/targets/custom.html">kendi hedefimizi</a> tanımlamamıza olanak tanır. Örneğin, <code>x86_64-unknown-linux-gnu</code> hedefini tanımlayan bir JSON dosyası şöyle görünür:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span>{
+</span><span>    </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64-unknown-linux-gnu&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;data-layout&quot;</span><span>: </span><span style="color:#d69d85;">&quot;e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;arch&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-endian&quot;</span><span>: </span><span style="color:#d69d85;">&quot;little&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-pointer-width&quot;</span><span>: </span><span style="color:#b5cea8;">64</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-c-int-width&quot;</span><span>: </span><span style="color:#b5cea8;">32</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;os&quot;</span><span>: </span><span style="color:#d69d85;">&quot;linux&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;executables&quot;</span><span>: </span><span style="color:#569cd6;">true</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;linker-flavor&quot;</span><span>: </span><span style="color:#d69d85;">&quot;gcc&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;pre-link-args&quot;</span><span>: [</span><span style="color:#d69d85;">&quot;-m64&quot;</span><span>],
+</span><span>    </span><span style="color:#d69d85;">&quot;morestack&quot;</span><span>: </span><span style="color:#569cd6;">false
+</span><span>}
+</span></code></pre>
+<p>Çoğu alan, LLVM tarafından o platform için kod üretmek üzere gereklidir. Örneğin, <a href="https://llvm.org/docs/LangRef.html#data-layout"><code>data-layout</code></a> alanı çeşitli tamsayı, kayan nokta ve işaretçi (pointer) tiplerinin boyutunu tanımlar. Ardından, <code>target-pointer-width</code> gibi Rust’ın koşullu derleme için kullandığı alanlar vardır. Üçüncü tür alan ise crate’in nasıl derlenmesi gerektiğini tanımlar. Örneğin, <code>pre-link-args</code> alanı <a href="https://en.wikipedia.org/wiki/Linker_(computing)">linker</a>’a geçirilen argümanları belirtir.</p>
+<p>Kernel’imizle biz de <code>x86_64</code> sistemlerini hedefliyoruz, bu yüzden hedef belirtimimiz yukarıdakine çok benzeyecek. Ortak içeriğe sahip bir <code>x86_64-blog_os.json</code> dosyası (istediğiniz herhangi bir ismi seçin) oluşturarak başlayalım:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span>{
+</span><span>    </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64-unknown-none&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;data-layout&quot;</span><span>: </span><span style="color:#d69d85;">&quot;e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;arch&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-endian&quot;</span><span>: </span><span style="color:#d69d85;">&quot;little&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-pointer-width&quot;</span><span>: </span><span style="color:#b5cea8;">64</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-c-int-width&quot;</span><span>: </span><span style="color:#b5cea8;">32</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;os&quot;</span><span>: </span><span style="color:#d69d85;">&quot;none&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;executables&quot;</span><span>: </span><span style="color:#569cd6;">true
+</span><span>}
+</span></code></pre>
+<p><code>llvm-target</code> ve <code>os</code> alanındaki OS’u <code>none</code> olarak değiştirdiğimize dikkat edin, çünkü bare metal üzerinde çalışacağız.</p>
+<p>Aşağıdaki derlemeyle ilgili girdileri ekliyoruz:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;linker-flavor&quot;</span><span>: </span><span style="color:#d69d85;">&quot;ld.lld&quot;</span><span>,
+</span><span style="color:#d69d85;">&quot;linker&quot;</span><span>: </span><span style="color:#d69d85;">&quot;rust-lld&quot;</span><span>,
+</span></code></pre>
+<p>Platformun varsayılan linker’ını (Linux hedeflerini desteklemeyebilir) kullanmak yerine, kernel’imizi bağlamak için Rust ile birlikte gelen çapraz platform <a href="https://lld.llvm.org/">LLD</a> linker’ını kullanıyoruz.</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;panic-strategy&quot;</span><span>: </span><span style="color:#d69d85;">&quot;abort&quot;</span><span>,
+</span></code></pre>
+<p>Bu ayar, hedefin panic anında <a href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">stack unwinding</a>’i desteklemediğini, bu yüzden programın bunun yerine doğrudan abort etmesi gerektiğini belirtir. Bunun, Cargo.toml dosyamızdaki <code>panic = "abort"</code> seçeneğiyle aynı etkisi vardır, bu yüzden onu oradan kaldırabiliriz. (Cargo.toml seçeneğinin aksine, bu hedef seçeneğinin, bu yazının ilerleyen kısmında <code>core</code> kütüphanesini yeniden derlediğimizde de geçerli olduğunu unutmayın. Yani Cargo.toml seçeneğini tutmayı tercih etseniz bile, bu seçeneği dahil ettiğinizden emin olun.)</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;disable-redzone&quot;</span><span>: </span><span style="color:#569cd6;">true</span><span>,
+</span></code></pre>
+<p>Bir kernel yazıyoruz, bu yüzden bir noktada interrupt’ları işlememiz gerekecek. Bunu güvenli bir şekilde yapmak için, <em>“red zone”</em> adı verilen belirli bir stack pointer optimizasyonunu devre dışı bırakmamız gerekir, çünkü aksi takdirde stack bozulmasına neden olur. Daha fazla bilgi için <a href="https://os.phil-opp.com/tr/red-zone/">red zone’u devre dışı bırakma</a> hakkındaki ayrı yazımıza bakın.</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;features&quot;</span><span>: </span><span style="color:#d69d85;">&quot;-mmx,-sse,+soft-float&quot;</span><span>,
+</span></code></pre>
+<p><code>features</code> alanı, hedef özelliklerini etkinleştirir/devre dışı bırakır. <code>mmx</code> ve <code>sse</code> özelliklerini önlerine eksi koyarak devre dışı bırakıyor, <code>soft-float</code> özelliğini ise önüne artı koyarak etkinleştiriyoruz. Farklı bayraklar arasında boşluk olmaması gerektiğini unutmayın; aksi takdirde LLVM, özellik (features) dizesini yorumlayamaz.</p>
+<p><code>mmx</code> ve <code>sse</code> özellikleri, programları genellikle önemli ölçüde hızlandırabilen <a href="https://en.wikipedia.org/wiki/SIMD">Single Instruction Multiple Data (SIMD)</a> komutlarına yönelik desteği belirler. Ancak OS kernel’lerinde büyük SIMD register’larını kullanmak performans sorunlarına yol açar. Bunun nedeni, kernel’in kesintiye uğramış bir programa devam etmeden önce tüm register’ları orijinal durumlarına geri yüklemesi gerektiğidir. Bu, kernel’in her sistem çağrısında veya donanım interrupt’ında tüm SIMD durumunu ana belleğe kaydetmesi gerektiği anlamına gelir. SIMD durumu çok büyük olduğu için (512–1600 bayt) ve interrupt’lar çok sık meydana gelebileceği için, bu ek kaydetme/geri yükleme işlemleri performansa önemli ölçüde zarar verir. Bunu önlemek için kernel’imizde SIMD’yi devre dışı bırakıyoruz (üzerinde çalışan uygulamalar için değil!).</p>
+<p>SIMD’yi devre dışı bırakmanın bir sorunu, <code>x86_64</code>’te kayan nokta işlemlerinin varsayılan olarak SIMD register’larını gerektirmesidir. Bu sorunu çözmek için, tüm kayan nokta işlemlerini normal tamsayılara dayalı yazılım fonksiyonları aracılığıyla öykünen <code>soft-float</code> özelliğini ekliyoruz.</p>
+<p>Daha fazla bilgi için <a href="https://os.phil-opp.com/tr/disable-simd/">SIMD’yi devre dışı bırakma</a> hakkındaki yazımıza bakın.</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span style="color:#d69d85;">&quot;rustc-abi&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86-softfloat&quot;
+</span></code></pre>
+<p><code>soft-float</code> özelliğini kullanmak istediğimiz için, Rust derleyicisi <code>rustc</code>’ye de ilgili ABI’yi kullanmak istediğimizi söylememiz gerekir. Bunu, <code>rustc-abi</code> alanını <code>x86-softfloat</code> olarak ayarlayarak yapabiliriz.</p>
+<h4 id="hepsini-bir-araya-getirmek"><a class="zola-anchor" href="#hepsini-bir-araya-getirmek" aria-label="Anchor link for: hepsini-bir-araya-getirmek">🔗</a>Hepsini Bir Araya Getirmek</h4>
+<p>Hedef belirtim dosyamız artık şöyle görünüyor:</p>
+<pre data-lang="json" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-json "><code class="language-json" data-lang="json"><span>{
+</span><span>    </span><span style="color:#d69d85;">&quot;llvm-target&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64-unknown-none&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;data-layout&quot;</span><span>: </span><span style="color:#d69d85;">&quot;e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;arch&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86_64&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-endian&quot;</span><span>: </span><span style="color:#d69d85;">&quot;little&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-pointer-width&quot;</span><span>: </span><span style="color:#b5cea8;">64</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;target-c-int-width&quot;</span><span>: </span><span style="color:#b5cea8;">32</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;os&quot;</span><span>: </span><span style="color:#d69d85;">&quot;none&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;executables&quot;</span><span>: </span><span style="color:#569cd6;">true</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;linker-flavor&quot;</span><span>: </span><span style="color:#d69d85;">&quot;ld.lld&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;linker&quot;</span><span>: </span><span style="color:#d69d85;">&quot;rust-lld&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;panic-strategy&quot;</span><span>: </span><span style="color:#d69d85;">&quot;abort&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;disable-redzone&quot;</span><span>: </span><span style="color:#569cd6;">true</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;features&quot;</span><span>: </span><span style="color:#d69d85;">&quot;-mmx,-sse,+soft-float&quot;</span><span>,
+</span><span>    </span><span style="color:#d69d85;">&quot;rustc-abi&quot;</span><span>: </span><span style="color:#d69d85;">&quot;x86-softfloat&quot;
+</span><span>}
+</span></code></pre>
+<h3 id="kernel-imizi-derlemek"><a class="zola-anchor" href="#kernel-imizi-derlemek" aria-label="Anchor link for: kernel-imizi-derlemek">🔗</a>Kernel’imizi Derlemek</h3>
+<p>Yeni hedefimiz için derleme yapmak Linux kurallarını kullanır, çünkü ld.lld linker-flavor’ı llvm’e <code>-flavor gnu</code> bayrağıyla derleme yapmasını söyler (daha fazla linker seçeneği için <a href="https://doc.rust-lang.org/rustc/codegen-options/index.html#linker-flavor">rustc belgelerine</a> bakın). Bu, <a href="https://os.phil-opp.com/tr/freestanding-rust-binary/">önceki yazıda</a> açıklandığı gibi <code>_start</code> adında bir giriş noktasına ihtiyacımız olduğu anlamına gelir:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs
+</span><span>
+</span><span>#![no_std] </span><span style="color:#608b4e;">// Rust standart kütüphanesini bağlama
+</span><span>#![no_main] </span><span style="color:#608b4e;">// tüm Rust seviyesindeki giriş noktalarını devre dışı bırak
+</span><span>
+</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
+</span><span>
+</span><span style="color:#608b4e;">/// Bu fonksiyon panic anında çağrılır.
+</span><span>#[panic_handler]
+</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span><span>
+</span><span>#[unsafe(no_mangle)] </span><span style="color:#608b4e;">// bu fonksiyonun adını parçalama (mangle etme)
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#608b4e;">// bu fonksiyon giriş noktasıdır, çünkü linker varsayılan olarak
+</span><span>    </span><span style="color:#608b4e;">// `_start` adında bir fonksiyon arar
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>Host işletim sisteminizden bağımsız olarak giriş noktasının <code>_start</code> olarak adlandırılması gerektiğine dikkat edin.</p>
+<p>Artık JSON dosyasının adını <code>--target</code> olarak geçirerek kernel’i yeni hedefimiz için derleyebiliriz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build --target x86_64-blog_os.json
+</span><span>
+</span><span>error: `.json` target specs require -Zjson-target-spec
+</span></code></pre>
+<p>Başarısız oldu! Hata bize, özel JSON hedef belirtimlerinin açık bir tercih (opt-in) gerektiren kararsız bir özellik olduğunu söylüyor. Bunun nedeni, JSON hedef dosyalarının biçiminin henüz kararlı kabul edilmemesidir, bu yüzden gelecekteki Rust sürümlerinde değişiklikler olabilir. Daha fazla bilgi için <a href="https://github.com/rust-lang/rust/issues/151528">özel JSON hedef belirtimleri için takip issue’suna</a> bakın.</p>
+<h4 id="json-target-spec-secenegi"><a class="zola-anchor" href="#json-target-spec-secenegi" aria-label="Anchor link for: json-target-spec-secenegi">🔗</a><code>json-target-spec</code> Seçeneği</h4>
+<p>Özel JSON hedef belirtimlerine yönelik desteği etkinleştirmek için, <code>.cargo/config.toml</code> yolunda yerel bir <a href="https://doc.rust-lang.org/cargo/reference/config.html">cargo yapılandırma</a> dosyası oluşturmamız gerekir (<code>.cargo</code> klasörü <code>src</code> klasörünüzün yanında olmalıdır); içeriği şu şekilde olmalı:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># .cargo/config.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">unstable</span><span>]
+</span><span style="color:#569cd6;">json-target-spec </span><span>= </span><span style="color:#569cd6;">true
+</span></code></pre>
+<p>Bu, kararsız <code>json-target-spec</code> özelliğini etkinleştirir ve özel JSON hedef dosyaları kullanmamıza olanak tanır.</p>
+<p>Bu yapılandırma yerindeyken, tekrar derlemeyi deneyelim:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build --target x86_64-blog_os.json
+</span><span>
+</span><span>error[E0463]: can&#39;t find crate for `core`
+</span></code></pre>
+<p>Hâlâ başarısız oluyor, ancak yeni bir hatayla. Hata bize, Rust derleyicisinin <a href="https://doc.rust-lang.org/nightly/core/index.html"><code>core</code> kütüphanesini</a> bulamadığını söylüyor. Bu kütüphane, <code>Result</code>, <code>Option</code> ve iterator’lar gibi temel Rust tiplerini içerir ve tüm <code>no_std</code> crate’lerine örtük olarak bağlanır.</p>
+<p>Sorun şu ki, core kütüphanesi Rust derleyicisiyle birlikte <em>önceden derlenmiş</em> bir kütüphane olarak dağıtılır. Yani yalnızca desteklenen host triple’lar için (örneğin <code>x86_64-unknown-linux-gnu</code>) geçerlidir, ancak özel hedefimiz için geçerli değildir. Diğer hedefler için kod derlemek istiyorsak, önce <code>core</code>’u bu hedefler için yeniden derlememiz gerekir.</p>
+<h4 id="build-std-secenegi"><a class="zola-anchor" href="#build-std-secenegi" aria-label="Anchor link for: build-std-secenegi">🔗</a><code>build-std</code> Seçeneği</h4>
+<p>İşte cargo’nun <a href="https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#build-std"><code>build-std</code> özelliği</a> burada devreye giriyor. Bu özellik, Rust kurulumuyla gelen önceden derlenmiş sürümleri kullanmak yerine <code>core</code>’u ve diğer standart kütüphane crate’lerini talep üzerine yeniden derlemeye olanak tanır. Bu özellik çok yeni ve hâlâ tamamlanmamış durumda, bu yüzden “kararsız” olarak işaretlenmiştir ve yalnızca <a href="https://os.phil-opp.com/tr/minimal-rust-kernel/#installing-rust-nightly">nightly Rust derleyicilerinde</a> kullanılabilir.</p>
+<p>Bu özelliği kullanmak için, <code>.cargo/config.toml</code> yolundaki <a href="https://doc.rust-lang.org/cargo/reference/config.html">cargo yapılandırma</a> dosyamıza aşağıdakileri eklememiz gerekir:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># .cargo/config.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">unstable</span><span>]
+</span><span style="color:#569cd6;">json-target-spec </span><span>= </span><span style="color:#569cd6;">true
+</span><span style="color:#569cd6;">build-std </span><span>= [</span><span style="color:#d69d85;">&quot;core&quot;</span><span>, </span><span style="color:#d69d85;">&quot;compiler_builtins&quot;</span><span>]
+</span></code></pre>
+<p>Bu, cargo’ya <code>core</code> ve <code>compiler_builtins</code> kütüphanelerini yeniden derlemesi gerektiğini söyler. İkincisi gereklidir, çünkü <code>core</code>’un bir bağımlılığıdır. Bu kütüphaneleri yeniden derlemek için cargo’nun Rust kaynak koduna erişmesi gerekir; bunu <code>rustup component add rust-src</code> ile kurabiliriz.</p>
+<div class="note">
+<p><strong>Not:</strong> <code>unstable.build-std</code> yapılandırma anahtarı, en az 2020-07-15 tarihli Rust nightly’sini gerektirir.</p>
+</div>
+<p><code>unstable.build-std</code> yapılandırma anahtarını ayarladıktan ve <code>rust-src</code> bileşenini kurduktan sonra derleme komutumuzu yeniden çalıştırabiliriz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo build --target x86_64-blog_os.json
+</span><span>   Compiling core v0.0.0 (/…/rust/src/libcore)
+</span><span>   Compiling rustc-std-workspace-core v1.99.0 (/…/rust/src/tools/rustc-std-workspace-core)
+</span><span>   Compiling compiler_builtins v0.1.32
+</span><span>   Compiling blog_os v0.1.0 (/…/blog_os)
+</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.29 secs
+</span></code></pre>
+<p><code>cargo build</code>’in artık özel hedefimiz için <code>core</code>, <code>rustc-std-workspace-core</code> (<code>compiler_builtins</code>’in bir bağımlılığı) ve <code>compiler_builtins</code> kütüphanelerini yeniden derlediğini görüyoruz.</p>
+<h4 id="bellekle-ilgili-intrinsic-ler"><a class="zola-anchor" href="#bellekle-ilgili-intrinsic-ler" aria-label="Anchor link for: bellekle-ilgili-intrinsic-ler">🔗</a>Bellekle İlgili Intrinsic’ler</h4>
+<p>Rust derleyicisi, belirli bir yerleşik fonksiyon kümesinin tüm sistemler için kullanılabilir olduğunu varsayar. Bu fonksiyonların çoğu, az önce yeniden derlediğimiz <code>compiler_builtins</code> crate’i tarafından sağlanır. Ancak bu crate’te, normalde sistemdeki C kütüphanesi tarafından sağlandıkları için varsayılan olarak etkin olmayan, bellekle ilgili bazı fonksiyonlar vardır. Bu fonksiyonlar arasında, bir bellek bloğundaki tüm baytları belirli bir değere ayarlayan <code>memset</code>; bir bellek bloğunu başka birine kopyalayan <code>memcpy</code>; ve iki bellek bloğunu karşılaştıran <code>memcmp</code> bulunur. Şu anda kernel’imizi derlemek için bu fonksiyonların hiçbirine ihtiyacımız olmasa da, ona biraz daha kod ekler eklemez (örneğin struct’ları etrafta kopyalarken) gerekli olacaklar.</p>
+<p>İşletim sisteminin C kütüphanesine bağlanamayacağımız için, bu fonksiyonları derleyiciye sağlamanın alternatif bir yoluna ihtiyacımız var. Bunun için olası bir yaklaşım, kendi <code>memset</code> vb. fonksiyonlarımızı uygulamak ve onlara <code>#[unsafe(no_mangle)]</code> özniteliğini uygulamak olabilir (derleme sırasındaki otomatik yeniden adlandırmayı önlemek için). Ancak bu tehlikelidir, çünkü bu fonksiyonların uygulamasındaki en ufak bir hata tanımsız davranışa yol açabilir. Örneğin, <code>memcpy</code>’yi bir <code>for</code> döngüsüyle uygulamak sonsuz bir özyinelemeyle (recursion) sonuçlanabilir, çünkü <code>for</code> döngüleri örtük olarak <a href="https://doc.rust-lang.org/stable/core/iter/trait.IntoIterator.html#tymethod.into_iter"><code>IntoIterator::into_iter</code></a> trait metodunu çağırır ve bu da yeniden <code>memcpy</code>’yi çağırabilir. Bu yüzden, bunun yerine mevcut, iyi test edilmiş uygulamaları yeniden kullanmak iyi bir fikirdir.</p>
+<p>Neyse ki <code>compiler_builtins</code> crate’i, gereken tüm fonksiyonlar için uygulamaları zaten içeriyor; bunlar yalnızca C kütüphanesinden gelen uygulamalarla çakışmamak için varsayılan olarak devre dışı bırakılmış. Bunları, cargo’nun <a href="https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#build-std-features"><code>build-std-features</code></a> bayrağını <code>["compiler-builtins-mem"]</code> olarak ayarlayarak etkinleştirebiliriz. <code>build-std</code> bayrağı gibi, bu bayrak da ya komut satırında bir <code>-Z</code> bayrağı olarak geçirilebilir ya da <code>.cargo/config.toml</code> dosyasındaki <code>unstable</code> tablosunda yapılandırılabilir. Her zaman bu bayrakla derleme yapmak istediğimiz için, yapılandırma dosyası seçeneği bizim için daha mantıklı:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># .cargo/config.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">unstable</span><span>]
+</span><span style="color:#569cd6;">json-target-spec </span><span>= </span><span style="color:#569cd6;">true
+</span><span style="color:#569cd6;">build-std-features </span><span>= [</span><span style="color:#d69d85;">&quot;compiler-builtins-mem&quot;</span><span>]
+</span><span style="color:#569cd6;">build-std </span><span>= [</span><span style="color:#d69d85;">&quot;core&quot;</span><span>, </span><span style="color:#d69d85;">&quot;compiler_builtins&quot;</span><span>]
+</span></code></pre>
+<p>(<code>compiler-builtins-mem</code> özelliğine yönelik destek yalnızca <a href="https://github.com/rust-lang/rust/pull/77284">çok yakın bir zamanda eklendi</a>, bu yüzden bunun için en az <code>2020-09-30</code> tarihli Rust nightly’sine ihtiyacınız var.)</p>
+<p>Perde arkasında bu bayrak, <code>compiler_builtins</code> crate’inin <a href="https://github.com/rust-lang/compiler-builtins/blob/eff506cd49b637f1ab5931625a33cef7e91fbbf6/Cargo.toml#L54-L55"><code>mem</code> özelliğini</a> etkinleştirir. Bunun etkisi, <code>#[unsafe(no_mangle)]</code> özniteliğinin crate’in <a href="https://github.com/rust-lang/compiler-builtins/blob/eff506cd49b637f1ab5931625a33cef7e91fbbf6/src/mem.rs#L12-L69"><code>memcpy</code> vb. uygulamalarına</a> uygulanması ve böylece bunların linker tarafından kullanılabilir hale gelmesidir.</p>
+<p>Bu değişiklikle kernel’imiz, derleyicinin gerektirdiği tüm fonksiyonlar için geçerli uygulamalara sahip oluyor; böylece kodumuz daha karmaşık hale gelse bile derlenmeye devam edecek.</p>
+<h4 id="set-a-default-target"><a class="zola-anchor" href="#set-a-default-target" aria-label="Anchor link for: set-a-default-target">🔗</a>Varsayılan Bir Hedef Belirlemek</h4>
+<p>Her <code>cargo build</code> çağrısında <code>--target</code> parametresini geçirmekten kaçınmak için, varsayılan hedefi geçersiz kılabiliriz. Bunu yapmak için, <code>.cargo/config.toml</code> yolundaki <a href="https://doc.rust-lang.org/cargo/reference/config.html">cargo yapılandırma</a> dosyamıza aşağıdakileri ekliyoruz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># .cargo/config.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">build</span><span>]
+</span><span style="color:#569cd6;">target </span><span>= </span><span style="color:#d69d85;">&quot;x86_64-blog_os.json&quot;
+</span></code></pre>
+<p>Bu, <code>cargo</code>’ya açık bir <code>--target</code> argümanı geçirilmediğinde <code>x86_64-blog_os.json</code> hedefimizi kullanmasını söyler. Bu, artık kernel’imizi basit bir <code>cargo build</code> ile derleyebileceğimiz anlamına gelir. Cargo yapılandırma seçenekleri hakkında daha fazla bilgi için <a href="https://doc.rust-lang.org/cargo/reference/config.html">resmi belgelere</a> göz atın.</p>
+<p>Artık kernel’imizi basit bir <code>cargo build</code> ile bir bare metal hedefi için derleyebiliyoruz. Ancak bootloader tarafından çağrılacak olan <code>_start</code> giriş noktamız hâlâ boş. Artık ondan ekrana bir şeyler yazdırmanın zamanı geldi.</p>
+<h3 id="ekrana-yazdirmak"><a class="zola-anchor" href="#ekrana-yazdirmak" aria-label="Anchor link for: ekrana-yazdirmak">🔗</a>Ekrana Yazdırmak</h3>
+<p>Bu aşamada ekrana metin yazdırmanın en kolay yolu <a href="https://en.wikipedia.org/wiki/VGA-compatible_text_mode">VGA metin arabelleğidir (text buffer)</a>. Bu, VGA donanımına eşlenmiş ve ekranda görüntülenen içeriği barındıran özel bir bellek alanıdır. Normalde, her biri 80 karakter hücresi içeren 25 satırdan oluşur. Her karakter hücresi, bazı ön plan ve arka plan renkleriyle bir ASCII karakteri görüntüler. Ekran çıktısı şöyle görünür:</p>
+<p><img src="https://upload.wikimedia.org/wikipedia/commons/f/f8/Codepage-437.png" alt="yaygın ASCII karakterleri için ekran çıktısı" /></p>
+<p>VGA arabelleğinin tam yerleşimini, onun için ilk küçük sürücüyü yazacağımız bir sonraki yazıda tartışacağız. “Hello World!” yazdırmak için sadece arabelleğin <code>0xb8000</code> adresinde bulunduğunu ve her karakter hücresinin bir ASCII baytı ile bir renk baytından oluştuğunu bilmemiz yeterli.</p>
+<p>Uygulama şöyle görünür:</p>
+<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">HELLO</span><span>: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">u8</span><span>] = </span><span style="color:#569cd6;">b</span><span style="color:#d69d85;">&quot;Hello World!&quot;</span><span>;
+</span><span>
+</span><span>#[unsafe(no_mangle)]
+</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
+</span><span>    </span><span style="color:#569cd6;">let</span><span> vga_buffer = </span><span style="color:#b5cea8;">0xb8000 </span><span style="color:#569cd6;">as *mut u8</span><span>;
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, </span><span style="color:#569cd6;">&amp;</span><span>byte) </span><span style="color:#569cd6;">in </span><span style="color:#b4cea8;">HELLO</span><span>.iter().enumerate() {
+</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
+</span><span>            *vga_buffer.offset(i </span><span style="color:#569cd6;">as isize </span><span>* </span><span style="color:#b5cea8;">2</span><span>) = byte;
+</span><span>            *vga_buffer.offset(i </span><span style="color:#569cd6;">as isize </span><span>* </span><span style="color:#b5cea8;">2 </span><span>+ </span><span style="color:#b5cea8;">1</span><span>) = </span><span style="color:#b5cea8;">0xb</span><span>;
+</span><span>        }
+</span><span>    }
+</span><span>
+</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
+</span><span>}
+</span></code></pre>
+<p>İlk olarak, <code>0xb8000</code> tamsayısını bir <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">ham işaretçiye (raw pointer)</a> dönüştürüyoruz. Ardından <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html#the-static-lifetime">statik</a> <code>HELLO</code> <a href="https://doc.rust-lang.org/reference/tokens.html#byte-string-literals">bayt dizesinin (byte string)</a> baytları üzerinde <a href="https://doc.rust-lang.org/stable/book/ch13-02-iterators.html">iterasyon yapıyoruz</a>. Ek olarak çalışan bir <code>i</code> değişkeni elde etmek için <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a> metodunu kullanıyoruz. for döngüsünün gövdesinde, dize baytını ve karşılık gelen renk baytını (<code>0xb</code>, açık camgöbeği bir renktir) yazmak için <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a> metodunu kullanıyoruz.</p>
+<p>Tüm bellek yazma işlemlerinin etrafında bir <a href="https://doc.rust-lang.org/stable/book/ch19-01-unsafe-rust.html"><code>unsafe</code></a> bloğu olduğuna dikkat edin. Bunun nedeni, Rust derleyicisinin oluşturduğumuz ham işaretçilerin geçerli olduğunu kanıtlayamamasıdır. Bunlar herhangi bir yere işaret edebilir ve veri bozulmasına yol açabilir. Onları bir <code>unsafe</code> bloğunun içine koyarak, temelde derleyiciye işlemlerin geçerli olduğundan kesinlikle emin olduğumuzu söylüyoruz. Bir <code>unsafe</code> bloğunun Rust’ın güvenlik denetimlerini kapatmadığını unutmayın. Yalnızca <a href="https://doc.rust-lang.org/stable/book/ch20-01-unsafe-rust.html#unsafe-superpowers">beş ek şey</a> yapmanıza olanak tanır.</p>
+<p><strong>Bunun, Rust’ta işleri yapmak istediğimiz yol olmadığını</strong> vurgulamak istiyorum! unsafe blokların içinde ham işaretçilerle çalışırken işleri batırmak çok kolaydır. Örneğin, dikkatli olmazsak kolayca arabelleğin sonunun ötesine yazabiliriz.</p>
+<p>Bu yüzden <code>unsafe</code> kullanımını mümkün olduğunca en aza indirmek istiyoruz. Rust bize, güvenli soyutlamalar oluşturarak bunu yapma yeteneği veriyor. Örneğin, tüm güvensizliği (unsafety) kapsülleyen ve dışarıdan yanlış bir şey yapmanın <em>imkânsız</em> olmasını sağlayan bir VGA arabellek tipi oluşturabiliriz. Bu sayede, yalnızca minimal miktarda <code>unsafe</code> koda ihtiyaç duyar ve <a href="https://en.wikipedia.org/wiki/Memory_safety">bellek güvenliğini</a> ihlal etmediğimizden emin olabiliriz. Böyle güvenli bir VGA arabellek soyutlamasını bir sonraki yazıda oluşturacağız.</p>
+<h2 id="kernel-imizi-calistirmak"><a class="zola-anchor" href="#kernel-imizi-calistirmak" aria-label="Anchor link for: kernel-imizi-calistirmak">🔗</a>Kernel’imizi Çalıştırmak</h2>
+<p>Artık algılanabilir bir şey yapan bir çalıştırılabilir dosyamız olduğuna göre, onu çalıştırmanın zamanı geldi. İlk olarak, derlenmiş kernel’imizi bir bootloader ile bağlayarak önyüklenebilir bir disk imajına dönüştürmemiz gerekiyor. Ardından disk imajını <a href="https://www.qemu.org/">QEMU</a> sanal makinesinde çalıştırabilir veya bir USB bellek kullanarak gerçek donanımda önyükleyebiliriz.</p>
+<h3 id="creating-a-bootimage"><a class="zola-anchor" href="#creating-a-bootimage" aria-label="Anchor link for: creating-a-bootimage">🔗</a>Bir Bootimage Oluşturmak</h3>
+<p>Derlenmiş kernel’imizi önyüklenebilir bir disk imajına dönüştürmek için, onu bir bootloader ile bağlamamız gerekir. <a href="https://os.phil-opp.com/tr/minimal-rust-kernel/#the-boot-process">Önyükleme hakkındaki bölümde</a> öğrendiğimiz gibi, bootloader CPU’yu başlatmaktan ve kernel’imizi yüklemekten sorumludur.</p>
+<p>Başlı başına bir proje olan kendi bootloader’ımızı yazmak yerine, <a href="https://crates.io/crates/bootloader"><code>bootloader</code></a> crate’ini kullanıyoruz. Bu crate, herhangi bir C bağımlılığı olmadan, yalnızca Rust ve satır içi assembly ile temel bir BIOS bootloader’ı uygular. Onu kernel’imizi önyüklemek için kullanabilmek için, ona bir bağımlılık eklememiz gerekir:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
+</span><span style="color:#569cd6;">bootloader </span><span>= </span><span style="color:#d69d85;">&quot;0.9&quot;
+</span></code></pre>
+<p><strong>Not:</strong> Bu yazı yalnızca <code>bootloader v0.9</code> ile uyumludur. Daha yeni sürümler farklı bir derleme sistemi kullanır ve bu yazıyı takip ederken derleme hatalarına neden olur.</p>
+<p>Bootloader’ı bir bağımlılık olarak eklemek, gerçekte önyüklenebilir bir disk imajı oluşturmak için yeterli değildir. Sorun, kernel’imizi derlemeden sonra bootloader ile bağlamamız gerekmesi, ancak cargo’nun <a href="https://github.com/rust-lang/cargo/issues/545">derleme sonrası betiklerini (post-build scripts)</a> desteklememesidir.</p>
+<p>Bu sorunu çözmek için, önce kernel’i ve bootloader’ı derleyen, ardından önyüklenebilir bir disk imajı oluşturmak için onları birbirine bağlayan <code>bootimage</code> adlı bir araç oluşturduk. Aracı kurmak için ana dizininize (veya cargo projenizin dışındaki herhangi bir dizine) gidin ve terminalinizde aşağıdaki komutu çalıştırın:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>cargo install bootimage
+</span></code></pre>
+<p><code>bootimage</code>’ı çalıştırmak ve bootloader’ı derlemek için, <code>llvm-tools-preview</code> rustup bileşeninin kurulu olması gerekir. Bunu <code>rustup component add llvm-tools-preview</code> komutunu çalıştırarak yapabilirsiniz.</p>
+<p><code>bootimage</code>’ı kurduktan ve <code>llvm-tools-preview</code> bileşenini ekledikten sonra, cargo projenizin dizinine geri dönüp aşağıdakini çalıştırarak önyüklenebilir bir disk imajı oluşturabilirsiniz:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo bootimage
+</span></code></pre>
+<p>Aracın, kernel’imizi <code>cargo build</code> kullanarak yeniden derlediğini görüyoruz; böylece yaptığınız tüm değişiklikleri otomatik olarak alacaktır. Ardından, biraz zaman alabilecek olan bootloader’ı derler. Tüm crate bağımlılıkları gibi, o da yalnızca bir kez derlenir ve sonra önbelleğe alınır, bu yüzden sonraki derlemeler çok daha hızlı olacaktır. Son olarak <code>bootimage</code>, bootloader ile kernel’inizi önyüklenebilir bir disk imajında birleştirir.</p>
+<p>Komutu çalıştırdıktan sonra, <code>target/x86_64-blog_os/debug</code> dizininizde <code>bootimage-blog_os.bin</code> adlı önyüklenebilir bir disk imajı görmelisiniz. Onu bir sanal makinede önyükleyebilir veya gerçek donanımda önyüklemek için bir USB sürücüsüne kopyalayabilirsiniz. (Bunun, farklı bir biçime sahip bir CD imajı olmadığını, bu yüzden onu bir CD’ye yazdırmanın işe yaramadığını unutmayın.)</p>
+<h4 id="nasil-calisir"><a class="zola-anchor" href="#nasil-calisir" aria-label="Anchor link for: nasil-calisir">🔗</a>Nasıl çalışır?</h4>
+<p><code>bootimage</code> aracı perde arkasında aşağıdaki adımları gerçekleştirir:</p>
+<ul>
+<li>Kernel’imizi bir <a href="https://en.wikipedia.org/wiki/Executable_and_Linkable_Format">ELF</a> dosyasına derler.</li>
+<li>Bootloader bağımlılığını bağımsız bir çalıştırılabilir dosya olarak derler.</li>
+<li>Kernel ELF dosyasının baytlarını bootloader’a bağlar.</li>
+</ul>
+<p>Önyüklendiğinde, bootloader eklenmiş ELF dosyasını okur ve ayrıştırır. Ardından program segmentlerini sayfa tablolarındaki (page tables) sanal adreslere eşler, <code>.bss</code> bölümünü sıfırlar ve bir stack kurar. Son olarak, giriş noktası adresini (<code>_start</code> fonksiyonumuz) okur ve ona atlar.</p>
+<h3 id="qemu-da-onyukleme"><a class="zola-anchor" href="#qemu-da-onyukleme" aria-label="Anchor link for: qemu-da-onyukleme">🔗</a>QEMU’da Önyükleme</h3>
+<p>Artık disk imajını bir sanal makinede önyükleyebiliriz. Onu <a href="https://www.qemu.org/">QEMU</a>’da önyüklemek için aşağıdaki komutu çalıştırın:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; qemu-system-x86_64 -drive format=raw,file=target/x86_64-blog_os/debug/bootimage-blog_os.bin
+</span></code></pre>
+<p>Bu, şuna benzer görünmesi gereken ayrı bir pencere açar:</p>
+<p><img src="https://os.phil-opp.com/tr/minimal-rust-kernel/qemu.png" alt="QEMU’da görünen “Hello World!”" /></p>
+<p>“Hello World!” yazımızın ekranda görünür olduğunu görüyoruz.</p>
+<h3 id="gercek-makine"><a class="zola-anchor" href="#gercek-makine" aria-label="Anchor link for: gercek-makine">🔗</a>Gerçek Makine</h3>
+<p>Onu bir USB belleğe yazmak ve gerçek bir makinede önyüklemek de mümkündür, <strong>ancak doğru cihaz adını seçmeye dikkat edin</strong>, çünkü <strong>o cihazdaki her şeyin üzerine yazılır</strong>:</p>
+<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; dd if=target/x86_64-blog_os/debug/bootimage-blog_os.bin of=/dev/sdX &amp;&amp; sync
+</span></code></pre>
+<p>Burada <code>sdX</code>, USB belleğinizin cihaz adıdır.</p>
+<p>İmajı USB belleğe yazdıktan sonra, ondan önyükleyerek gerçek donanımda çalıştırabilirsiniz. USB bellekten önyüklemek için muhtemelen özel bir önyükleme menüsü kullanmanız veya BIOS yapılandırmanızda önyükleme sırasını değiştirmeniz gerekecek. <code>bootloader</code> crate’i henüz UEFI desteğine sahip olmadığı için, bunun şu anda UEFI makineleri için çalışmadığını unutmayın.</p>
+<h3 id="using-cargo-run"><a class="zola-anchor" href="#using-cargo-run" aria-label="Anchor link for: using-cargo-run">🔗</a><code>cargo run</code> Kullanmak</h3>
+<p>Kernel’imizi QEMU’da çalıştırmayı kolaylaştırmak için, cargo’nun <code>runner</code> yapılandırma anahtarını ayarlayabiliriz:</p>
+<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># .cargo/config.toml içinde
+</span><span>
+</span><span>[</span><span style="color:#808080;">target.</span><span style="color:#d69d85;">&#39;cfg(target_os = &quot;none&quot;)&#39;</span><span>]
+</span><span style="color:#569cd6;">runner </span><span>= </span><span style="color:#d69d85;">&quot;bootimage runner&quot;
+</span></code></pre>
+<p><code>target.'cfg(target_os = "none")'</code> tablosu, hedef yapılandırma dosyasının <code>"os"</code> alanı <code>"none"</code> olarak ayarlanmış tüm hedeflere uygulanır. Buna <code>x86_64-blog_os.json</code> hedefimiz de dahildir. <code>runner</code> anahtarı, <code>cargo run</code> için çağrılması gereken komutu belirtir. Komut, başarılı bir derlemenin ardından, ilk argüman olarak çalıştırılabilir dosyanın yolu geçirilerek çalıştırılır. Daha fazla ayrıntı için <a href="https://doc.rust-lang.org/cargo/reference/config.html">cargo belgelerine</a> bakın.</p>
+<p><code>bootimage runner</code> komutu, özellikle bir <code>runner</code> çalıştırılabilir dosyası olarak kullanılabilecek şekilde tasarlanmıştır. Verilen çalıştırılabilir dosyayı projenin bootloader bağımlılığıyla bağlar ve ardından QEMU’yu başlatır. Daha fazla ayrıntı ve olası yapılandırma seçenekleri için <a href="https://github.com/rust-osdev/bootimage"><code>bootimage</code>’ın Readme’sine</a> bakın.</p>
+<p>Artık kernel’imizi derlemek ve QEMU’da önyüklemek için <code>cargo run</code> kullanabiliriz.</p>
+<h2 id="sirada-ne-var"><a class="zola-anchor" href="#sirada-ne-var" aria-label="Anchor link for: sirada-ne-var">🔗</a>Sırada ne var?</h2>
+<p>Bir sonraki yazıda, VGA metin arabelleğini daha ayrıntılı olarak inceleyeceğiz ve onun için güvenli bir arayüz yazacağız. Ayrıca <code>println</code> makrosu için destek ekleyeceğiz.</p>
+
+    </div>
+
+    <div class="post-footer-support">
+        <h2>Beni Destekle</h2>
+<p>Bu blogu ve ilişkili kütüphaneleri oluşturmak ve sürdürmek çok emek gerektiriyor, ve bunu yapmaktan gerçekten zevk alıyorum. Beni destekleyerek yeni içerik, yeni özellikler ve sürekli bakım için daha fazla zaman ayırmama olanak tanıyorsunuz. Beni desteklemenin en iyi yolu <a href="https://github.com/sponsors/phil-opp"><em>GitHub'da sponsor olmak</em></a>. Teşekkürler!</p>
+
+    </div>
+
+    <hr>
+    <div class="PageNavigation">
+        
+            <a class="prev" href="/tr/freestanding-rust-binary/">&laquo; Bağımsız Bir Rust İkili Dosyası</a>
+        
+        
+            <a class="next" href="/tr/vga-text-mode/">VGA Metin Modu &raquo;</a>
+        
+    </div>
+
+    <hr>
+    <section>
+        <h2 id="comments" class="">Yorumlar</h2>
+
+        
+            
+            
+            
+        
+        
+    
+        
+        
+        
+    
+
+    
+        
+        
+    
+
+    <p class="comment-note">
+        Bir sorunuz mu var, geri bildirim paylaşmak veya fikirlerinizi tartışmak mı istiyorsunuz? Buraya yorum bırakmaktan çekinmeyin! Lütfen İngilizce kullanın ve Rust'ın <a href="https://www.rust-lang.org/policies/code-of-conduct">davranış kurallarına</a> uyun. Bu yorum dizisi doğrudan <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22A%20Minimal%20Rust%20Kernel%20%28tr%29%22%20in%3Atitle"><em>GitHub'daki bir tartışmaya</em></a> bağlıdır, dolayısıyla isterseniz oraya da yorum yapabilirsiniz.
+
+    </p>
+
+    <div class="giscus"></div>
+
+    <script src="https://giscus.app/client.js"
+        data-repo="phil-opp/blog_os"
+        data-repo-id="MDEwOlJlcG9zaXRvcnkzOTU3NTEwMQ=="
+        data-category="Post Comments (translated)"
+        data-category-id="DIC_kwDOAlvePc4CPg4c"
+    
+        data-mapping="specific"
+    
+        data-term="A Minimal Rust Kernel (tr)"
+        data-reactions-enabled="1"
+        data-emit-metadata="1"
+        data-theme="preferred_color_scheme"
+        data-lang="tr"
+        crossorigin="anonymous"
+        async>
+    </script>
+
+    <p class="comment-directly-on-github">
+        Instead of authenticating the <a href="https://giscus.app">giscus</a> application, you can also comment directly <a href="https://github.com/phil-opp/blog_os/discussions/categories/post-comments-translated?discussions_q=%22A%20Minimal%20Rust%20Kernel%20%28tr%29%22%20in%3Atitle"><em>on GitHub</em></a>.
+    </p>
+
+        <p class="">
+            Mümkünse yorumlarınızı İngilizce bırakınız.
+        </p>
+        
+    </section>
+
+    <aside class="page-aside-right">
+        <div class="block" id="language-selector">
+            <h2>Other Languages</h2>
+            
+            <ul><li data-lang-switch-to="en" class=""><a href="https://os.phil-opp.com/minimal-rust-kernel/">
+                        English (original)
+                    </a></li><li data-lang-switch-to="ar" class=""><a href="https://os.phil-opp.com/ar/minimal-rust-kernel/">
+                        العربية
+                    </a></li><li data-lang-switch-to="es" class=""><a href="https://os.phil-opp.com/es/minimal-rust-kernel/">
+                        Spanish
+                    </a></li><li data-lang-switch-to="fa" class=""><a href="https://os.phil-opp.com/fa/minimal-rust-kernel/">
+                        Persian
+                    </a></li><li data-lang-switch-to="fr" class=""><a href="https://os.phil-opp.com/fr/minimal-rust-kernel/">
+                        French
+                    </a></li><li data-lang-switch-to="ja" class=""><a href="https://os.phil-opp.com/ja/minimal-rust-kernel/">
+                        Japanese
+                    </a></li><li data-lang-switch-to="ko" class=""><a href="https://os.phil-opp.com/ko/minimal-rust-kernel/">
+                        Korean
+                    </a></li><li data-lang-switch-to="pt-BR" class=""><a href="https://os.phil-opp.com/pt-BR/minimal-rust-kernel/">
+                        Português (Brasil)
+                    </a></li><li data-lang-switch-to="ru" class=""><a href="https://os.phil-opp.com/ru/minimal-rust-kernel/">
+                        Russian
+                    </a></li><li data-lang-switch-to="zh-CN" class=""><a href="https://os.phil-opp.com/zh-CN/minimal-rust-kernel/">
+                        Chinese (simplified)
+                    </a></li></ul>
+        </div>
+    </aside>
+
+</main>
+        </div>
+
+        <div></div>
+
+        <footer class="footer">
+            <hr>
+            <small>
+                &copy; <time datetime="2022">2022</time>. All rights reserved.
+                <a class="spaced" href="https://github.com/phil-opp/blog_os#license">License</a>
+                <a class="spaced" href="https://os.phil-opp.com/contact/">Contact</a>
+            </small>
+        </footer>
+    </div>
+</body>
+
+</html>
