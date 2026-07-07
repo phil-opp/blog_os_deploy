@@ -67,14 +67,14 @@
             <a href="#shi-zuo-panic-chu-li-han-shi">實作 panic 處理函式</a>
             
         </li><li>
-            <a href="#eh-personality-language-item">eh_personality Language Item</a>
+            <a href="#dui-die-hui-su">堆疊回溯</a>
             <ol>
                 <li>
                     <a href="#ting-yong-hui-su">停用回溯</a>
                 </li>
             </ol>
         </li><li>
-            <a href="#start-shu-xing">start 屬性</a>
+            <a href="#ru-kou-dian-entry-point">入口點（Entry Point）</a>
             <ol>
                 <li>
                     <a href="#zhong-xie-ru-kou-dian">重寫入口點</a>
@@ -149,14 +149,14 @@
                 <a href="#shi-zuo-panic-chu-li-han-shi">實作 panic 處理函式</a>
                 
             </li><li>
-                <a href="#eh-personality-language-item">eh_personality Language Item</a>
+                <a href="#dui-die-hui-su">堆疊回溯</a>
                 <ul>
                     <li>
                         <a href="#ting-yong-hui-su">停用回溯</a>
                     </li>
                 </ul>
             </li><li>
-                <a href="#start-shu-xing">start 屬性</a>
+                <a href="#ru-kou-dian-entry-point">入口點（Entry Point）</a>
                 <ul>
                     <li>
                         <a href="#zhong-xie-ru-kou-dian">重寫入口點</a>
@@ -220,8 +220,11 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>() {}</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
 <span class="giallo-l"><span>error: `#[panic_handler]` function required, but not found</span></span>
-<span class="giallo-l"><span>error: language item required, but not found: `eh_personality`</span></span></code></pre>
-<p>現在編譯器告訴我們缺少 <code>#[panic_handler]</code> 函式以及 <em>language item</em>。</p>
+<span class="giallo-l"><span>error: unwinding panics are not supported without std</span></span></code></pre>
+<p>現在編譯器缺少 <code>#[panic_handler]</code> 函式，並且抱怨在沒有標準函式庫的情況下無法進行 <em>unwinding</em>。我們會在接下來的段落中探討這兩個錯誤。</p>
+<div class="note">
+<p>在較舊的 Rust 工具鏈上，第二個錯誤訊息會顯示為 <code>language item required, but not found: eh_personality</code>，其成因與 <code>unwinding panics are not supported without std</code> 錯誤相同。</p>
+</div>
 <h2 id="shi-zuo-panic-chu-li-han-shi"><a class="zola-anchor" href="#shi-zuo-panic-chu-li-han-shi" aria-label="Anchor link for: shi-zuo-panic-chu-li-han-shi">🔗</a>實作 panic 處理函式</h2>
 <p><code>panic_handler</code> 屬性定義了當 <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a> 發生時編譯器需要呼叫的函式。在標準函式庫中有自己的 panic 處理函式，但在 <code>no_std</code> 的環境中我們得定義我們自己的：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// main.rs</span></span>
@@ -234,10 +237,11 @@
 <span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p><a rel="external" href="https://doc.rust-lang.org/nightly/core/panic/struct.PanicInfo.html"><code>PanicInfo</code> parameter</a> 包含 panic 發生時的檔案、行數以及可選的錯誤訊息。這個函式不會返回，所以它被標記為<a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/functions.html#diverging-functions">發散函式</a>，只會返回<a rel="external" href="https://doc.rust-lang.org/nightly/std/primitive.never.html">“never” 型態</a> <code>!</code>。現在我們什麼事可以做，所以我們只需寫一個無限迴圈。</p>
-<h2 id="eh-personality-language-item"><a class="zola-anchor" href="#eh-personality-language-item" aria-label="Anchor link for: eh-personality-language-item">🔗</a>eh_personality Language Item</h2>
-<p>Language item 是一些編譯器需求的特殊函式或類型。舉例來說，Rust 的 [<code>Copy</code>] trait 就是一個 language item，告訴編譯器哪些類型擁有[<em>複製的語意</em>][<code>Copy</code>]。當我們搜尋 <code>Copy</code> trait 的[實作][copy code]時，我們會發現一個特殊的 <code>#[lang = "copy"]</code> 屬性將它定義為一個 language item。</p>
-<p>我們可以自己實現 language item，但這只應是最後的手段。因為 language item 屬於非常不穩定的實作細節，而且不會做類型檢查（所以編譯器甚至不會確保它們的參數類型是否正確）。幸運的是，我們有更穩定的方式來修復上面關於 language item 的錯誤。</p>
-<p><code>eh_personality</code> language item 標記的函式將被用於實作<a rel="external" href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">堆疊回溯</a>。在預設情況下當 panic 發生時，Rust 會使用堆疊回溯來執行所有存在堆疊上變數的解構子（destructor）。這確保所有使用的記憶體都被釋放，並讓 parent thread 獲取 panic 資訊並繼續運行。但是堆疊回溯是一個複雜的過程，通常會需要一些 OS 的函式庫如 Linux 的 <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> 或 Windows 的 <a rel="external" href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">structured exception handling</a>。所以我們並不希望在我們的作業系統中使用它。</p>
+<h2 id="dui-die-hui-su"><a class="zola-anchor" href="#dui-die-hui-su" aria-label="Anchor link for: dui-die-hui-su">🔗</a>堆疊回溯</h2>
+<p>在預設情況下當 <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a> 發生時，Rust 會使用<a rel="external" href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">堆疊回溯</a>來執行所有存在堆疊上變數的解構子（destructor）。這確保所有使用的記憶體都被釋放，並讓 parent thread 獲取 panic 資訊並繼續運行。但是堆疊回溯是一個複雜的過程，通常會需要一些 OS 特定的函式庫（例如 Linux 的 <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> 或 Windows 的 <a rel="external" href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">structured exception handling</a>），而這些函式庫需要 Rust 的標準函式庫。所以我們無法在 <code>no_std</code> 的作業系統核心中使用堆疊回溯。</p>
+<div class="note">
+<p>在較舊的 Rust 工具鏈上出現的 <code>language item required, but not found: eh_personality</code> 錯誤同樣指向堆疊回溯。<a rel="external" href="https://github.com/rust-lang/rust/blob/edb368491551a77d77a48446d4ee88b35490c565/src/libpanic_unwind/gcc.rs#L11-L45"><code>eh_personality</code> language item</a> 標記的函式將被用於實作堆疊回溯。Language item 是一些編譯器內部需求的特殊項目（trait、函式、類型等）。在較新的 Rust 工具鏈上，此錯誤訊息已被改進，以避免提及這項實作細節。</p>
+</div>
 <h3 id="ting-yong-hui-su"><a class="zola-anchor" href="#ting-yong-hui-su" aria-label="Anchor link for: ting-yong-hui-su">🔗</a>停用回溯</h3>
 <p>在某些狀況下回溯可能並不是我們要的功能，因此 Rust 提供了<a rel="external" href="https://github.com/rust-lang/rust/pull/32900">在 panic 時中止</a>的選項。這個選項能停用回溯標誌訊息的產生，也因此能縮小生成的二進制檔案大小。我們能用許多方式開啟這個選項，而最簡單的方式就是把以下幾行設置加入我們的 <code>Cargo.toml</code>：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[profile.dev]</span></span>
@@ -245,15 +249,16 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[profile.release]</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">panic</span><span> =</span><span style="color: #CE9178;"> &quot;abort&quot;</span></span></code></pre>
-<p>這些選項能將　<code>dev</code> 設置（用於 <code>cargo build</code>）和 <code>release</code> 設置（用於 <code>cargo build --release</code>）的 panic 策略設為 <code>abort</code>。現在編譯器不會再要求我們提供 <code>eh_personality</code> language item。</p>
-<p>現在我們已經修復了上面的錯誤，但是如果我們嘗試編譯的話，又會出現一個新的錯誤：</p>
+<p>這些選項能將　<code>dev</code> 設置（用於 <code>cargo build</code>）和 <code>release</code> 設置（用於 <code>cargo build --release</code>）的 panic 策略設為 <code>abort</code>。現在 <code>unwinding panics are not supported without std</code> 錯誤應該就能修復了。</p>
+<p>如果我們現在嘗試編譯的話，會出現一個新的錯誤：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
-<span class="giallo-l"><span>error: requires `start` lang_item</span></span></code></pre>
-<p>我們的程式缺少 <code>start</code> 這個用來定義入口點（entry point）的 language item。</p>
-<h2 id="start-shu-xing"><a class="zola-anchor" href="#start-shu-xing" aria-label="Anchor link for: start-shu-xing">🔗</a><code>start</code> 屬性</h2>
-<p>我們通常會認為執行一個程式時，首先被呼叫的是 <code>main</code> 函式。但是大多數語言都擁有一個<a rel="external" href="https://en.wikipedia.org/wiki/Runtime_system">執行時系統</a>，它通常負責垃圾回收（garbage collection）像是 Java 或軟體執行緒（software threads）像是 Go 的 goroutines。這個執行時系統需要在 main 函式前啟動，因為它需要讓先進行初始化。</p>
+<span class="giallo-l"><span>error: using `fn main` requires the standard library</span></span></code></pre><div class="note">
+<p>較舊的 Rust 工具鏈會將此錯誤回報為 <code>error: requires start lang_item</code>。<code>start</code> language item 定義了底層的入口點，而它稍後會呼叫 <code>main</code> 函式。所以此錯誤與較新工具鏈上的 <code>using `fn main` requires the standard library</code> 錯誤成因相同。</p>
+</div>
+<h2 id="ru-kou-dian-entry-point"><a class="zola-anchor" href="#ru-kou-dian-entry-point" aria-label="Anchor link for: ru-kou-dian-entry-point">🔗</a>入口點（Entry Point）</h2>
+<p>我們可能會認為 <code>main</code> 函式是程式的「入口點（entry point）」，也就是執行程式時首先被呼叫的函式。但是大多數語言都擁有一個<a rel="external" href="https://en.wikipedia.org/wiki/Runtime_system">執行時系統</a>，它通常負責垃圾回收（garbage collection）像是 Java 或軟體執行緒（software threads）像是 Go 的 goroutines。這個執行時系統需要在 main 函式前啟動，因為它需要讓先進行初始化。</p>
 <p>在一個典型使用標準函式庫的 Rust 程式中，程式運行是從一個名為 <code>crt0</code>（“C runtime zero”）的執行時函式庫開始的，它會設置 C 程式的執行環境。這包含建立堆疊和可執行程式參數的傳入。在這之後，這個執行時函式庫會呼叫 <a rel="external" href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">Rust 的執行時入口點</a>，而此處就是由 <code>start</code> language item 標記。 Rust 只有一個非常小的執行時系統，負責處理一些小事情，像是堆疊溢位或是印出 panic 時回溯的訊息。再來執行時系統最終才會呼叫 main 函式。</p>
-<p>我們的獨立式可執行檔並沒有辦法存取 Rust 執行時系統或 <code>crt0</code>，所以我們需要定義自己的入口點。實作 <code>start</code> language item 並沒有用，因為這樣還是會需要 <code>crt0</code>。所以我們要做的是直接覆寫 <code>crt0</code> 的入口點。</p>
+<p>我們的獨立式可執行檔並沒有辦法存取 Rust 執行時系統或 <code>crt0</code>，所以我們需要定義自己的入口點，而不能只定義一個 <code>main</code> 函式。</p>
 <h3 id="zhong-xie-ru-kou-dian"><a class="zola-anchor" href="#zhong-xie-ru-kou-dian" aria-label="Anchor link for: zhong-xie-ru-kou-dian">🔗</a>重寫入口點</h3>
 <p>為了告訴 Rust 編譯器我們不要使用一般的入口點呼叫順序，我們先加上 <code>#![no_main]</code> 屬性。</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#![no_std]</span></span>

@@ -67,14 +67,14 @@
             <a href="#implementacion-de-panic">Implementación de Panic</a>
             
         </li><li>
-            <a href="#el-elemento-de-lenguaje-eh-personality">El Elemento de Lenguaje eh_personality</a>
+            <a href="#unwinding">Unwinding</a>
             <ol>
                 <li>
                     <a href="#deshabilitando-el-unwinding">Deshabilitando el Unwinding</a>
                 </li>
             </ol>
         </li><li>
-            <a href="#el-atributo-start">El Atributo start</a>
+            <a href="#punto-de-entrada">Punto de Entrada</a>
             <ol>
                 <li>
                     <a href="#sobrescribiendo-el-punto-de-entrada">Sobrescribiendo el Punto de Entrada</a>
@@ -149,14 +149,14 @@
                 <a href="#implementacion-de-panic">Implementación de Panic</a>
                 
             </li><li>
-                <a href="#el-elemento-de-lenguaje-eh-personality">El Elemento de Lenguaje eh_personality</a>
+                <a href="#unwinding">Unwinding</a>
                 <ul>
                     <li>
                         <a href="#deshabilitando-el-unwinding">Deshabilitando el Unwinding</a>
                     </li>
                 </ul>
             </li><li>
-                <a href="#el-atributo-start">El Atributo start</a>
+                <a href="#punto-de-entrada">Punto de Entrada</a>
                 <ul>
                     <li>
                         <a href="#sobrescribiendo-el-punto-de-entrada">Sobrescribiendo el Punto de Entrada</a>
@@ -220,8 +220,11 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>() {}</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
 <span class="giallo-l"><span>error: `#[panic_handler]` function required, but not found</span></span>
-<span class="giallo-l"><span>error: language item required, but not found: `eh_personality`</span></span></code></pre>
-<p>Ahora el compilador indica que falta una función <code>#[panic_handler]</code> y un <em>elemento de lenguaje</em> (<em>language item</em>).</p>
+<span class="giallo-l"><span>error: unwinding panics are not supported without std</span></span></code></pre>
+<p>Ahora el compilador indica que falta una función <code>#[panic_handler]</code> y se queja de que el <em>unwinding</em> no es posible sin la biblioteca estándar. Examinaremos ambos errores en las siguientes secciones.</p>
+<div class="note">
+<p>En versiones antiguas de las toolchains de Rust, el segundo error dice en su lugar <code>language item required, but not found: eh_personality</code>, que tiene la misma causa que el error <code>unwinding panics are not supported without std</code>.</p>
+</div>
 <h2 id="implementacion-de-panic"><a class="zola-anchor" href="#implementacion-de-panic" aria-label="Anchor link for: implementacion-de-panic">🔗</a>Implementación de Panic</h2>
 <p>El atributo <code>panic_handler</code> define la función que el compilador invoca cuando ocurre un <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a>. La biblioteca estándar proporciona su propia función de panico, pero en un entorno <code>no_std</code> debemos definirla nosotros mismos:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en main.rs</span></span>
@@ -234,10 +237,11 @@
 <span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p>El <a rel="external" href="https://doc.rust-lang.org/nightly/core/panic/struct.PanicInfo.html">parámetro <code>PanicInfo</code></a> contiene el archivo y la línea donde ocurrió el panic, así como el mensaje opcional del panic. La función no debería retornar nunca, por lo que se marca como una <a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/functions.html#diverging-functions">función divergente</a> devolviendo el <a rel="external" href="https://doc.rust-lang.org/nightly/std/primitive.never.html">tipo “never”</a> <code>!</code>. Por ahora, no hay mucho que podamos hacer en esta función, así que simplemente entramos en un bucle infinito.</p>
-<h2 id="el-elemento-de-lenguaje-eh-personality"><a class="zola-anchor" href="#el-elemento-de-lenguaje-eh-personality" aria-label="Anchor link for: el-elemento-de-lenguaje-eh-personality">🔗</a>El Elemento de Lenguaje <code>eh_personality</code></h2>
-<p>Los elementos de lenguaje son elementos especiales (traits, funciones, tipos, etc.) que el compilador requiere internamente. Por ejemplo, el trait <a rel="external" href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><code>Copy</code></a> es un elemento de lenguaje que indica al compilador qué tipos tienen <a rel="external" href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><em>semántica de copia</em></a>. Si observamos su <a rel="external" href="https://github.com/rust-lang/rust/blob/485397e49a02a3b7ff77c17e4a3f16c653925cb3/src/libcore/marker.rs#L296-L299">implementación</a>, veremos que tiene el atributo especial <code>#[lang = "copy"]</code>, que lo define como un elemento de lenguaje.</p>
-<p>Aunque es posible proporcionar implementaciones personalizadas de elementos de lenguaje, esto debería hacerse solo como último recurso. La razón es que los elementos de lenguaje son detalles de implementación altamente inestables y ni siquiera están verificados por tipos (el compilador no comprueba si una función tiene los tipos de argumento correctos). Afortunadamente, hay una forma más estable de solucionar el error relacionado con el elemento de lenguaje mencionado.</p>
-<p>El <a rel="external" href="https://github.com/rust-lang/rust/blob/edb368491551a77d77a48446d4ee88b35490c565/src/libpanic_unwind/gcc.rs#L11-L45">elemento de lenguaje <code>eh_personality</code></a> marca una función utilizada para implementar el <a rel="external" href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">desenrollado de pila</a>. Por defecto, Rust utiliza unwinding para ejecutar los destructores de todas las variables de pila activas en caso de un <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">pánico</a>. Esto asegura que toda la memoria utilizada sea liberada y permite que el hilo principal capture el pánico y continúe ejecutándose. Sin embargo, el unwinding es un proceso complicado y requiere algunas bibliotecas específicas del sistema operativo (por ejemplo, <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> en Linux o <a rel="external" href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">manejadores estructurados de excepciones</a> en Windows), por lo que no queremos usarlo en nuestro sistema operativo.</p>
+<h2 id="unwinding"><a class="zola-anchor" href="#unwinding" aria-label="Anchor link for: unwinding">🔗</a>Unwinding</h2>
+<p>Rust utiliza el <a rel="external" href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">desenrollado de pila</a> por defecto para ejecutar los destructores de todas las variables de pila activas en caso de un <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">pánico</a>. Esto asegura que toda la memoria utilizada sea liberada y permite que el hilo principal capture el pánico y continúe su ejecución. Sin embargo, el unwinding es un proceso complicado y requiere algunas bibliotecas específicas del sistema operativo (por ejemplo, <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> en Linux o <a rel="external" href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">manejadores estructurados de excepciones</a> en Windows), que requieren la biblioteca estándar de Rust. La consecuencia es que no podemos usar unwinding para nuestro kernel de sistema operativo <code>no_std</code>.</p>
+<div class="note">
+<p>El error <code>language item required, but not found: eh_personality</code> en versiones antiguas de las toolchains de Rust también apunta al unwinding. El <a rel="external" href="https://github.com/rust-lang/rust/blob/edb368491551a77d77a48446d4ee88b35490c565/src/libpanic_unwind/gcc.rs#L11-L45">elemento de lenguaje <code>eh_personality</code></a> marca la función que debe usarse para implementar el desenrollado de pila. Los elementos de lenguaje son elementos especiales (traits, funciones, tipos, etc.) que el compilador requiere internamente. En versiones más recientes de las toolchains de Rust, el mensaje de error se mejoró para evitar mencionar este detalle de implementación.</p>
+</div>
 <h3 id="deshabilitando-el-unwinding"><a class="zola-anchor" href="#deshabilitando-el-unwinding" aria-label="Anchor link for: deshabilitando-el-unwinding">🔗</a>Deshabilitando el Unwinding</h3>
 <p>Existen otros casos de uso en los que el  no es deseable, por lo que Rust proporciona una opción para <a rel="external" href="https://github.com/rust-lang/rust/pull/32900">abortar en caso de pánico</a>. Esto desactiva la generación de información de símbolos de unwinding y, por lo tanto, reduce considerablemente el tamaño del binario. Hay múltiples lugares donde podemos deshabilitar el unwinding. La forma más sencilla es agregar las siguientes líneas a nuestro archivo <code>Cargo.toml</code>:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[profile.dev]</span></span>
@@ -245,15 +249,16 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[profile.release]</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">panic</span><span> =</span><span style="color: #CE9178;"> &quot;abort&quot;</span></span></code></pre>
-<p>Esto establece la estrategia de pánico en <code>abort</code> tanto para el perfil <code>dev</code> (utilizado en <code>cargo build</code>) como para el perfil <code>release</code> (utilizado en <code>cargo build --release</code>). Ahora, el elemento de lenguaje <code>eh_personality</code> ya no debería ser necesario.</p>
-<p>Ahora hemos solucionado ambos errores anteriores. Sin embargo, si intentamos compilarlo ahora, ocurre otro error:</p>
+<p>Esto establece la estrategia de pánico en <code>abort</code> tanto para el perfil <code>dev</code> (utilizado en <code>cargo build</code>) como para el perfil <code>release</code> (utilizado en <code>cargo build --release</code>). Ahora, el error <code>unwinding panics are not supported without std</code> debería estar solucionado.</p>
+<p>Si intentamos compilarlo ahora, ocurre un nuevo error:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
-<span class="giallo-l"><span>error: requires `start` lang_item</span></span></code></pre>
-<p>Nuestro programa carece del elemento de lenguaje <code>start</code>, que define el punto de entrada.</p>
-<h2 id="el-atributo-start"><a class="zola-anchor" href="#el-atributo-start" aria-label="Anchor link for: el-atributo-start">🔗</a>El Atributo <code>start</code></h2>
-<p>Podría pensarse que la función <code>main</code> es la primera que se ejecuta al correr un programa. Sin embargo, la mayoría de los lenguajes tienen un <a rel="external" href="https://en.wikipedia.org/wiki/Runtime_system">sistema de tiempo de ejecución</a>, encargado de tareas como la recolección de basura (por ejemplo, en Java) o los hilos de software (por ejemplo, goroutines en Go). Este sistema de tiempo de ejecución necesita ejecutarse antes de <code>main</code>, ya que debe inicializarse.</p>
+<span class="giallo-l"><span>error: using `fn main` requires the standard library</span></span></code></pre><div class="note">
+<p>En versiones antiguas de las toolchains de Rust, esto se reporta como <code>error: requires start lang_item</code> en su lugar. El elemento de lenguaje <code>start</code> define el punto de entrada subyacente que luego llama a la función <code>main</code>. Por lo tanto, este error tiene la misma causa que el error <code>using `fn main` requires the standard library</code> en versiones más recientes de las toolchains.</p>
+</div>
+<h2 id="punto-de-entrada"><a class="zola-anchor" href="#punto-de-entrada" aria-label="Anchor link for: punto-de-entrada">🔗</a>Punto de Entrada</h2>
+<p>Podría pensarse que la función <code>main</code> es el “punto de entrada” del programa, es decir, la primera función que se ejecuta al correr un programa. Sin embargo, la mayoría de los lenguajes tienen un <a rel="external" href="https://en.wikipedia.org/wiki/Runtime_system">sistema de tiempo de ejecución</a>, encargado de tareas como la recolección de basura (por ejemplo, en Java) o los hilos de software (por ejemplo, goroutines en Go). Este sistema de tiempo de ejecución necesita ejecutarse antes de <code>main</code>, ya que debe inicializarse.</p>
 <p>En un binario típico de Rust que enlaza con la biblioteca estándar, la ejecución comienza en una biblioteca de tiempo de ejecución de C llamada <code>crt0</code> (“C runtime zero”), que configura el entorno para una aplicación en C. Esto incluye la creación de una pila y la colocación de los argumentos en los registros adecuados. Luego, el tiempo de ejecución de C invoca el <a rel="external" href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">punto de entrada del tiempo de ejecución de Rust</a>, que está marcado por el elemento de lenguaje <code>start</code>. Rust tiene un tiempo de ejecución muy minimalista, que se encarga de tareas menores como configurar los guardias de desbordamiento de pila o imprimir un backtrace en caso de pánico. Finalmente, el tiempo de ejecución llama a la función <code>main</code>.</p>
-<p>Nuestro ejecutable autónomo no tiene acceso al tiempo de ejecución de Rust ni a <code>crt0</code>, por lo que necesitamos definir nuestro propio punto de entrada. Implementar el elemento de lenguaje <code>start</code> no ayudaría, ya que aún requeriría <code>crt0</code>. En su lugar, debemos sobrescribir directamente el punto de entrada de <code>crt0</code>.</p>
+<p>Nuestro ejecutable autónomo no tiene acceso al tiempo de ejecución de Rust ni a <code>crt0</code>, por lo que necesitamos definir nuestro propio punto de entrada y no podemos simplemente definir una función <code>main</code>.</p>
 <h3 id="sobrescribiendo-el-punto-de-entrada"><a class="zola-anchor" href="#sobrescribiendo-el-punto-de-entrada" aria-label="Anchor link for: sobrescribiendo-el-punto-de-entrada">🔗</a>Sobrescribiendo el Punto de Entrada</h3>
 <p>Para indicar al compilador de Rust que no queremos usar la cadena normal de puntos de entrada, agregamos el atributo <code>#![no_main]</code>:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#![no_std]</span></span>

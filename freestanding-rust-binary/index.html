@@ -67,14 +67,14 @@
             <a href="#panic-implementation">Panic Implementation</a>
             
         </li><li>
-            <a href="#the-eh-personality-language-item">The eh_personality Language Item</a>
+            <a href="#unwinding">Unwinding</a>
             <ol>
                 <li>
                     <a href="#disabling-unwinding">Disabling Unwinding</a>
                 </li>
             </ol>
         </li><li>
-            <a href="#the-start-attribute">The start attribute</a>
+            <a href="#entry-point">Entry Point</a>
             <ol>
                 <li>
                     <a href="#overwriting-the-entry-point">Overwriting the Entry Point</a>
@@ -141,14 +141,14 @@
                 <a href="#panic-implementation">Panic Implementation</a>
                 
             </li><li>
-                <a href="#the-eh-personality-language-item">The eh_personality Language Item</a>
+                <a href="#unwinding">Unwinding</a>
                 <ul>
                     <li>
                         <a href="#disabling-unwinding">Disabling Unwinding</a>
                     </li>
                 </ul>
             </li><li>
-                <a href="#the-start-attribute">The start attribute</a>
+                <a href="#entry-point">Entry Point</a>
                 <ul>
                     <li>
                         <a href="#overwriting-the-entry-point">Overwriting the Entry Point</a>
@@ -219,8 +219,11 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>() {}</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
 <span class="giallo-l"><span>error: `#[panic_handler]` function required, but not found</span></span>
-<span class="giallo-l"><span>error: language item required, but not found: `eh_personality`</span></span></code></pre>
-<p>Now the compiler is missing a <code>#[panic_handler]</code> function and a <em>language item</em>.</p>
+<span class="giallo-l"><span>error: unwinding panics are not supported without std</span></span></code></pre>
+<p>Now the compiler is missing a <code>#[panic_handler]</code> function and complains that <em>unwinding</em> is not possible without the standard library. We look at both errors in the following sections.</p>
+<div class="note">
+<p>On older Rust toolchains, the second error instead reads <code>language item required, but not found: eh_personality</code>, which has the same cause as the <code>unwinding panics are not supported without std</code> error.</p>
+</div>
 <h2 id="panic-implementation"><a class="zola-anchor" href="#panic-implementation" aria-label="Anchor link for: panic-implementation">🔗</a>Panic Implementation</h2>
 <p>The <code>panic_handler</code> attribute defines the function that the compiler should invoke when a <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a> occurs. The standard library provides its own panic handler function, but in a <code>no_std</code> environment we need to define it ourselves:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in main.rs</span></span>
@@ -233,10 +236,11 @@
 <span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p>The <a rel="external" href="https://doc.rust-lang.org/nightly/core/panic/struct.PanicInfo.html"><code>PanicInfo</code> parameter</a> contains the file and line where the panic happened and the optional panic message. The function should never return, so it is marked as a <a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/functions.html#diverging-functions">diverging function</a> by returning the <a rel="external" href="https://doc.rust-lang.org/nightly/std/primitive.never.html">“never” type</a> <code>!</code>. There is not much we can do in this function for now, so we just loop indefinitely.</p>
-<h2 id="the-eh-personality-language-item"><a class="zola-anchor" href="#the-eh-personality-language-item" aria-label="Anchor link for: the-eh-personality-language-item">🔗</a>The <code>eh_personality</code> Language Item</h2>
-<p>Language items are special items (traits, functions, types, etc.) that are required internally by the compiler. For example, the <a rel="external" href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><code>Copy</code></a> trait is a language item that tells the compiler which types have <a rel="external" href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><em>copy semantics</em></a>. When we look at the <a rel="external" href="https://github.com/rust-lang/rust/blob/485397e49a02a3b7ff77c17e4a3f16c653925cb3/src/libcore/marker.rs#L296-L299">implementation</a>, we see it has the special <code>#[lang = "copy"]</code> attribute that defines it as a language item.</p>
-<p>While providing custom implementations of language items is possible, it should only be done as a last resort. The reason is that language items are highly unstable implementation details and not even type checked (so the compiler doesn’t even check if a function has the right argument types). Fortunately, there is a more stable way to fix the above language item error.</p>
-<p>The <a rel="external" href="https://github.com/rust-lang/rust/blob/edb368491551a77d77a48446d4ee88b35490c565/src/libpanic_unwind/gcc.rs#L11-L45"><code>eh_personality</code> language item</a> marks a function that is used for implementing <a rel="external" href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">stack unwinding</a>. By default, Rust uses unwinding to run the destructors of all live stack variables in case of a <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a>. This ensures that all used memory is freed and allows the parent thread to catch the panic and continue execution. Unwinding, however, is a complicated process and requires some OS-specific libraries (e.g. <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> on Linux or <a rel="external" href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">structured exception handling</a> on Windows), so we don’t want to use it for our operating system.</p>
+<h2 id="unwinding"><a class="zola-anchor" href="#unwinding" aria-label="Anchor link for: unwinding">🔗</a>Unwinding</h2>
+<p>Rust uses <a rel="external" href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">stack unwinding</a> by default to run the destructors of all live stack variables in case of a <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a>. This ensures that all used memory is freed and allows the parent thread to catch the panic and continue execution. Unwinding, however, is a complicated process and requires some OS-specific libraries (e.g. <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> on Linux or <a rel="external" href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">structured exception handling</a> on Windows), which require Rust’s standard library. The consequence is that we cannot use unwinding for our <code>no_std</code> operating system kernel.</p>
+<div class="note">
+<p>The <code>language item required, but not found: eh_personality</code> error on older Rust toolchains also points to unwinding. The <a rel="external" href="https://github.com/rust-lang/rust/blob/edb368491551a77d77a48446d4ee88b35490c565/src/libpanic_unwind/gcc.rs#L11-L45"><code>eh_personality</code> language item</a> marks the function that should be used for implementing stack unwinding. Language items are special items (traits, functions, types, etc.) that are required internally by the compiler. On newer Rust toolchains, the error message was improved to avoid mentioning this implementation detail.</p>
+</div>
 <h3 id="disabling-unwinding"><a class="zola-anchor" href="#disabling-unwinding" aria-label="Anchor link for: disabling-unwinding">🔗</a>Disabling Unwinding</h3>
 <p>There are other use cases as well for which unwinding is undesirable, so Rust provides an option to <a rel="external" href="https://github.com/rust-lang/rust/pull/32900">abort on panic</a> instead. This disables the generation of unwinding symbol information and thus considerably reduces binary size. There are multiple places where we can disable unwinding. The easiest way is to add the following lines to our <code>Cargo.toml</code>:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[profile.dev]</span></span>
@@ -244,15 +248,16 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[profile.release]</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">panic</span><span> =</span><span style="color: #CE9178;"> &quot;abort&quot;</span></span></code></pre>
-<p>This sets the panic strategy to <code>abort</code> for both the <code>dev</code> profile (used for <code>cargo build</code>) and the <code>release</code> profile (used for <code>cargo build --release</code>). Now the <code>eh_personality</code> language item should no longer be required.</p>
-<p>Now we fixed both of the above errors. However, if we try to compile it now, another error occurs:</p>
+<p>This sets the panic strategy to <code>abort</code> for both the <code>dev</code> profile (used for <code>cargo build</code>) and the <code>release</code> profile (used for <code>cargo build --release</code>). Now the <code>unwinding panics are not supported without std</code> error should be fixed.</p>
+<p>If we try to compile it now, a new error occurs:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
-<span class="giallo-l"><span>error: requires `start` lang_item</span></span></code></pre>
-<p>Our program is missing the <code>start</code> language item, which defines the entry point.</p>
-<h2 id="the-start-attribute"><a class="zola-anchor" href="#the-start-attribute" aria-label="Anchor link for: the-start-attribute">🔗</a>The <code>start</code> attribute</h2>
-<p>One might think that the <code>main</code> function is the first function called when you run a program. However, most languages have a <a rel="external" href="https://en.wikipedia.org/wiki/Runtime_system">runtime system</a>, which is responsible for things such as garbage collection (e.g. in Java) or software threads (e.g. goroutines in Go). This runtime needs to be called before <code>main</code>, since it needs to initialize itself.</p>
+<span class="giallo-l"><span>error: using `fn main` requires the standard library</span></span></code></pre><div class="note">
+<p>Older Rust toolchains report this as <code>error: requires start lang_item</code> instead. The <code>start</code> language item defines the underlying entry point that calls into the <code>main</code> function later. So this error has the same cause as the <code>using `fn main` requires the standard library</code> error on newer toolchains.</p>
+</div>
+<h2 id="entry-point"><a class="zola-anchor" href="#entry-point" aria-label="Anchor link for: entry-point">🔗</a>Entry Point</h2>
+<p>One might think that the <code>main</code> function is the “entry point” of the program, i.e. the first function called when you run a program. However, most languages have a <a rel="external" href="https://en.wikipedia.org/wiki/Runtime_system">runtime system</a>, which is responsible for things such as garbage collection (e.g. in Java) or software threads (e.g. goroutines in Go). This runtime needs to be called before <code>main</code>, since it needs to initialize itself.</p>
 <p>In a typical Rust binary that links the standard library, execution starts in a C runtime library called <code>crt0</code> (“C runtime zero”), which sets up the environment for a C application. This includes creating a stack and placing the arguments in the right registers. The C runtime then invokes the <a rel="external" href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">entry point of the Rust runtime</a>, which is marked by the <code>start</code> language item. Rust only has a very minimal runtime, which takes care of some small things such as setting up stack overflow guards or printing a backtrace on panic. The runtime then finally calls the <code>main</code> function.</p>
-<p>Our freestanding executable does not have access to the Rust runtime and <code>crt0</code>, so we need to define our own entry point. Implementing the <code>start</code> language item wouldn’t help, since it would still require <code>crt0</code>. Instead, we need to overwrite the <code>crt0</code> entry point directly.</p>
+<p>Our freestanding executable does not have access to the Rust runtime and <code>crt0</code>, so we need to define our own entry point and cannot just define a <code>main</code> function.</p>
 <h3 id="overwriting-the-entry-point"><a class="zola-anchor" href="#overwriting-the-entry-point" aria-label="Anchor link for: overwriting-the-entry-point">🔗</a>Overwriting the Entry Point</h3>
 <p>To tell the Rust compiler that we don’t want to use the normal entry point chain, we add the <code>#![no_main]</code> attribute.</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#![no_std]</span></span>

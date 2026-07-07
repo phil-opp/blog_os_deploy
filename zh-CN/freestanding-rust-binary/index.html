@@ -67,14 +67,14 @@
             <a href="#shi-xian-panic-chu-li-han-shu">实现 panic 处理函数</a>
             
         </li><li>
-            <a href="#eh-personality-yu-yan-xiang">eh_personality 语言项</a>
+            <a href="#zhan-zhan-kai">栈展开</a>
             <ol>
                 <li>
                     <a href="#jin-yong-zhan-zhan-kai">禁用栈展开</a>
                 </li>
             </ol>
         </li><li>
-            <a href="#start-yu-yan-xiang">start 语言项</a>
+            <a href="#ru-kou-dian">入口点</a>
             <ol>
                 <li>
                     <a href="#zhong-xie-ru-kou-dian">重写入口点</a>
@@ -156,14 +156,14 @@
                 <a href="#shi-xian-panic-chu-li-han-shu">实现 panic 处理函数</a>
                 
             </li><li>
-                <a href="#eh-personality-yu-yan-xiang">eh_personality 语言项</a>
+                <a href="#zhan-zhan-kai">栈展开</a>
                 <ul>
                     <li>
                         <a href="#jin-yong-zhan-zhan-kai">禁用栈展开</a>
                     </li>
                 </ul>
             </li><li>
-                <a href="#start-yu-yan-xiang">start 语言项</a>
+                <a href="#ru-kou-dian">入口点</a>
                 <ul>
                     <li>
                         <a href="#zhong-xie-ru-kou-dian">重写入口点</a>
@@ -234,8 +234,11 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>() {}</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
 <span class="giallo-l"><span>error: `#[panic_handler]` function required, but not found</span></span>
-<span class="giallo-l"><span>error: language item required, but not found: `eh_personality`</span></span></code></pre>
-<p>现在我们发现，编译器缺少一个 <code>#[panic_handler]</code> 函数和一个<strong>语言项</strong>（language item）。</p>
+<span class="giallo-l"><span>error: unwinding panics are not supported without std</span></span></code></pre>
+<p>现在编译器缺少一个 <code>#[panic_handler]</code> 函数，并且报告在没有标准库的情况下无法进行<strong>栈展开</strong>（unwinding）。我们将在下面的小节中分别讨论这两个错误。</p>
+<div class="note">
+<p>在较旧的 Rust 工具链上，第二个错误显示为 <code>language item required, but not found: eh_personality</code>，它与 <code>unwinding panics are not supported without std</code> 错误的原因相同。</p>
+</div>
 <h2 id="shi-xian-panic-chu-li-han-shu"><a class="zola-anchor" href="#shi-xian-panic-chu-li-han-shu" aria-label="Anchor link for: shi-xian-panic-chu-li-han-shu">🔗</a>实现 panic 处理函数</h2>
 <p><code>panic_handler</code> 属性定义了一个函数，它会在一个 panic 发生时被调用。标准库中提供了自己的 panic 处理函数，但在 <code>no_std</code> 环境中，我们需要定义一个自己的 panic 处理函数：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in main.rs</span></span>
@@ -248,10 +251,11 @@
 <span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p>类型为 <a rel="external" href="https://doc.rust-lang.org/nightly/core/panic/struct.PanicInfo.html">PanicInfo</a> 的参数包含了 panic 发生的文件名、代码行数和可选的错误信息。这个函数从不返回，所以他被标记为<strong>发散函数</strong>（<a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/functions.html#diverging-functions">diverging function</a>）。发散函数的返回类型称作 <strong>Never 类型</strong>（<a rel="external" href="https://doc.rust-lang.org/nightly/std/primitive.never.html">“never” type</a>），记为<code>!</code>。对这个函数，我们目前能做的很少，所以我们只需编写一个无限循环 <code>loop {}</code>。</p>
-<h2 id="eh-personality-yu-yan-xiang"><a class="zola-anchor" href="#eh-personality-yu-yan-xiang" aria-label="Anchor link for: eh-personality-yu-yan-xiang">🔗</a>eh_personality 语言项</h2>
-<p>语言项是一些编译器需求的特殊函数或类型。举例来说，Rust 的 <a rel="external" href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html">Copy</a> trait 是一个这样的语言项，告诉编译器哪些类型需要遵循<strong>复制语义</strong>（<a rel="external" href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html">copy semantics</a>）——当我们查找 <code>Copy</code> trait 的<a rel="external" href="https://github.com/rust-lang/rust/blob/485397e49a02a3b7ff77c17e4a3f16c653925cb3/src/libcore/marker.rs#L296-L299">实现</a>时，我们会发现，一个特殊的 <code>#[lang = "copy"]</code> 属性将它定义为了一个语言项，达到与编译器联系的目的。</p>
-<p>我们可以自己实现语言项，但这是下下策：目前来看，语言项是高度不稳定的语言细节实现，它们不会经过编译期类型检查（所以编译器甚至不确保它们的参数类型是否正确）。幸运的是，我们有更稳定的方式，来修复上面的语言项错误。</p>
-<p><code>eh_personality</code> 语言项标记的函数，将被用于实现<strong>栈展开</strong>（<a rel="external" href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">stack unwinding</a>）。在使用标准库的情况下，当 panic 发生时，Rust 将使用栈展开，来运行在栈上所有活跃的变量的<strong>析构函数</strong>（destructor）——这确保了所有使用的内存都被释放，允许调用程序的<strong>父进程</strong>（parent thread）捕获 panic，处理并继续运行。但是，栈展开是一个复杂的过程，如 Linux 的 <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> 或 Windows 的<strong>结构化异常处理</strong>（<a rel="external" href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">structured exception handling, SEH</a>），通常需要依赖于操作系统的库；所以我们不在自己编写的操作系统中使用它。</p>
+<h2 id="zhan-zhan-kai"><a class="zola-anchor" href="#zhan-zhan-kai" aria-label="Anchor link for: zhan-zhan-kai">🔗</a>栈展开</h2>
+<p>在默认情况下，当 panic 发生时，Rust 会使用<strong>栈展开</strong>（<a rel="external" href="https://www.bogotobogo.com/cplusplus/stackunwinding.php">stack unwinding</a>）来运行栈上所有活跃变量的<strong>析构函数</strong>（destructor）。这确保了所有使用的内存都被释放，并允许调用程序的<strong>父进程</strong>（parent thread）捕获 panic 并继续运行。但是，栈展开是一个复杂的过程，通常需要一些依赖于操作系统的库（如 Linux 的 <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> 或 Windows 的<strong>结构化异常处理</strong>（<a rel="external" href="https://docs.microsoft.com/en-us/windows/win32/debug/structured-exception-handling">structured exception handling, SEH</a>)），而这些库都需要 Rust 的标准库。因此，我们无法在自己的 <code>no_std</code> 操作系统内核中使用栈展开。</p>
+<div class="note">
+<p>在较旧的 Rust 工具链上，<code>language item required, but not found: eh_personality</code> 错误同样指向栈展开。<code>eh_personality</code> 语言项标记的函数将被用于实现栈展开。语言项是一些编译器内部需求的特殊项（trait、函数、类型等）。在较新的 Rust 工具链上，该错误信息经过改进，不再提及这一实现细节。</p>
+</div>
 <h3 id="jin-yong-zhan-zhan-kai"><a class="zola-anchor" href="#jin-yong-zhan-zhan-kai" aria-label="Anchor link for: jin-yong-zhan-zhan-kai">🔗</a>禁用栈展开</h3>
 <p>在其它一些情况下，栈展开并不是迫切需求的功能；因此，Rust 提供了<strong>在 panic 时中止</strong>（<a rel="external" href="https://github.com/rust-lang/rust/pull/32900">abort on panic</a>）的选项。这个选项能禁用栈展开相关的标志信息生成，也因此能缩小生成的二进制程序的长度。有许多方式能打开这个选项，最简单的方式是把下面的几行设置代码加入我们的 <code>Cargo.toml</code>：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[profile.dev]</span></span>
@@ -259,14 +263,16 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[profile.release]</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">panic</span><span> =</span><span style="color: #CE9178;"> &quot;abort&quot;</span></span></code></pre>
-<p>这些选项能将 <strong>dev 配置</strong>（dev profile）和 <strong>release 配置</strong>（release profile）的 panic 策略设为 <code>abort</code>。<code>dev</code> 配置适用于 <code>cargo build</code>，而 <code>release</code> 配置适用于 <code>cargo build --release</code>。现在编译器应该不再要求我们提供 <code>eh_personality</code> 语言项实现。</p>
-<p>现在我们已经修复了出现的两个错误，可以开始编译了。然而，尝试编译运行后，一个新的错误出现了：</p>
+<p>这些选项能将 <strong>dev 配置</strong>（dev profile）和 <strong>release 配置</strong>（release profile）的 panic 策略设为 <code>abort</code>。<code>dev</code> 配置适用于 <code>cargo build</code>，而 <code>release</code> 配置适用于 <code>cargo build --release</code>。现在 <code>unwinding panics are not supported without std</code> 错误应该被修复了。</p>
+<p>如果我们现在尝试编译，会出现一个新的错误：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="shellscript"><span class="giallo-l"><span>&gt; cargo build</span></span>
-<span class="giallo-l"><span style="color: #DCDCAA;">error:</span><span style="color: #CE9178;"> requires `</span><span style="color: #DCDCAA;">start</span><span style="color: #CE9178;">`</span><span style="color: #DCDCAA;"> lang_item</span></span></code></pre><h2 id="start-yu-yan-xiang"><a class="zola-anchor" href="#start-yu-yan-xiang" aria-label="Anchor link for: start-yu-yan-xiang">🔗</a>start 语言项</h2>
-<p>这里，我们的程序遗失了 <code>start</code> 语言项，它将定义一个程序的<strong>入口点</strong>（entry point）。</p>
-<p>我们通常会认为，当运行一个程序时，首先被调用的是 <code>main</code> 函数。但是，大多数语言都拥有一个<strong>运行时系统</strong>（<a rel="external" href="https://en.wikipedia.org/wiki/Runtime_system">runtime system</a>），它通常为<strong>垃圾回收</strong>（garbage collection）或<strong>绿色线程</strong>（software threads，或 green threads）服务，如 Java 的 GC 或 Go 语言的协程（goroutine）；这个运行时系统需要在 main 函数前启动，因为它需要让程序初始化。</p>
+<span class="giallo-l"><span style="color: #DCDCAA;">error:</span><span style="color: #CE9178;"> using `</span><span style="color: #DCDCAA;">fn</span><span style="color: #CE9178;"> main`</span><span style="color: #DCDCAA;"> requires</span><span style="color: #CE9178;"> the standard library</span></span></code></pre><div class="note">
+<p>在较旧的 Rust 工具链上，该错误显示为 <code>error: requires start lang_item</code>。<code>start</code> 语言项定义了底层的入口点，它随后会调用 <code>main</code> 函数。因此，这个错误与较新工具链上的 <code>using `fn main` requires the standard library</code> 错误原因相同。</p>
+</div>
+<h2 id="ru-kou-dian"><a class="zola-anchor" href="#ru-kou-dian" aria-label="Anchor link for: ru-kou-dian">🔗</a>入口点</h2>
+<p>我们可能会认为 <code>main</code> 函数是程序的“入口点”（entry point），即运行程序时第一个被调用的函数。但是，大多数语言都拥有一个<strong>运行时系统</strong>（<a rel="external" href="https://en.wikipedia.org/wiki/Runtime_system">runtime system</a>），它通常为<strong>垃圾回收</strong>（garbage collection）或<strong>绿色线程</strong>（software threads，或 green threads）服务，如 Java 的 GC 或 Go 语言的协程（goroutine）；这个运行时系统需要在 main 函数前启动，因为它需要让程序初始化。</p>
 <p>在一个典型的使用标准库的 Rust 程序中，程序运行是从一个名为 <code>crt0</code> 的运行时库开始的。<code>crt0</code> 意为 C runtime zero，它能建立一个适合运行 C 语言程序的环境，这包含了栈的创建和可执行程序参数的传入。在这之后，这个运行时库会调用 <a rel="external" href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">Rust 的运行时入口点</a>，这个入口点被称作 <strong>start语言项</strong>（“start” language item）。Rust 只拥有一个极小的运行时，它被设计为拥有较少的功能，如爆栈检测和打印<strong>栈轨迹</strong>（stack trace）。这之后，这个运行时将会调用 main 函数。</p>
-<p>我们的独立式可执行程序并不能访问 Rust 运行时或 <code>crt0</code> 库，所以我们需要定义自己的入口点。只实现一个 <code>start</code> 语言项并不能帮助我们，因为这之后程序依然要求 <code>crt0</code> 库。所以，我们要做的是，直接重写整个 <code>crt0</code> 库和它定义的入口点。</p>
+<p>我们的独立式可执行程序并不能访问 Rust 运行时和 <code>crt0</code> 库，所以我们需要定义自己的入口点，而不能仅仅定义一个 <code>main</code> 函数。</p>
 <h3 id="zhong-xie-ru-kou-dian"><a class="zola-anchor" href="#zhong-xie-ru-kou-dian" aria-label="Anchor link for: zhong-xie-ru-kou-dian">🔗</a>重写入口点</h3>
 <p>要告诉 Rust 编译器我们不使用预定义的入口点，我们可以添加 <code>#![no_main]</code> 属性。</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#![no_std]</span></span>

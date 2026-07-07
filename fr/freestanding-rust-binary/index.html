@@ -67,14 +67,14 @@
             <a href="#implementation-de-panic">Implémentation de Panic</a>
             
         </li><li>
-            <a href="#l-objet-de-langage-eh-personality">L’Objet de Langage eh_personality</a>
+            <a href="#deroulement">Déroulement</a>
             <ol>
                 <li>
                     <a href="#desactiver-le-deroulement">Désactiver le Déroulement</a>
                 </li>
             </ol>
         </li><li>
-            <a href="#l-attribut-start">L’attribut start</a>
+            <a href="#point-d-entree">Point d’Entrée</a>
             <ol>
                 <li>
                     <a href="#reecrire-le-point-d-entree">Réécrire le Point d’Entrée</a>
@@ -145,14 +145,14 @@
                 <a href="#implementation-de-panic">Implémentation de Panic</a>
                 
             </li><li>
-                <a href="#l-objet-de-langage-eh-personality">L’Objet de Langage eh_personality</a>
+                <a href="#deroulement">Déroulement</a>
                 <ul>
                     <li>
                         <a href="#desactiver-le-deroulement">Désactiver le Déroulement</a>
                     </li>
                 </ul>
             </li><li>
-                <a href="#l-attribut-start">L’attribut start</a>
+                <a href="#point-d-entree">Point d’Entrée</a>
                 <ul>
                     <li>
                         <a href="#reecrire-le-point-d-entree">Réécrire le Point d’Entrée</a>
@@ -216,8 +216,11 @@ Cet article décrit les étapes nécessaires pour créer un exécutable Rust aut
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>() {}</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
 <span class="giallo-l"><span>error: `#[panic_handler]` function required, but not found</span></span>
-<span class="giallo-l"><span>error: language item required, but not found: `eh_personality`</span></span></code></pre>
-<p>Maintenant le compilateur a besoin d’une fonction <code>#[panic_handler]</code> et d’un <em>objet de langage</em>.</p>
+<span class="giallo-l"><span>error: unwinding panics are not supported without std</span></span></code></pre>
+<p>Maintenant le compilateur a besoin d’une fonction <code>#[panic_handler]</code> et se plaint que le <em>déroulement</em> (unwinding) n’est pas possible sans la bibliothèque standard. Nous examinons ces deux erreurs dans les sections suivantes.</p>
+<div class="note">
+<p>Sur les anciennes chaînes d’outils Rust, la seconde erreur s’affiche plutôt sous la forme <code>language item required, but not found: eh_personality</code>, qui a la même cause que l’erreur <code>unwinding panics are not supported without std</code>.</p>
+</div>
 <h2 id="implementation-de-panic"><a class="zola-anchor" href="#implementation-de-panic" aria-label="Anchor link for: implementation-de-panic">🔗</a>Implémentation de Panic</h2>
 <p>L’attribut <code>panic_handler</code> définit la fonction que le compilateur doit appeler lorsqu’un <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a> arrive. La bibliothèque standard fournit sa propre fonction de gestion de panic mais dans un environnement <code>no_std</code>, nous avons besoin de le définir nous-mêmes :</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// dans main.rs</span></span>
@@ -230,10 +233,11 @@ Cet article décrit les étapes nécessaires pour créer un exécutable Rust aut
 <span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p>Le <a rel="external" href="https://doc.rust-lang.org/nightly/core/panic/struct.PanicInfo.html">paramètre <code>PanicInfo</code></a> contient le fichier et la ligne où le panic a eu lieu et le message optionnel de panic. La fonction ne devrait jamais retourner quoi que ce soit, elle est donc marquée comme <a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/functions.html#diverging-functions">fonction divergente</a> en retournant le <a rel="external" href="https://doc.rust-lang.org/nightly/std/primitive.never.html">type “never”</a> <code>!</code>. Nous ne pouvons pas faire grand chose dans cette fonction pour le moment, nous bouclons donc indéfiniment.</p>
-<h2 id="l-objet-de-langage-eh-personality"><a class="zola-anchor" href="#l-objet-de-langage-eh-personality" aria-label="Anchor link for: l-objet-de-langage-eh-personality">🔗</a>L’Objet de Langage <code>eh_personality</code></h2>
-<p>Les objets de langage sont des éléments spéciaux (traits, fonctions, types, etc.) qui sont requis par le compilateur de manière interne. Par exemple, le trait <a rel="external" href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html"><code>Copy</code></a> est un objet de langage qui indique au compilateur quels types possèdent la <a rel="external" href="https://doc.rust-lang.org/nightly/core/marker/trait.Copy.html">sémantique copy</a>. Quand nous regardons l’<a rel="external" href="https://github.com/rust-lang/rust/blob/485397e49a02a3b7ff77c17e4a3f16c653925cb3/src/libcore/marker.rs#L296-L299">implémentation</a> du code, nous pouvons voir qu’il possède l’attribut spécial <code>#[lang = copy]</code> qui le définit comme étant un objet de langage.</p>
-<p>Bien qu’il soit possible de fournir des implémentations personnalisées des objets de langage, cela ne devrait être fait qu’en dernier recours. La raison est que les objets de langages sont des détails d’implémentation très instables et qui ne sont même pas vérifiés au niveau de leur type (donc le compilateur ne vérifie même pas qu’une fonction possède les bons types d’arguments). Heureusement, il y a une manière plus robuste de corriger l’erreur d’objet de langage ci-dessus.</p>
-<p>L’<a rel="external" href="https://github.com/rust-lang/rust/blob/edb368491551a77d77a48446d4ee88b35490c565/src/libpanic_unwind/gcc.rs#L11-L45">objet de langage <code>eh_personality</code></a> marque une fonction qui est utilisée pour l’implémentation du <a rel="external" href="https://docs.microsoft.com/fr-fr/cpp/cpp/exceptions-and-stack-unwinding-in-cpp?view=msvc-160">déroulement de pile</a>. Par défaut, Rust utilise le déroulement de pile pour exécuter les destructeurs de chaque variable vivante sur la pile en cas de <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a>. Cela assure que toute la mémoire utilisée est libérée et permet au fil d’exécution parent d’attraper la panic et de continuer l’exécution. Le déroulement toutefois est un processus compliqué et nécessite des bibliothèques spécifiques à l’OS (<a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> pour Linux ou <a rel="external" href="https://docs.microsoft.com/fr-fr/windows/win32/debug/structured-exception-handling">gestion structurée des erreurs</a> pour Windows), nous ne voulons donc pas l’utiliser pour notre système d’exploitation.</p>
+<h2 id="deroulement"><a class="zola-anchor" href="#deroulement" aria-label="Anchor link for: deroulement">🔗</a>Déroulement</h2>
+<p>Par défaut, Rust utilise le <a rel="external" href="https://docs.microsoft.com/fr-fr/cpp/cpp/exceptions-and-stack-unwinding-in-cpp?view=msvc-160">déroulement de pile</a> pour exécuter les destructeurs de chaque variable vivante sur la pile en cas de <a rel="external" href="https://doc.rust-lang.org/stable/book/ch09-01-unrecoverable-errors-with-panic.html">panic</a>. Cela assure que toute la mémoire utilisée est libérée et permet au fil d’exécution parent d’attraper la panic et de continuer l’exécution. Le déroulement toutefois est un processus compliqué et nécessite des bibliothèques spécifiques à l’OS (par exemple <a rel="external" href="https://www.nongnu.org/libunwind/">libunwind</a> pour Linux ou <a rel="external" href="https://docs.microsoft.com/fr-fr/windows/win32/debug/structured-exception-handling">gestion structurée des erreurs</a> pour Windows), qui requièrent la bibliothèque standard de Rust. La conséquence est que nous ne pouvons pas utiliser le déroulement pour notre noyau de système d’exploitation <code>no_std</code>.</p>
+<div class="note">
+<p>L’erreur <code>language item required, but not found: eh_personality</code> sur les anciennes chaînes d’outils Rust renvoie elle aussi au déroulement. L’<a rel="external" href="https://github.com/rust-lang/rust/blob/edb368491551a77d77a48446d4ee88b35490c565/src/libpanic_unwind/gcc.rs#L11-L45">objet de langage <code>eh_personality</code></a> marque la fonction qui doit être utilisée pour l’implémentation du déroulement de pile. Les objets de langage sont des éléments spéciaux (traits, fonctions, types, etc.) qui sont requis par le compilateur de manière interne. Sur les chaînes d’outils Rust plus récentes, le message d’erreur a été amélioré pour éviter de mentionner ce détail d’implémentation.</p>
+</div>
 <h3 id="desactiver-le-deroulement"><a class="zola-anchor" href="#desactiver-le-deroulement" aria-label="Anchor link for: desactiver-le-deroulement">🔗</a>Désactiver le Déroulement</h3>
 <p>Il y a d’autres cas d’utilisation pour lesquels le déroulement n’est pas souhaité. Rust offre donc une option pour <a rel="external" href="https://github.com/rust-lang/rust/pull/32900">interrompre après un panic</a>. Cela désactive la génération de symboles de déroulement et ainsi réduit considérablement la taille de l’exécutable. Il y a de multiples endroit où nous pouvons désactiver le déroulement. Le plus simple est d’ajouter les lignes suivantes dans notre <code>Cargo.toml</code> :</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[profile.dev]</span></span>
@@ -241,15 +245,16 @@ Cet article décrit les étapes nécessaires pour créer un exécutable Rust aut
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[profile.release]</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">panic</span><span> =</span><span style="color: #CE9178;"> &quot;abort&quot;</span></span></code></pre>
-<p>Cela configure la stratégie de panic à <code>abort</code> pour le profil <code>dev</code> (utilisé pour <code>cargo build</code>) et le profil <code>release</code> (utilisé pour <code>cargo build --release</code>). Maintenant l’objet de langage <code>eh_personality</code> ne devrait plus être requis.</p>
-<p>Nous avons dorénavant corrigé les deux erreurs ci-dessus. Toutefois, si nous essayons de compiler, une autre erreur apparaît :</p>
+<p>Cela configure la stratégie de panic à <code>abort</code> pour le profil <code>dev</code> (utilisé pour <code>cargo build</code>) et le profil <code>release</code> (utilisé pour <code>cargo build --release</code>). Maintenant l’erreur <code>unwinding panics are not supported without std</code> devrait être corrigée.</p>
+<p>Si nous essayons de compiler maintenant, une nouvelle erreur apparaît :</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo build</span></span>
-<span class="giallo-l"><span>error: requires `start` lang_item</span></span></code></pre>
-<p>L’objet de langage <code>start</code> manque à notre programme. Il définit le point d’entrée.</p>
-<h2 id="l-attribut-start"><a class="zola-anchor" href="#l-attribut-start" aria-label="Anchor link for: l-attribut-start">🔗</a>L’attribut <code>start</code></h2>
-<p>On pourrait penser que la fonction <code>main</code> est la première fonction appelée lorsqu’un programme est exécuté. Toutefois, la plupart des langages ont un <a rel="external" href="https://fr.wikipedia.org/wiki/Environnement_d%27ex%C3%A9cution">environnement d’exécution</a> qui est responsable des tâches telles que le ramassage des miettes (ex: dans Java) ou les fils d’exécution logiciel (ex: les goroutines dans Go). Cet environnement doit être appelé avant <code>main</code> puisqu’il a besoin de s’initialiser.</p>
+<span class="giallo-l"><span>error: using `fn main` requires the standard library</span></span></code></pre><div class="note">
+<p>Les anciennes chaînes d’outils Rust signalent plutôt cette erreur sous la forme <code>error: requires start lang_item</code>. L’objet de langage <code>start</code> définit le point d’entrée sous-jacent qui appelle ensuite la fonction <code>main</code>. Cette erreur a donc la même cause que l’erreur <code>using `fn main` requires the standard library</code> sur les chaînes d’outils plus récentes.</p>
+</div>
+<h2 id="point-d-entree"><a class="zola-anchor" href="#point-d-entree" aria-label="Anchor link for: point-d-entree">🔗</a>Point d’Entrée</h2>
+<p>On pourrait penser que la fonction <code>main</code> est le “point d’entrée” du programme, c’est-à-dire la première fonction appelée lorsqu’un programme est exécuté. Toutefois, la plupart des langages ont un <a rel="external" href="https://fr.wikipedia.org/wiki/Environnement_d%27ex%C3%A9cution">environnement d’exécution</a> qui est responsable des tâches telles que le ramassage des miettes (ex: dans Java) ou les fils d’exécution logiciel (ex: les goroutines dans Go). Cet environnement doit être appelé avant <code>main</code> puisqu’il a besoin de s’initialiser.</p>
 <p>Dans un exécutable Rust classique qui relie la bibliothèque standard, l’exécution commence dans une bibliothèque d’environnement d’exécution C appelé <code>crt0</code> (“C runtime zero”). Elle configure l’environnement pour une application C. Cela comprend la création d’une pile et le placement des arguments dans les bons registres. L’environnement d’exécution C appelle ensuite <a rel="external" href="https://github.com/rust-lang/rust/blob/bb4d1491466d8239a7a5fd68bd605e3276e97afb/src/libstd/rt.rs#L32-L73">le point d’entrée de l’environnement d’exécution de Rust</a>, qui est marqué par l’objet de langage <code>start</code>. Rust possède un environnement d’exécution très minime, qui se charge de petites tâches telles que la configuration des guardes de dépassement de pile ou l’affichage de la trace d’appels lors d’un panic. L’environnement d’exécution finit par appeler la fonction <code>main</code>.</p>
-<p>Notre exécutable autoporté n’a pas accès à l’environnement d’exécution de Rust ni à <code>crt0</code>. Nous avons donc besoin de définir notre propre point d’entrée. Implémenter l’objet de langage <code>start</code> n’aiderait pas car nous aurions toujours besoin de <code>crt0</code>. Nous avons plutôt besoin de réécrire le point d’entrée de <code>crt0</code> directement.</p>
+<p>Notre exécutable autoporté n’a pas accès à l’environnement d’exécution de Rust ni à <code>crt0</code>. Nous avons donc besoin de définir notre propre point d’entrée et nous ne pouvons pas simplement définir une fonction <code>main</code>.</p>
 <h3 id="reecrire-le-point-d-entree"><a class="zola-anchor" href="#reecrire-le-point-d-entree" aria-label="Anchor link for: reecrire-le-point-d-entree">🔗</a>Réécrire le Point d’Entrée</h3>
 <p>Pour indiquer au compilateur que nous ne voulons pas utiliser la chaîne de point d’entrée normale, nous ajoutons l’attribut <code>#![no_main]</code>.</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#![no_std]</span></span>
