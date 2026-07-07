@@ -79,29 +79,28 @@
 
     <p>In this post we explore double faults in detail. We also set up an <em>Interrupt Stack Table</em> to catch double faults on a separate kernel stack. This way, we can completely prevent triple faults, even on kernel stack overflow.</p>
 <span id="continue-reading"></span>
-<p>As always, the complete source code is available on <a href="https://github.com/phil-opp/blog_os/tree/first_edition_post_10">GitHub</a>. Please file <a href="https://github.com/phil-opp/blog_os/issues">issues</a> for any problems, questions, or improvement suggestions. There is also a <a href="https://gitter.im/phil-opp/blog_os">gitter chat</a> and a comment section at the end of this page.</p>
+<p>As always, the complete source code is available on <a rel="external" href="https://github.com/phil-opp/blog_os/tree/first_edition_post_10">GitHub</a>. Please file <a rel="external" href="https://github.com/phil-opp/blog_os/issues">issues</a> for any problems, questions, or improvement suggestions. There is also a <a rel="external" href="https://gitter.im/phil-opp/blog_os">gitter chat</a> and a comment section at the end of this page.</p>
 <h2 id="what-is-a-double-fault"><a class="zola-anchor" href="#what-is-a-double-fault" aria-label="Anchor link for: what-is-a-double-fault">🔗</a>What is a Double Fault?</h2>
 <p>In simplified terms, a double fault is a special exception that occurs when the CPU fails to invoke an exception handler. For example, it occurs when a page fault is triggered but there is no page fault handler registered in the <a href="https://os.phil-opp.com/handling-exceptions/#the-interrupt-descriptor-table">Interrupt Descriptor Table</a> (IDT). So it’s kind of similar to catch-all blocks in programming languages with exceptions, e.g. <code>catch(...)</code> in C++ or <code>catch(Exception e)</code> in Java or C#.</p>
 <p>A double fault behaves like a normal exception. It has the vector number <code>8</code> and we can define a normal handler function for it in the IDT. It is really important to provide a double fault handler, because if a double fault is unhandled a fatal <em>triple fault</em> occurs. Triple faults can’t be caught and most hardware reacts with a system reset.</p>
 <h3 id="triggering-a-double-fault"><a class="zola-anchor" href="#triggering-a-double-fault" aria-label="Anchor link for: triggering-a-double-fault">🔗</a>Triggering a Double Fault</h3>
 <p>Let’s provoke a double fault by triggering an exception for that we didn’t define a handler function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span>#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>rust_main(multiboot_information_address: </span><span style="color:#569cd6;">usize</span><span>) {
-</span><span>    </span><span style="color:#569cd6;">...
-</span><span>    </span><span style="color:#608b4e;">// initialize our IDT
-</span><span>    interrupts::init();
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// trigger a page fault
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        *(</span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u64</span><span>) = </span><span style="color:#b5cea8;">42</span><span>;
-</span><span>    };
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> rust_main</span><span>(</span><span style="color: #9CDCFE;">multiboot_information_address</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) {</span></span>
+<span class="giallo-l"><span>    ...</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // initialize our IDT</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // trigger a page fault</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        *(</span><span style="color: #B5CEA8;">0xdeadbeaf</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u64</span><span>) =</span><span style="color: #B5CEA8;"> 42</span><span>;</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We try to write to address <code>0xdeadbeaf</code>, but the corresponding page is not present in the page tables. Thus, a page fault occurs. We haven’t registered a page fault handler in our <a href="https://os.phil-opp.com/handling-exceptions/#the-interrupt-descriptor-table">IDT</a>, so a double fault occurs.</p>
 <p>When we start our kernel now, we see that it enters an endless boot loop:</p>
 <p><img src="https://os.phil-opp.com/double-faults/boot-loop.gif" alt="boot loop" /></p>
@@ -115,27 +114,26 @@
 <p>So in order to prevent this triple fault, we need to either provide a handler function for page faults or a double fault handler. Let’s start with the latter, since we want to avoid triple faults in all cases.</p>
 <h3 id="a-double-fault-handler"><a class="zola-anchor" href="#a-double-fault-handler" aria-label="Anchor link for: a-double-fault-handler">🔗</a>A Double Fault Handler</h3>
 <p>A double fault is a normal exception with an error code, so we can use our <code>handler_with_error_code</code> macro to create a wrapper function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: idt::Idt = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = idt::Idt::new();
-</span><span>
-</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
-</span><span>        idt.double_fault.set_handler_fn(double_fault_handler);
-</span><span>
-</span><span>        idt
-</span><span>    };
-</span><span>}
-</span><span>
-</span><span style="color:#608b4e;">// our new double fault handler
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>double_fault_handler(
-</span><span>    stack_frame: </span><span style="color:#569cd6;">&amp;mut</span><span> ExceptionStackFrame, _error_code: </span><span style="color:#569cd6;">u64</span><span>)
-</span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">EXCEPTION: DOUBLE FAULT</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span>, stack_frame);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> IDT:</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.double_fault.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">double_fault_handler</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// our new double fault handler</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> double_fault_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    stack_frame</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> ExceptionStackFrame</span><span>,</span><span style="color: #9CDCFE;"> _error_code</span><span>:</span><span style="color: #4EC9B0;"> u64</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">EXCEPTION: DOUBLE FAULT</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">{:#?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> stack_frame</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Our handler prints a short error message and dumps the exception stack frame. The error code of the double fault handler is always zero, so there’s no reason to print it.</p>
 <p>When we start our kernel now, we should see that the double fault handler is invoked:</p>
 <p><img src="https://os.phil-opp.com/double-faults/qemu-catch-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT and the exception stack frame" /></p>
@@ -152,7 +150,7 @@
 <blockquote>
 <p>A double fault is a special exception that occurs when the CPU fails to invoke an exception handler.</p>
 </blockquote>
-<p>What does <em>“fails to invoke”</em> mean exactly? The handler is not present? The handler is <a href="http://pages.cs.wisc.edu/~remzi/OSTEP/vm-beyondphys.pdf">swapped out</a>? And what happens if a handler causes exceptions itself?</p>
+<p>What does <em>“fails to invoke”</em> mean exactly? The handler is not present? The handler is <a rel="external" href="http://pages.cs.wisc.edu/~remzi/OSTEP/vm-beyondphys.pdf">swapped out</a>? And what happens if a handler causes exceptions itself?</p>
 <p>For example, what happens if… :</p>
 <ol>
 <li>a divide-by-zero exception occurs, but the corresponding handler function is swapped out?</li>
@@ -160,10 +158,10 @@
 <li>a divide-by-zero handler causes a breakpoint exception, but the breakpoint handler is swapped out?</li>
 <li>our kernel overflows its stack and the <a href="https://os.phil-opp.com/remap-the-kernel/#creating-a-guard-page">guard page</a> is hit?</li>
 </ol>
-<p>Fortunately, the AMD64 manual (<a href="https://www.amd.com/system/files/TechDocs/24593.pdf">PDF</a>) has an exact definition (in Section 8.2.9). According to it, a “double fault exception <em>can</em> occur when a second exception occurs during the handling of a prior (first) exception handler”. The <em>“can”</em> is important: Only very specific combinations of exceptions lead to a double fault. These combinations are:</p>
+<p>Fortunately, the AMD64 manual (<a rel="external" href="https://www.amd.com/system/files/TechDocs/24593.pdf">PDF</a>) has an exact definition (in Section 8.2.9). According to it, a “double fault exception <em>can</em> occur when a second exception occurs during the handling of a prior (first) exception handler”. The <em>“can”</em> is important: Only very specific combinations of exceptions lead to a double fault. These combinations are:</p>
 <table><thead><tr><th>First Exception</th><th>Second Exception</th></tr></thead><tbody>
-<tr><td><a href="https://wiki.osdev.org/Exceptions#Division_Error">Divide-by-zero</a>,<br><a href="https://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td><td><a href="https://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td></tr>
-<tr><td><a href="https://wiki.osdev.org/Exceptions#Page_Fault">Page Fault</a></td><td><a href="https://wiki.osdev.org/Exceptions#Page_Fault">Page Fault</a>,<br><a href="https://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td></tr>
+<tr><td><a rel="external" href="https://wiki.osdev.org/Exceptions#Division_Error">Divide-by-zero</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td><td><a rel="external" href="https://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td></tr>
+<tr><td><a rel="external" href="https://wiki.osdev.org/Exceptions#Page_Fault">Page Fault</a></td><td><a rel="external" href="https://wiki.osdev.org/Exceptions#Page_Fault">Page Fault</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#Invalid_TSS">Invalid TSS</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#Segment_Not_Present">Segment Not Present</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#Stack-Segment_Fault">Stack-Segment Fault</a>,<br><a rel="external" href="https://wiki.osdev.org/Exceptions#General_Protection_Fault">General Protection Fault</a></td></tr>
 </tbody></table>
 <p>So for example a divide-by-zero fault followed by a page fault is fine (the page fault handler is invoked), but a divide-by-zero fault followed by a general-protection fault leads to a double fault.</p>
 <p>With the help of this table, we can answer the first three of the above questions:</p>
@@ -181,230 +179,219 @@
 <p>When our kernel overflows its stack and hits the guard page, a <em>page fault</em> occurs. The CPU looks up the page fault handler in the IDT and tries to push the <a href="https://os.phil-opp.com/handling-exceptions/#the-exception-stack-frame">exception stack frame</a> onto the stack. However, our current stack pointer still points to the non-present guard page. Thus, a second page fault occurs, which causes a double fault (according to the above table).</p>
 <p>So the CPU tries to call our <em>double fault handler</em> now. However, on a double fault the CPU tries to push the exception stack frame, too. Our stack pointer still points to the guard page, so a <em>third</em> page fault occurs, which causes a <em>triple fault</em> and a system reboot. So our current double fault handler can’t avoid a triple fault in this case.</p>
 <p>Let’s try it ourselves! We can easily provoke a kernel stack overflow by calling a function that recurses endlessly:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span>#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>rust_main(multiboot_information_address: </span><span style="color:#569cd6;">usize</span><span>) {
-</span><span>    </span><span style="color:#569cd6;">...
-</span><span>    </span><span style="color:#608b4e;">// initialize our IDT
-</span><span>    interrupts::init();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>stack_overflow() {
-</span><span>        stack_overflow(); </span><span style="color:#608b4e;">// for each recursion, the return address is pushed
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// trigger a stack overflow
-</span><span>    stack_overflow();
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> rust_main</span><span>(</span><span style="color: #9CDCFE;">multiboot_information_address</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) {</span></span>
+<span class="giallo-l"><span>    ...</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // initialize our IDT</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> stack_overflow</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        stack_overflow</span><span>();</span><span style="color: #6A9955;"> // for each recursion, the return address is pushed</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // trigger a stack overflow</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    stack_overflow</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>When we try this code in QEMU, we see that the system enters a boot-loop again.</p>
 <p>So how can we avoid this problem? We can’t omit the pushing of the exception stack frame, since the CPU itself does it. So we need to ensure somehow that the stack is always valid when a double fault exception occurs. Fortunately, the x86_64 architecture has a solution to this problem.</p>
 <h2 id="switching-stacks"><a class="zola-anchor" href="#switching-stacks" aria-label="Anchor link for: switching-stacks">🔗</a>Switching Stacks</h2>
 <p>The x86_64 architecture is able to switch to a predefined, known-good stack when an exception occurs. This switch happens at hardware level, so it can be performed before the CPU pushes the exception stack frame.</p>
 <p>This switching mechanism is implemented as an <em>Interrupt Stack Table</em> (IST). The IST is a table of 7 pointers to known-good stacks. In Rust-like pseudo code:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">struct </span><span>InterruptStackTable {
-</span><span>    stack_pointers: [Option&lt;StackPointer&gt;; 7],
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">struct</span><span style="color: #4EC9B0;"> InterruptStackTable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    stack_pointers</span><span>: [</span><span style="color: #4EC9B0;">Option</span><span>&lt;</span><span style="color: #4EC9B0;">StackPointer</span><span>&gt;;</span><span style="color: #B5CEA8;"> 7</span><span>],</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>For each exception handler, we can choose a stack from the IST through the <code>options</code> field in the corresponding <a href="https://os.phil-opp.com/handling-exceptions/#the-interrupt-descriptor-table">IDT entry</a>. For example, we could use the first stack in the IST for our double fault handler. Then the CPU would automatically switch to this stack whenever a double fault occurs. This switch would happen before anything is pushed, so it would prevent the triple fault.</p>
 <h3 id="allocating-a-new-stack"><a class="zola-anchor" href="#allocating-a-new-stack" aria-label="Anchor link for: allocating-a-new-stack">🔗</a>Allocating a new Stack</h3>
 <p>In order to fill an Interrupt Stack Table later, we need a way to allocate new stacks. Therefore we extend our <code>memory</code> module with a new <code>stack_allocator</code> submodule:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">mod </span><span>stack_allocator;
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">mod</span><span> stack_allocator;</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>First, we create a new <code>StackAllocator</code> struct and a constructor function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory/stack_allocator.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>memory::paging::PageIter;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>StackAllocator {
-</span><span>    range: PageIter,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>StackAllocator {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new(page_range: PageIter) -&gt; StackAllocator {
-</span><span>        StackAllocator { range: page_range }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory/stack_allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">PageIter</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> StackAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    range</span><span>:</span><span style="color: #4EC9B0;"> PageIter</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> StackAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> new</span><span>(</span><span style="color: #9CDCFE;">page_range</span><span>:</span><span style="color: #4EC9B0;"> PageIter</span><span>) -&gt;</span><span style="color: #4EC9B0;"> StackAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        StackAllocator</span><span> {</span><span style="color: #9CDCFE;"> range</span><span>:</span><span style="color: #9CDCFE;"> page_range</span><span> }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We create a simple <code>StackAllocator</code> that allocates stacks from a given range of pages (<code>PageIter</code> is an Iterator over a range of pages; we introduced it <a href="https://os.phil-opp.com/kernel-heap/#mapping-the-heap">in the kernel heap post</a>.).</p>
 <p>We add a <code>alloc_stack</code> method that allocates a new stack:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory/stack_allocator.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>memory::paging::{self, Page, ActivePageTable};
-</span><span style="color:#569cd6;">use </span><span>memory::{</span><span style="color:#b4cea8;">PAGE_SIZE</span><span>, FrameAllocator};
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>StackAllocator {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>alloc_stack&lt;FA: FrameAllocator&gt;(</span><span style="color:#569cd6;">&amp;mut </span><span>self,
-</span><span>                                           active_table: </span><span style="color:#569cd6;">&amp;mut</span><span> ActivePageTable,
-</span><span>                                           frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> FA,
-</span><span>                                           size_in_pages: </span><span style="color:#569cd6;">usize</span><span>)
-</span><span>                                           -&gt; Option&lt;Stack&gt; {
-</span><span>        </span><span style="color:#569cd6;">if</span><span> size_in_pages == </span><span style="color:#b5cea8;">0 </span><span>{
-</span><span>            </span><span style="color:#569cd6;">return </span><span>None; </span><span style="color:#608b4e;">/* a zero sized stack makes no sense */
-</span><span>        }
-</span><span>
-</span><span>        </span><span style="color:#608b4e;">// clone the range, since we only want to change it on success
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> range = self.range.clone();
-</span><span>
-</span><span>        </span><span style="color:#608b4e;">// try to allocate the stack pages and a guard page
-</span><span>        </span><span style="color:#569cd6;">let</span><span> guard_page = range.next();
-</span><span>        </span><span style="color:#569cd6;">let</span><span> stack_start = range.next();
-</span><span>        </span><span style="color:#569cd6;">let</span><span> stack_end = </span><span style="color:#569cd6;">if</span><span> size_in_pages == </span><span style="color:#b5cea8;">1 </span><span>{
-</span><span>            stack_start
-</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
-</span><span>            </span><span style="color:#608b4e;">// choose the (size_in_pages-2)th element, since index
-</span><span>            </span><span style="color:#608b4e;">// starts at 0 and we already allocated the start page
-</span><span>            range.nth(size_in_pages - </span><span style="color:#b5cea8;">2</span><span>)
-</span><span>        };
-</span><span>
-</span><span>        </span><span style="color:#569cd6;">match </span><span>(guard_page, stack_start, stack_end) {
-</span><span>            (Some(</span><span style="color:#569cd6;">_</span><span>), Some(start), Some(end)) </span><span style="color:#569cd6;">=&gt; </span><span>{
-</span><span>                </span><span style="color:#608b4e;">// success! write back updated range
-</span><span>                self.range = range;
-</span><span>
-</span><span>                </span><span style="color:#608b4e;">// map stack pages to physical frames
-</span><span>                </span><span style="color:#569cd6;">for</span><span> page </span><span style="color:#569cd6;">in </span><span>Page::range_inclusive(start, end) {
-</span><span>                    active_table.map(page, paging::</span><span style="color:#b4cea8;">WRITABLE</span><span>, frame_allocator);
-</span><span>                }
-</span><span>
-</span><span>                </span><span style="color:#608b4e;">// create a new stack
-</span><span>                </span><span style="color:#569cd6;">let</span><span> top_of_stack = end.start_address() + </span><span style="color:#b4cea8;">PAGE_SIZE</span><span>;
-</span><span>                Some(Stack::new(top_of_stack, start.start_address()))
-</span><span>            }
-</span><span>            </span><span style="color:#569cd6;">_ =&gt; </span><span>None, </span><span style="color:#608b4e;">/* not enough pages */
-</span><span>        }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory/stack_allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::{</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #4EC9B0;"> Page</span><span>,</span><span style="color: #4EC9B0;"> ActivePageTable</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::{</span><span style="color: #4EC9B0;">PAGE_SIZE</span><span>,</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> StackAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> alloc_stack</span><span>&lt;FA:</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&gt;(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                                           active_table</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> ActivePageTable</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                                           frame_allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span> FA,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                                           size_in_pages</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>)</span></span>
+<span class="giallo-l"><span>                                           -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">Stack</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">        if</span><span style="color: #9CDCFE;"> size_in_pages</span><span> ==</span><span style="color: #B5CEA8;"> 0</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">            return</span><span style="color: #4EC9B0;"> None</span><span>;</span><span style="color: #6A9955;"> /* a zero sized stack makes no sense */</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // clone the range, since we only want to change it on success</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> range</span><span> =</span><span style="color: #569CD6;"> self</span><span>.range.</span><span style="color: #DCDCAA;">clone</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // try to allocate the stack pages and a guard page</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> guard_page</span><span> =</span><span style="color: #9CDCFE;"> range</span><span>.</span><span style="color: #DCDCAA;">next</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> stack_start</span><span> =</span><span style="color: #9CDCFE;"> range</span><span>.</span><span style="color: #DCDCAA;">next</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> stack_end</span><span> =</span><span style="color: #C586C0;"> if</span><span style="color: #9CDCFE;"> size_in_pages</span><span> ==</span><span style="color: #B5CEA8;"> 1</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            stack_start</span></span>
+<span class="giallo-l"><span>        }</span><span style="color: #C586C0;"> else</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">            // choose the (size_in_pages-2)th element, since index</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">            // starts at 0 and we already allocated the start page</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            range</span><span>.</span><span style="color: #DCDCAA;">nth</span><span>(</span><span style="color: #9CDCFE;">size_in_pages</span><span> -</span><span style="color: #B5CEA8;"> 2</span><span>)</span></span>
+<span class="giallo-l"><span>        };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">        match</span><span> (</span><span style="color: #9CDCFE;">guard_page</span><span>,</span><span style="color: #9CDCFE;"> stack_start</span><span>,</span><span style="color: #9CDCFE;"> stack_end</span><span>) {</span></span>
+<span class="giallo-l"><span>            (</span><span style="color: #4EC9B0;">Some</span><span>(</span><span style="color: #9CDCFE;">_</span><span>),</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">start</span><span>),</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">end</span><span>)) =&gt; {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">                // success! write back updated range</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">                self</span><span>.range =</span><span style="color: #9CDCFE;"> range</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">                // map stack pages to physical frames</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">                for</span><span style="color: #9CDCFE;"> page</span><span style="color: #569CD6;"> in</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">range_inclusive</span><span>(</span><span style="color: #9CDCFE;">start</span><span>,</span><span style="color: #9CDCFE;"> end</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                    active_table</span><span>.</span><span style="color: #DCDCAA;">map</span><span>(</span><span style="color: #9CDCFE;">page</span><span>,</span><span style="color: #4EC9B0;"> paging</span><span>::WRITABLE,</span><span style="color: #9CDCFE;"> frame_allocator</span><span>);</span></span>
+<span class="giallo-l"><span>                }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">                // create a new stack</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">                let</span><span style="color: #9CDCFE;"> top_of_stack</span><span> =</span><span style="color: #9CDCFE;"> end</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>() + PAGE_SIZE;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">                Some</span><span>(</span><span style="color: #4EC9B0;">Stack</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">top_of_stack</span><span>,</span><span style="color: #9CDCFE;"> start</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>()))</span></span>
+<span class="giallo-l"><span>            }</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            _</span><span> =&gt;</span><span style="color: #4EC9B0;"> None</span><span>,</span><span style="color: #6A9955;"> /* not enough pages */</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The method takes mutable references to the <a href="https://os.phil-opp.com/page-tables/#page-table-ownership">ActivePageTable</a> and a <a href="https://os.phil-opp.com/allocating-frames/#a-frame-allocator">FrameAllocator</a>, since it needs to map the new virtual stack pages to physical frames. We define that the stack size is a multiple of the page size.</p>
-<p>Instead of operating directly on <code>self.range</code>, we <a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">clone</a> it and only write it back on success. This way, subsequent stack allocations can still succeed if there are pages left (e.g., a call with <code>size_in_pages = 3</code> can still succeed after a failed call with <code>size_in_pages = 100</code>).</p>
+<p>Instead of operating directly on <code>self.range</code>, we <a rel="external" href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">clone</a> it and only write it back on success. This way, subsequent stack allocations can still succeed if there are pages left (e.g., a call with <code>size_in_pages = 3</code> can still succeed after a failed call with <code>size_in_pages = 100</code>).</p>
 <p>In order to be able to clone <code>PageIter</code>, we add a <code>#[derive(Clone)]</code> to its definition in <code>src/memory/paging/mod.rs</code>. We also need to make the <code>start_address</code> method of the <code>Page</code> type public (in the same file).</p>
-<p>The actual allocation is straightforward: First, we choose the next page as <a href="https://os.phil-opp.com/remap-the-kernel/#creating-a-guard-page">guard page</a>. Then we choose the next <code>size_in_pages</code> pages as stack pages using <a href="https://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.nth">Iterator::nth</a>. If all three variables are <code>Some</code>, the allocation succeeded and we map the stack pages to physical frames using <a href="https://os.phil-opp.com/page-tables/#more-mapping-functions">ActivePageTable::map</a>. The guard page remains unmapped.</p>
+<p>The actual allocation is straightforward: First, we choose the next page as <a href="https://os.phil-opp.com/remap-the-kernel/#creating-a-guard-page">guard page</a>. Then we choose the next <code>size_in_pages</code> pages as stack pages using <a rel="external" href="https://doc.rust-lang.org/nightly/core/iter/trait.Iterator.html#method.nth">Iterator::nth</a>. If all three variables are <code>Some</code>, the allocation succeeded and we map the stack pages to physical frames using <a href="https://os.phil-opp.com/page-tables/#more-mapping-functions">ActivePageTable::map</a>. The guard page remains unmapped.</p>
 <p>Finally, we create and return a new <code>Stack</code>, which we define as follows:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory/stack_allocator.rs
-</span><span>
-</span><span>#[derive(Debug)]
-</span><span style="color:#569cd6;">pub struct </span><span>Stack {
-</span><span>    top: </span><span style="color:#569cd6;">usize</span><span>,
-</span><span>    bottom: </span><span style="color:#569cd6;">usize</span><span>,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Stack {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>new(top: </span><span style="color:#569cd6;">usize</span><span>, bottom: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Stack {
-</span><span>        assert!(top &gt; bottom);
-</span><span>        Stack {
-</span><span>            top: top,
-</span><span>            bottom: bottom,
-</span><span>        }
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>top(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>        self.top
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>bottom(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>        self.bottom
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory/stack_allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Stack</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    top</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    bottom</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Stack</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> new</span><span>(</span><span style="color: #9CDCFE;">top</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>,</span><span style="color: #9CDCFE;"> bottom</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Stack</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        assert!</span><span>(</span><span style="color: #9CDCFE;">top</span><span> &gt;</span><span style="color: #9CDCFE;"> bottom</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Stack</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            top</span><span>:</span><span style="color: #9CDCFE;"> top</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            bottom</span><span>:</span><span style="color: #9CDCFE;"> bottom</span><span>,</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> top</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.top</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> bottom</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.bottom</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The <code>Stack</code> struct describes a stack though its top and bottom addresses.</p>
 <h4 id="the-memory-controller"><a class="zola-anchor" href="#the-memory-controller" aria-label="Anchor link for: the-memory-controller">🔗</a>The Memory Controller</h4>
 <p>Now we’re able to allocate a new double fault stack. However, we add one more level of abstraction to make things easier. For that we add a new <code>MemoryController</code> type to our <code>memory</code> module:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">pub use </span><span>self::stack_allocator::Stack;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>MemoryController {
-</span><span>    active_table: paging::ActivePageTable,
-</span><span>    frame_allocator: AreaFrameAllocator,
-</span><span>    stack_allocator: stack_allocator::StackAllocator,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>MemoryController {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>alloc_stack(</span><span style="color:#569cd6;">&amp;mut </span><span>self, size_in_pages: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Option&lt;Stack&gt; {
-</span><span>        </span><span style="color:#569cd6;">let &amp;mut</span><span> MemoryController { </span><span style="color:#569cd6;">ref mut</span><span> active_table,
-</span><span>                                    </span><span style="color:#569cd6;">ref mut</span><span> frame_allocator,
-</span><span>                                    </span><span style="color:#569cd6;">ref mut</span><span> stack_allocator } = self;
-</span><span>        stack_allocator.alloc_stack(active_table, frame_allocator,
-</span><span>                                    size_in_pages)
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>The <code>MemoryController</code> struct holds the three types that are required for <code>alloc_stack</code> and provides a simpler interface (only one argument). The <code>alloc_stack</code> wrapper just takes the tree types as <code>&amp;mut</code> through <a href="https://doc.rust-lang.org/1.10.0/book/patterns.html#destructuring">destructuring</a> and forwards them to the <code>stack_allocator</code>. The <a href="https://doc.rust-lang.org/1.30.0/book/second-edition/ch18-03-pattern-syntax.html#creating-references-in-patterns-with-ref-and-ref-mut">ref mut</a>-s are needed to take the inner fields by mutable reference. Note that we’re re-exporting the <code>Stack</code> type since it is returned by <code>alloc_stack</code>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub use self</span><span>::</span><span style="color: #4EC9B0;">stack_allocator</span><span>::</span><span style="color: #4EC9B0;">Stack</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> MemoryController</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    active_table</span><span>:</span><span style="color: #4EC9B0;"> paging</span><span>::</span><span style="color: #4EC9B0;">ActivePageTable</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    frame_allocator</span><span>:</span><span style="color: #4EC9B0;"> AreaFrameAllocator</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    stack_allocator</span><span>:</span><span style="color: #4EC9B0;"> stack_allocator</span><span>::</span><span style="color: #4EC9B0;">StackAllocator</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> MemoryController</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> alloc_stack</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> size_in_pages</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">Stack</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span> &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> MemoryController</span><span> {</span><span style="color: #569CD6;"> ref mut</span><span style="color: #9CDCFE;"> active_table</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">                                    ref mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">                                    ref mut</span><span style="color: #9CDCFE;"> stack_allocator</span><span> } =</span><span style="color: #569CD6;"> self</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        stack_allocator</span><span>.</span><span style="color: #DCDCAA;">alloc_stack</span><span>(</span><span style="color: #9CDCFE;">active_table</span><span>,</span><span style="color: #9CDCFE;"> frame_allocator</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                                    size_in_pages</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>The <code>MemoryController</code> struct holds the three types that are required for <code>alloc_stack</code> and provides a simpler interface (only one argument). The <code>alloc_stack</code> wrapper just takes the tree types as <code>&amp;mut</code> through <a rel="external" href="https://doc.rust-lang.org/1.10.0/book/patterns.html#destructuring">destructuring</a> and forwards them to the <code>stack_allocator</code>. The <a rel="external" href="https://doc.rust-lang.org/1.30.0/book/second-edition/ch18-03-pattern-syntax.html#creating-references-in-patterns-with-ref-and-ref-mut">ref mut</a>-s are needed to take the inner fields by mutable reference. Note that we’re re-exporting the <code>Stack</code> type since it is returned by <code>alloc_stack</code>.</p>
 <p>The last step is to create a <code>StackAllocator</code> and return a <code>MemoryController</code> from <code>memory::init</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init(boot_info: </span><span style="color:#569cd6;">&amp;</span><span>BootInformation) -&gt; MemoryController {
-</span><span>    </span><span style="color:#569cd6;">...
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> stack_allocator = {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> stack_alloc_start = heap_end_page + </span><span style="color:#b5cea8;">1</span><span>;
-</span><span>        </span><span style="color:#569cd6;">let</span><span> stack_alloc_end = stack_alloc_start + </span><span style="color:#b5cea8;">100</span><span>;
-</span><span>        </span><span style="color:#569cd6;">let</span><span> stack_alloc_range = Page::range_inclusive(stack_alloc_start,
-</span><span>                                                      stack_alloc_end);
-</span><span>        stack_allocator::StackAllocator::new(stack_alloc_range)
-</span><span>    };
-</span><span>
-</span><span>    MemoryController {
-</span><span>        active_table: active_table,
-</span><span>        frame_allocator: frame_allocator,
-</span><span>        stack_allocator: stack_allocator,
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;</span><span style="color: #4EC9B0;">BootInformation</span><span>) -&gt;</span><span style="color: #4EC9B0;"> MemoryController</span><span> {</span></span>
+<span class="giallo-l"><span>    ...</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> stack_allocator</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> stack_alloc_start</span><span> =</span><span style="color: #9CDCFE;"> heap_end_page</span><span> +</span><span style="color: #B5CEA8;"> 1</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> stack_alloc_end</span><span> =</span><span style="color: #9CDCFE;"> stack_alloc_start</span><span> +</span><span style="color: #B5CEA8;"> 100</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> stack_alloc_range</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">range_inclusive</span><span>(</span><span style="color: #9CDCFE;">stack_alloc_start</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                                                      stack_alloc_end</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        stack_allocator</span><span>::</span><span style="color: #4EC9B0;">StackAllocator</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">stack_alloc_range</span><span>)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    MemoryController</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        active_table</span><span>:</span><span style="color: #9CDCFE;"> active_table</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        frame_allocator</span><span>:</span><span style="color: #9CDCFE;"> frame_allocator</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        stack_allocator</span><span>:</span><span style="color: #9CDCFE;"> stack_allocator</span><span>,</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We create a new <code>StackAllocator</code> with a range of 100 pages starting right after the last heap page.</p>
 <p>In order to do arithmetic on pages (e.g. calculate the hundredth page after <code>stack_alloc_start</code>), we implement <code>Add&lt;usize&gt;</code> for <code>Page</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory/paging/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>core::ops::Add;
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Add&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; </span><span style="color:#569cd6;">for </span><span>Page {
-</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Output </span><span>= Page;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>add(self, rhs: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Page {
-</span><span>        Page { number: self.number + rhs }
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<h4 id="allocating-a-double-fault-stack"><a class="zola-anchor" href="#allocating-a-double-fault-stack" aria-label="Anchor link for: allocating-a-double-fault-stack">🔗</a>Allocating a Double Fault Stack</h4>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory/paging/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">ops</span><span>::</span><span style="color: #4EC9B0;">Add</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Add</span><span>&lt;</span><span style="color: #4EC9B0;">usize</span><span>&gt;</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Page</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    type</span><span style="color: #4EC9B0;"> Output</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> add</span><span>(</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> rhs</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Page</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Page</span><span> {</span><span style="color: #9CDCFE;"> number</span><span>:</span><span style="color: #569CD6;"> self</span><span>.number +</span><span style="color: #9CDCFE;"> rhs</span><span> }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre><h4 id="allocating-a-double-fault-stack"><a class="zola-anchor" href="#allocating-a-double-fault-stack" aria-label="Anchor link for: allocating-a-double-fault-stack">🔗</a>Allocating a Double Fault Stack</h4>
 <p>Now we can allocate a new double fault stack by passing the memory controller to our <code>interrupts::init</code> function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span>#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>rust_main(multiboot_information_address: </span><span style="color:#569cd6;">usize</span><span>) {
-</span><span>    </span><span style="color:#569cd6;">...
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// set up guard page and map the heap pages
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> memory_controller = memory::init(boot_info); </span><span style="color:#608b4e;">// new return type
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// initialize our IDT
-</span><span>    interrupts::init(</span><span style="color:#569cd6;">&amp;mut</span><span> memory_controller); </span><span style="color:#608b4e;">// new argument
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">...
-</span><span>}
-</span><span>
-</span><span>
-</span><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>memory::MemoryController;
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init(memory_controller: </span><span style="color:#569cd6;">&amp;mut</span><span> MemoryController) {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> double_fault_stack = memory_controller.alloc_stack(</span><span style="color:#b5cea8;">1</span><span>)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;could not allocate double fault stack&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> rust_main</span><span>(</span><span style="color: #9CDCFE;">multiboot_information_address</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) {</span></span>
+<span class="giallo-l"><span>    ...</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // set up guard page and map the heap pages</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> memory_controller</span><span> =</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>);</span><span style="color: #6A9955;"> // new return type</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // initialize our IDT</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> memory_controller</span><span>);</span><span style="color: #6A9955;"> // new argument</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    ...</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">MemoryController</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>(</span><span style="color: #9CDCFE;">memory_controller</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> MemoryController</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> double_fault_stack</span><span> =</span><span style="color: #9CDCFE;"> memory_controller</span><span>.</span><span style="color: #DCDCAA;">alloc_stack</span><span>(</span><span style="color: #B5CEA8;">1</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;could not allocate double fault stack&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    IDT.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We allocate a 4096 bytes stack (one page) for our double fault handler. Now we just need some way to tell the CPU that it should use this stack for handling double faults.</p>
 <h3 id="the-ist-and-tss"><a class="zola-anchor" href="#the-ist-and-tss" aria-label="Anchor link for: the-ist-and-tss">🔗</a>The IST and TSS</h3>
-<p>The Interrupt Stack Table (IST) is part of an old legacy structure called <em><a href="https://en.wikipedia.org/wiki/Task_state_segment">Task State Segment</a></em> (TSS). The TSS used to hold various information (e.g. processor register state) about a task in 32-bit mode and was for example used for <a href="https://wiki.osdev.org/Context_Switching#Hardware_Context_Switching">hardware context switching</a>. However, hardware context switching is no longer supported in 64-bit mode and the format of the TSS changed completely.</p>
-<p>On x86_64, the TSS no longer holds any task specific information at all. Instead, it holds two stack tables (the IST is one of them). The only common field between the 32-bit and 64-bit TSS is the pointer to the <a href="https://en.wikipedia.org/wiki/Task_state_segment#I.2FO_port_permissions">I/O port permissions bitmap</a>.</p>
+<p>The Interrupt Stack Table (IST) is part of an old legacy structure called <em><a rel="external" href="https://en.wikipedia.org/wiki/Task_state_segment">Task State Segment</a></em> (TSS). The TSS used to hold various information (e.g. processor register state) about a task in 32-bit mode and was for example used for <a rel="external" href="https://wiki.osdev.org/Context_Switching#Hardware_Context_Switching">hardware context switching</a>. However, hardware context switching is no longer supported in 64-bit mode and the format of the TSS changed completely.</p>
+<p>On x86_64, the TSS no longer holds any task specific information at all. Instead, it holds two stack tables (the IST is one of them). The only common field between the 32-bit and 64-bit TSS is the pointer to the <a rel="external" href="https://en.wikipedia.org/wiki/Task_state_segment#I.2FO_port_permissions">I/O port permissions bitmap</a>.</p>
 <p>The 64-bit TSS has the following format:</p>
 <table><thead><tr><th>Field</th><th>Type</th></tr></thead><tbody>
 <tr><td><span style="opacity: 0.5">(reserved)</span></td><td><code>u32</code></td></tr>
@@ -417,94 +404,86 @@
 </tbody></table>
 <p>The <em>Privilege Stack Table</em> is used by the CPU when the privilege level changes. For example, if an exception occurs while the CPU is in user mode (privilege level 3), the CPU normally switches to kernel mode (privilege level 0) before invoking the exception handler. In that case, the CPU would switch to the 0th stack in the Privilege Stack Table (since 0 is the target privilege level). We don’t have any user mode programs yet, so we ignore this table for now.</p>
 <h4 id="creating-a-tss"><a class="zola-anchor" href="#creating-a-tss" aria-label="Anchor link for: creating-a-tss">🔗</a>Creating a TSS</h4>
-<p>Let’s create a new TSS that contains our double fault stack in its interrupt stack table. For that we need a TSS struct. Fortunately, the <code>x86_64</code> crate already contains a <a href="https://docs.rs/x86_64/0.1.1/x86_64/structures/tss/struct.TaskStateSegment.html"><code>TaskStateSegment</code> struct</a> that we can use:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::structures::tss::TaskStateSegment;
-</span></code></pre>
+<p>Let’s create a new TSS that contains our double fault stack in its interrupt stack table. For that we need a TSS struct. Fortunately, the <code>x86_64</code> crate already contains a <a rel="external" href="https://docs.rs/x86_64/0.1.1/x86_64/structures/tss/struct.TaskStateSegment.html"><code>TaskStateSegment</code> struct</a> that we can use:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">tss</span><span>::</span><span style="color: #4EC9B0;">TaskStateSegment</span><span>;</span></span></code></pre>
 <p>Let’s create a new TSS in our <code>interrupts::init</code> function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::VirtualAddress;
-</span><span>
-</span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">0</span><span>;
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init(memory_controller: </span><span style="color:#569cd6;">&amp;mut</span><span> MemoryController) {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> double_fault_stack = memory_controller.alloc_stack(</span><span style="color:#b5cea8;">1</span><span>)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;could not allocate double fault stack&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> tss = TaskStateSegment::new();
-</span><span>    tss.interrupt_stack_table[</span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX</span><span>] = VirtualAddress(
-</span><span>        double_fault_stack.top());
-</span><span>
-</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">VirtualAddress</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">const</span><span> DOUBLE_FAULT_IST_INDEX:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 0</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>(</span><span style="color: #9CDCFE;">memory_controller</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> MemoryController</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> double_fault_stack</span><span> =</span><span style="color: #9CDCFE;"> memory_controller</span><span>.</span><span style="color: #DCDCAA;">alloc_stack</span><span>(</span><span style="color: #B5CEA8;">1</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;could not allocate double fault stack&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> tss</span><span> =</span><span style="color: #4EC9B0;"> TaskStateSegment</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    tss</span><span>.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX] =</span><span style="color: #DCDCAA;"> VirtualAddress</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        double_fault_stack</span><span>.</span><span style="color: #DCDCAA;">top</span><span>());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    IDT.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We define that the 0th IST entry is the double fault stack (any other IST index would work too). We create a new TSS through the <code>TaskStateSegment::new</code> function and load the top address (stacks grow downwards) of the double fault stack into the 0th entry.</p>
 <h4 id="loading-the-tss"><a class="zola-anchor" href="#loading-the-tss" aria-label="Anchor link for: loading-the-tss">🔗</a>Loading the TSS</h4>
-<p>Now that we created a new TSS, we need a way to tell the CPU that it should use it. Unfortunately, this is a bit cumbersome, since the TSS is a Task State <em>Segment</em> (for historical reasons). So instead of loading the table directly, we need to add a new segment descriptor to the <a href="https://web.archive.org/web/20190217233448/https://www.flingos.co.uk/docs/reference/Global-Descriptor-Table/">Global Descriptor Table</a> (GDT). Then we can load our TSS invoking the <a href="https://www.felixcloutier.com/x86/ltr"><code>ltr</code> instruction</a> with the respective GDT index.</p>
+<p>Now that we created a new TSS, we need a way to tell the CPU that it should use it. Unfortunately, this is a bit cumbersome, since the TSS is a Task State <em>Segment</em> (for historical reasons). So instead of loading the table directly, we need to add a new segment descriptor to the <a rel="external" href="https://web.archive.org/web/20190217233448/https://www.flingos.co.uk/docs/reference/Global-Descriptor-Table/">Global Descriptor Table</a> (GDT). Then we can load our TSS invoking the <a rel="external" href="https://www.felixcloutier.com/x86/ltr"><code>ltr</code> instruction</a> with the respective GDT index.</p>
 <h3 id="the-global-descriptor-table-again"><a class="zola-anchor" href="#the-global-descriptor-table-again" aria-label="Anchor link for: the-global-descriptor-table-again">🔗</a>The Global Descriptor Table (again)</h3>
-<p>The Global Descriptor Table (GDT) is a relict that was used for <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation">memory segmentation</a> before paging became the de facto standard. It is still needed in 64-bit mode for various things such as kernel/user mode configuration or TSS loading.</p>
+<p>The Global Descriptor Table (GDT) is a relict that was used for <a rel="external" href="https://en.wikipedia.org/wiki/X86_memory_segmentation">memory segmentation</a> before paging became the de facto standard. It is still needed in 64-bit mode for various things such as kernel/user mode configuration or TSS loading.</p>
 <p>We already created a GDT <a href="https://os.phil-opp.com/entering-longmode/#the-global-descriptor-table">when switching to long mode</a>. Back then, we used assembly to create valid code and data segment descriptors, which were required to enter 64-bit mode. We could just edit that assembly file and add an additional TSS descriptor. However, we now have the expressiveness of Rust, so let’s do it in Rust instead.</p>
 <p>We start by creating a new <code>interrupts::gdt</code> submodule. For that we need to rename the <code>src/interrupts.rs</code> file to <code>src/interrupts/mod.rs</code>. Then we can create a new submodule:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">mod </span><span>gdt;
-</span></code></pre>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts/gdt.rs
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Gdt {
-</span><span>    table: [</span><span style="color:#569cd6;">u64</span><span>; 8],
-</span><span>    next_free: </span><span style="color:#569cd6;">usize</span><span>,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Gdt {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new() -&gt; Gdt {
-</span><span>        Gdt {
-</span><span>            table: [</span><span style="color:#b5cea8;">0</span><span>; </span><span style="color:#b5cea8;">8</span><span>],
-</span><span>            next_free: </span><span style="color:#b5cea8;">1</span><span>,
-</span><span>        }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">mod</span><span> gdt;</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/interrupts/gdt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Gdt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    table</span><span>: [</span><span style="color: #4EC9B0;">u64</span><span>;</span><span style="color: #B5CEA8;"> 8</span><span>],</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    next_free</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Gdt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> new</span><span>() -&gt;</span><span style="color: #4EC9B0;"> Gdt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Gdt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            table</span><span>: [</span><span style="color: #B5CEA8;">0</span><span>;</span><span style="color: #B5CEA8;"> 8</span><span>],</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            next_free</span><span>:</span><span style="color: #B5CEA8;"> 1</span><span>,</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We create a simple <code>Gdt</code> struct with two fields. The <code>table</code> field contains the actual GDT modeled as a <code>[u64; 8]</code>. Theoretically, a GDT can have up to 8192 entries, but this doesn’t make much sense in 64-bit mode (since there is no real segmentation support). Eight entries should be more than enough for our system.</p>
 <p>The <code>next_free</code> field stores the index of the next free entry. We initialize it with <code>1</code> since the 0th entry needs always needs to be 0 in a valid GDT.</p>
 <h4 id="user-and-system-segments"><a class="zola-anchor" href="#user-and-system-segments" aria-label="Anchor link for: user-and-system-segments">🔗</a>User and System Segments</h4>
 <p>There are two types of GDT entries in long mode: user and system segment descriptors. Descriptors for code and data segment segments are user segment descriptors. They contain no addresses since segments always span the complete address space on x86_64 (real segmentation is no longer supported). Thus, user segment descriptors only contain a few flags (e.g. present or user mode) and fit into a single <code>u64</code> entry.</p>
 <p>System descriptors such as TSS descriptors are different. They often contain a base address and a limit (e.g. TSS start and length) and thus need more than 64 bits. Therefore, system segments are 128 bits. They are stored as two consecutive entries in the GDT.</p>
 <p>Consequently, we model a <code>Descriptor</code> as an <code>enum</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/gdt.rs
-</span><span>
-</span><span style="color:#569cd6;">pub enum </span><span>Descriptor {
-</span><span>    UserSegment(</span><span style="color:#569cd6;">u64</span><span>),
-</span><span>    SystemSegment(</span><span style="color:#569cd6;">u64</span><span>, </span><span style="color:#569cd6;">u64</span><span>),
-</span><span>}
-</span></code></pre>
-<p>The flag bits are common between all descriptor types, so we create a general <code>DescriptorFlags</code> type (using the <a href="https://docs.rs/bitflags/0.9.1/bitflags/macro.bitflags.html">bitflags</a> macro):</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/gdt.rs
-</span><span>
-</span><span>bitflags! {
-</span><span>    </span><span style="color:#569cd6;">struct </span><span>DescriptorFlags: u64 {
-</span><span>        const CONFORMING        = 1 &lt;&lt; 42;
-</span><span>        const EXECUTABLE        = 1 &lt;&lt; 43;
-</span><span>        const USER_SEGMENT      = 1 &lt;&lt; 44;
-</span><span>        const PRESENT           = 1 &lt;&lt; 47;
-</span><span>        const LONG_MODE         = 1 &lt;&lt; 53;
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/gdt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> Descriptor</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    UserSegment</span><span>(</span><span style="color: #4EC9B0;">u64</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    SystemSegment</span><span>(</span><span style="color: #4EC9B0;">u64</span><span>,</span><span style="color: #4EC9B0;"> u64</span><span>),</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>The flag bits are common between all descriptor types, so we create a general <code>DescriptorFlags</code> type (using the <a rel="external" href="https://docs.rs/bitflags/0.9.1/bitflags/macro.bitflags.html">bitflags</a> macro):</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/gdt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">bitflags!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    struct</span><span style="color: #4EC9B0;"> DescriptorFlags</span><span>:</span><span style="color: #4EC9B0;"> u64</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> CONFORMING        =</span><span style="color: #B5CEA8;"> 1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 42</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> EXECUTABLE        =</span><span style="color: #B5CEA8;"> 1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 43</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> USER_SEGMENT      =</span><span style="color: #B5CEA8;"> 1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 44</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> PRESENT           =</span><span style="color: #B5CEA8;"> 1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 47</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> LONG_MODE         =</span><span style="color: #B5CEA8;"> 1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 53</span><span>;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We only add flags that are relevant in 64-bit mode. For example, we omit the read/write bit, since it is completely ignored by the CPU in 64-bit mode.</p>
 <h4 id="code-segments"><a class="zola-anchor" href="#code-segments" aria-label="Anchor link for: code-segments">🔗</a>Code Segments</h4>
 <p>We add a function to create kernel mode code segments:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/gdt.rs
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Descriptor {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>kernel_code_segment() -&gt; Descriptor {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> flags = </span><span style="color:#b4cea8;">USER_SEGMENT </span><span style="color:#569cd6;">| </span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span style="color:#b4cea8;">EXECUTABLE </span><span style="color:#569cd6;">| </span><span style="color:#b4cea8;">LONG_MODE</span><span>;
-</span><span>        Descriptor::UserSegment(flags.bits())
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/gdt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Descriptor</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> kernel_code_segment</span><span>() -&gt;</span><span style="color: #4EC9B0;"> Descriptor</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> flags</span><span> = USER_SEGMENT | PRESENT | EXECUTABLE | LONG_MODE;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Descriptor</span><span>::</span><span style="color: #DCDCAA;">UserSegment</span><span>(</span><span style="color: #9CDCFE;">flags</span><span>.</span><span style="color: #DCDCAA;">bits</span><span>())</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We set the <code>USER_SEGMENT</code> bit to indicate a 64 bit user segment descriptor (otherwise the CPU expects a 128 bit system segment descriptor). The <code>PRESENT</code>, <code>EXECUTABLE</code>, and <code>LONG_MODE</code> bits are also needed for a 64-bit mode code segment.</p>
 <p>The data segment registers <code>ds</code>, <code>ss</code>, and <code>es</code> are completely ignored in 64-bit mode, so we don’t need any data segment descriptors in our GDT.</p>
 <h4 id="tss-segments"><a class="zola-anchor" href="#tss-segments" aria-label="Anchor link for: tss-segments">🔗</a>TSS Segments</h4>
@@ -514,7 +493,7 @@
 <tr><td>16-39</td><td><strong>base 0-23</strong></td><td>the first 3 byte of the TSS’s base address</td></tr>
 <tr><td>40-43</td><td><strong>type</strong></td><td>must be <code>0b1001</code> for an available 64-bit TSS</td></tr>
 <tr><td>44</td><td>zero</td><td>must be 0</td></tr>
-<tr><td>45-46</td><td>privilege</td><td>the <a href="https://wiki.osdev.org/Security#Rings">ring level</a>: 0 for kernel, 3 for user</td></tr>
+<tr><td>45-46</td><td>privilege</td><td>the <a rel="external" href="https://wiki.osdev.org/Security#Rings">ring level</a>: 0 for kernel, 3 for user</td></tr>
 <tr><td>47</td><td><strong>present</strong></td><td>must be 1 for valid selectors</td></tr>
 <tr><td>48-51</td><td>limit 16-19</td><td>bits 16 to 19 of the segment’s limit</td></tr>
 <tr><td>52</td><td>available</td><td>freely available to the OS</td></tr>
@@ -526,181 +505,170 @@
 </tbody></table>
 <p>We only need the bold fields for our TSS descriptor. For example, we don’t need the <code>limit 16-19</code> field since a TSS has a fixed size that is smaller than <code>2^16</code>.</p>
 <p>Let’s add a function to our descriptor that creates a TSS descriptor for a given TSS:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/gdt.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::structures::tss::TaskStateSegment;
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Descriptor {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>tss_segment(tss: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> TaskStateSegment) -&gt; Descriptor {
-</span><span>        </span><span style="color:#569cd6;">use </span><span>core::mem::size_of;
-</span><span>        </span><span style="color:#569cd6;">use </span><span>bit_field::BitField;
-</span><span>
-</span><span>        </span><span style="color:#569cd6;">let</span><span> ptr = tss </span><span style="color:#569cd6;">as *const _ as u64</span><span>;
-</span><span>
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> low = </span><span style="color:#b4cea8;">PRESENT</span><span>.bits();
-</span><span>        </span><span style="color:#608b4e;">// base
-</span><span>        low.set_bits(</span><span style="color:#b5cea8;">16</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">40</span><span>, ptr.get_bits(</span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">24</span><span>));
-</span><span>        low.set_bits(</span><span style="color:#b5cea8;">56</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">64</span><span>, ptr.get_bits(</span><span style="color:#b5cea8;">24</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">32</span><span>));
-</span><span>        </span><span style="color:#608b4e;">// limit (the `-1` in needed since the bound is inclusive)
-</span><span>        low.set_bits(</span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">16</span><span>, (size_of::&lt;TaskStateSegment&gt;() - </span><span style="color:#b5cea8;">1</span><span>) </span><span style="color:#569cd6;">as u64</span><span>);
-</span><span>        </span><span style="color:#608b4e;">// type (0b1001 = available 64-bit tss)
-</span><span>        low.set_bits(</span><span style="color:#b5cea8;">40</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">44</span><span>, </span><span style="color:#b5cea8;">0b1001</span><span>);
-</span><span>
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> high = </span><span style="color:#b5cea8;">0</span><span>;
-</span><span>        high.set_bits(</span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">32</span><span>, ptr.get_bits(</span><span style="color:#b5cea8;">32</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">64</span><span>));
-</span><span>
-</span><span>        Descriptor::SystemSegment(low, high)
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>The <code>set_bits</code> and <code>get_bits</code> methods are provided by the <a href="https://docs.rs/bit_field/0.6.0/bit_field/trait.BitField.html#method.get_bit"><code>BitField</code> trait</a> of the <code>bit_fields</code> crate. They allow us to easily get or set specific bits in an integer without using bit masks or shift operations. For example, we can do <code>x.set_bits(8..12, 42)</code> instead of <code>x = (x &amp; 0xfffff0ff) | (42 &lt;&lt; 8)</code>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/gdt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">tss</span><span>::</span><span style="color: #4EC9B0;">TaskStateSegment</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Descriptor</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> tss_segment</span><span>(</span><span style="color: #9CDCFE;">tss</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static TaskStateSegment</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Descriptor</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">mem</span><span>::size_of;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        use</span><span style="color: #4EC9B0;"> bit_field</span><span>::</span><span style="color: #4EC9B0;">BitField</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> ptr</span><span> =</span><span style="color: #9CDCFE;"> tss</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">const</span><span style="color: #9CDCFE;"> _</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> low</span><span> = PRESENT.</span><span style="color: #DCDCAA;">bits</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // base</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        low</span><span>.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">16</span><span>..</span><span style="color: #B5CEA8;">40</span><span>,</span><span style="color: #9CDCFE;"> ptr</span><span>.</span><span style="color: #DCDCAA;">get_bits</span><span>(</span><span style="color: #B5CEA8;">0</span><span>..</span><span style="color: #B5CEA8;">24</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        low</span><span>.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">56</span><span>..</span><span style="color: #B5CEA8;">64</span><span>,</span><span style="color: #9CDCFE;"> ptr</span><span>.</span><span style="color: #DCDCAA;">get_bits</span><span>(</span><span style="color: #B5CEA8;">24</span><span>..</span><span style="color: #B5CEA8;">32</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // limit (the `-1` in needed since the bound is inclusive)</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        low</span><span>.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">0</span><span>..</span><span style="color: #B5CEA8;">16</span><span>, (</span><span style="color: #DCDCAA;">size_of</span><span>::&lt;</span><span style="color: #4EC9B0;">TaskStateSegment</span><span>&gt;() -</span><span style="color: #B5CEA8;"> 1</span><span>)</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // type (0b1001 = available 64-bit tss)</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        low</span><span>.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">40</span><span>..</span><span style="color: #B5CEA8;">44</span><span>,</span><span style="color: #B5CEA8;"> 0b1001</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> high</span><span> =</span><span style="color: #B5CEA8;"> 0</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        high</span><span>.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">0</span><span>..</span><span style="color: #B5CEA8;">32</span><span>,</span><span style="color: #9CDCFE;"> ptr</span><span>.</span><span style="color: #DCDCAA;">get_bits</span><span>(</span><span style="color: #B5CEA8;">32</span><span>..</span><span style="color: #B5CEA8;">64</span><span>));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Descriptor</span><span>::</span><span style="color: #DCDCAA;">SystemSegment</span><span>(</span><span style="color: #9CDCFE;">low</span><span>,</span><span style="color: #9CDCFE;"> high</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>The <code>set_bits</code> and <code>get_bits</code> methods are provided by the <a rel="external" href="https://docs.rs/bit_field/0.6.0/bit_field/trait.BitField.html#method.get_bit"><code>BitField</code> trait</a> of the <code>bit_fields</code> crate. They allow us to easily get or set specific bits in an integer without using bit masks or shift operations. For example, we can do <code>x.set_bits(8..12, 42)</code> instead of <code>x = (x &amp; 0xfffff0ff) | (42 &lt;&lt; 8)</code>.</p>
 <p>To link the <code>bit_fields</code> crate, we modify our <code>Cargo.toml</code> and our <code>src/lib.rs</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">bit_field </span><span>= </span><span style="color:#d69d85;">&quot;0.7.0&quot;
-</span></code></pre>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">extern crate</span><span> bit_field;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">bit_field</span><span> =</span><span style="color: #CE9178;"> &quot;0.7.0&quot;</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> bit_field;</span></span></code></pre>
 <p>We require the <code>'static</code> lifetime for the <code>TaskStateSegment</code> reference, since the hardware might access it on every interrupt as long as the OS runs.</p>
 <h4 id="adding-descriptors-to-the-gdt"><a class="zola-anchor" href="#adding-descriptors-to-the-gdt" aria-label="Anchor link for: adding-descriptors-to-the-gdt">🔗</a>Adding Descriptors to the GDT</h4>
 <p>In order to add descriptors to the GDT, we add a <code>add_entry</code> method:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/gdt.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::structures::gdt::SegmentSelector;
-</span><span style="color:#569cd6;">use </span><span>x86_64::PrivilegeLevel;
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Gdt {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>add_entry(</span><span style="color:#569cd6;">&amp;mut </span><span>self, entry: Descriptor) -&gt; SegmentSelector {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> index = </span><span style="color:#569cd6;">match</span><span> entry {
-</span><span>            Descriptor::UserSegment(value) </span><span style="color:#569cd6;">=&gt; </span><span>self.push(value),
-</span><span>            Descriptor::SystemSegment(value_low, value_high) </span><span style="color:#569cd6;">=&gt; </span><span>{
-</span><span>                </span><span style="color:#569cd6;">let</span><span> index = self.push(value_low);
-</span><span>                self.push(value_high);
-</span><span>                index
-</span><span>            }
-</span><span>        };
-</span><span>        SegmentSelector::new(index </span><span style="color:#569cd6;">as u16</span><span>, PrivilegeLevel::Ring0)
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>For an user segment we just push the <code>u64</code> and remember the index. For a system segment, we push the low and high <code>u64</code> and use the index of the low value. We then use this index to return a new <a href="https://docs.rs/x86/0.8.0/x86/shared/segmentation/struct.SegmentSelector.html#method.new">SegmentSelector</a>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/gdt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">SegmentSelector</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">PrivilegeLevel</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Gdt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> add_entry</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> entry</span><span>:</span><span style="color: #4EC9B0;"> Descriptor</span><span>) -&gt;</span><span style="color: #4EC9B0;"> SegmentSelector</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> index</span><span> =</span><span style="color: #C586C0;"> match</span><span style="color: #9CDCFE;"> entry</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            Descriptor</span><span>::</span><span style="color: #DCDCAA;">UserSegment</span><span>(</span><span style="color: #9CDCFE;">value</span><span>) =&gt;</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">value</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            Descriptor</span><span>::</span><span style="color: #DCDCAA;">SystemSegment</span><span>(</span><span style="color: #9CDCFE;">value_low</span><span>,</span><span style="color: #9CDCFE;"> value_high</span><span>) =&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">                let</span><span style="color: #9CDCFE;"> index</span><span> =</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">value_low</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">                self</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">value_high</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                index</span></span>
+<span class="giallo-l"><span>            }</span></span>
+<span class="giallo-l"><span>        };</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        SegmentSelector</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">index</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u16</span><span>,</span><span style="color: #4EC9B0;"> PrivilegeLevel</span><span>::</span><span style="color: #4EC9B0;">Ring0</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>For an user segment we just push the <code>u64</code> and remember the index. For a system segment, we push the low and high <code>u64</code> and use the index of the low value. We then use this index to return a new <a rel="external" href="https://docs.rs/x86/0.8.0/x86/shared/segmentation/struct.SegmentSelector.html#method.new">SegmentSelector</a>.</p>
 <p>The <code>push</code> method looks like this:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/gdt.rs
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Gdt {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>push(</span><span style="color:#569cd6;">&amp;mut </span><span>self, value: </span><span style="color:#569cd6;">u64</span><span>) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>        </span><span style="color:#569cd6;">if </span><span>self.next_free &lt; self.table.len() {
-</span><span>            </span><span style="color:#569cd6;">let</span><span> index = self.next_free;
-</span><span>            self.table[index] = value;
-</span><span>            self.next_free += </span><span style="color:#b5cea8;">1</span><span>;
-</span><span>            index
-</span><span>        } </span><span style="color:#569cd6;">else </span><span>{
-</span><span>            panic!(</span><span style="color:#d69d85;">&quot;GDT full&quot;</span><span>);
-</span><span>        }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/gdt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Gdt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> push</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> value</span><span>:</span><span style="color: #4EC9B0;"> u64</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">        if</span><span style="color: #569CD6;"> self</span><span>.next_free &lt;</span><span style="color: #569CD6;"> self</span><span>.table.</span><span style="color: #DCDCAA;">len</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> index</span><span> =</span><span style="color: #569CD6;"> self</span><span>.next_free;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            self</span><span>.table[</span><span style="color: #9CDCFE;">index</span><span>] =</span><span style="color: #9CDCFE;"> value</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            self</span><span>.next_free +=</span><span style="color: #B5CEA8;"> 1</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            index</span></span>
+<span class="giallo-l"><span>        }</span><span style="color: #C586C0;"> else</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">            panic!</span><span>(</span><span style="color: #CE9178;">&quot;GDT full&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The method just writes to the <code>next_free</code> entry and returns the corresponding index. If there is no free entry left, we panic since this likely indicates a programming error (we should never need to create more than two or three GDT entries for our kernel).</p>
 <h4 id="loading-the-gdt"><a class="zola-anchor" href="#loading-the-gdt" aria-label="Anchor link for: loading-the-gdt">🔗</a>Loading the GDT</h4>
 <p>To load the GDT, we add a new <code>load</code> method:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/gdt.rs
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Gdt {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>load(</span><span style="color:#569cd6;">&amp;&#39;static </span><span>self) {
-</span><span>        </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::tables::{DescriptorTablePointer, lgdt};
-</span><span>        </span><span style="color:#569cd6;">use </span><span>core::mem::size_of;
-</span><span>
-</span><span>        </span><span style="color:#569cd6;">let</span><span> ptr = DescriptorTablePointer {
-</span><span>            base: self.table.as_ptr() </span><span style="color:#569cd6;">as u64</span><span>,
-</span><span>            limit: (self.table.len() * size_of::&lt;</span><span style="color:#569cd6;">u64</span><span>&gt;() - </span><span style="color:#b5cea8;">1</span><span>) </span><span style="color:#569cd6;">as u16</span><span>,
-</span><span>        };
-</span><span>
-</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{ lgdt(</span><span style="color:#569cd6;">&amp;</span><span>ptr) };
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>We use the <a href="https://docs.rs/x86_64/0.1.1/x86_64/instructions/tables/struct.DescriptorTablePointer.html"><code>DescriptorTablePointer</code> struct</a> and the <a href="https://docs.rs/x86_64/0.1.1/x86_64/instructions/tables/fn.lgdt.html"><code>lgdt</code> function</a> provided by the <code>x86_64</code> crate to load our GDT. Again, we require a <code>'static</code> reference since the GDT possibly needs to live for the rest of the run time.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/gdt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Gdt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> load</span><span>(&amp;&#39;</span><span style="color: #4EC9B0;">static</span><span style="color: #569CD6;"> self</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">tables</span><span>::{</span><span style="color: #4EC9B0;">DescriptorTablePointer</span><span>, lgdt};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">mem</span><span>::size_of;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> ptr</span><span> =</span><span style="color: #4EC9B0;"> DescriptorTablePointer</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            base</span><span>:</span><span style="color: #569CD6;"> self</span><span>.table.</span><span style="color: #DCDCAA;">as_ptr</span><span>()</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            limit</span><span>: (</span><span style="color: #569CD6;">self</span><span>.table.</span><span style="color: #DCDCAA;">len</span><span>() *</span><span style="color: #DCDCAA;"> size_of</span><span>::&lt;</span><span style="color: #4EC9B0;">u64</span><span>&gt;() -</span><span style="color: #B5CEA8;"> 1</span><span>)</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u16</span><span>,</span></span>
+<span class="giallo-l"><span>        };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">        unsafe</span><span> {</span><span style="color: #DCDCAA;"> lgdt</span><span>(&amp;</span><span style="color: #9CDCFE;">ptr</span><span>) };</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>We use the <a rel="external" href="https://docs.rs/x86_64/0.1.1/x86_64/instructions/tables/struct.DescriptorTablePointer.html"><code>DescriptorTablePointer</code> struct</a> and the <a rel="external" href="https://docs.rs/x86_64/0.1.1/x86_64/instructions/tables/fn.lgdt.html"><code>lgdt</code> function</a> provided by the <code>x86_64</code> crate to load our GDT. Again, we require a <code>'static</code> reference since the GDT possibly needs to live for the rest of the run time.</p>
 <h3 id="putting-it-together"><a class="zola-anchor" href="#putting-it-together" aria-label="Anchor link for: putting-it-together">🔗</a>Putting it together</h3>
 <p>We now have a double fault stack and are able to create and load a TSS (which contains an IST). So let’s put everything together to catch kernel stack overflows.</p>
 <p>We already created a new TSS in our <code>interrupts::init</code> function. Now we can load this TSS by creating a new GDT:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init(memory_controller: </span><span style="color:#569cd6;">&amp;mut</span><span> MemoryController) {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> double_fault_stack = memory_controller.alloc_stack(</span><span style="color:#b5cea8;">1</span><span>)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;could not allocate double fault stack&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> tss = TaskStateSegment::new();
-</span><span>    tss.interrupt_stack_table[</span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX</span><span>] = VirtualAddress(
-</span><span>        double_fault_stack.top());
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> gdt = gdt::Gdt::new();
-</span><span>    </span><span style="color:#569cd6;">let</span><span> code_selector = gdt.add_entry(gdt::Descriptor::kernel_code_segment());
-</span><span>    </span><span style="color:#569cd6;">let</span><span> tss_selector = gdt.add_entry(gdt::Descriptor::tss_segment(</span><span style="color:#569cd6;">&amp;</span><span>tss));
-</span><span>    gdt.load();
-</span><span>
-</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>(</span><span style="color: #9CDCFE;">memory_controller</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> MemoryController</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> double_fault_stack</span><span> =</span><span style="color: #9CDCFE;"> memory_controller</span><span>.</span><span style="color: #DCDCAA;">alloc_stack</span><span>(</span><span style="color: #B5CEA8;">1</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;could not allocate double fault stack&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> tss</span><span> =</span><span style="color: #4EC9B0;"> TaskStateSegment</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    tss</span><span>.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX] =</span><span style="color: #DCDCAA;"> VirtualAddress</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        double_fault_stack</span><span>.</span><span style="color: #DCDCAA;">top</span><span>());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> gdt</span><span> =</span><span style="color: #4EC9B0;"> gdt</span><span>::</span><span style="color: #4EC9B0;">Gdt</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> code_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> tss_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;</span><span style="color: #9CDCFE;">tss</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    gdt</span><span>.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    IDT.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>However, when we try to compile it, the following errors occur:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: `tss` does not live long enough
-</span><span>   --&gt; src/interrupts/mod.rs:118:68
-</span><span>    |
-</span><span>118 |    let tss_selector = gdt.add_entry(gdt::Descriptor::tss_segment(&amp;tss));
-</span><span>    |                                         does not live long enough ^^^
-</span><span>...
-</span><span>122 | }
-</span><span>    | - borrowed value only lives until here
-</span><span>    |
-</span><span>    = note: borrowed value must be valid for the static lifetime...
-</span><span>
-</span><span>error: `gdt` does not live long enough
-</span><span>   --&gt; src/interrupts/mod.rs:119:5
-</span><span>    |
-</span><span>119 |    gdt.load();
-</span><span>    |    ^^^ does not live long enough
-</span><span>...
-</span><span>122 | }
-</span><span>    | - borrowed value only lives until here
-</span><span>    |
-</span><span>    = note: borrowed value must be valid for the static lifetime...
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: `tss` does not live long enough</span></span>
+<span class="giallo-l"><span>   --&gt; src/interrupts/mod.rs:118:68</span></span>
+<span class="giallo-l"><span>    |</span></span>
+<span class="giallo-l"><span>118 |    let tss_selector = gdt.add_entry(gdt::Descriptor::tss_segment(&amp;tss));</span></span>
+<span class="giallo-l"><span>    |                                         does not live long enough ^^^</span></span>
+<span class="giallo-l"><span>...</span></span>
+<span class="giallo-l"><span>122 | }</span></span>
+<span class="giallo-l"><span>    | - borrowed value only lives until here</span></span>
+<span class="giallo-l"><span>    |</span></span>
+<span class="giallo-l"><span>    = note: borrowed value must be valid for the static lifetime...</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>error: `gdt` does not live long enough</span></span>
+<span class="giallo-l"><span>   --&gt; src/interrupts/mod.rs:119:5</span></span>
+<span class="giallo-l"><span>    |</span></span>
+<span class="giallo-l"><span>119 |    gdt.load();</span></span>
+<span class="giallo-l"><span>    |    ^^^ does not live long enough</span></span>
+<span class="giallo-l"><span>...</span></span>
+<span class="giallo-l"><span>122 | }</span></span>
+<span class="giallo-l"><span>    | - borrowed value only lives until here</span></span>
+<span class="giallo-l"><span>    |</span></span>
+<span class="giallo-l"><span>    = note: borrowed value must be valid for the static lifetime...</span></span></code></pre>
 <p>The problem is that we require that the TSS and GDT are valid for the rest of the run time (i.e. for the <code>'static</code> lifetime). But our created <code>tss</code> and <code>gdt</code> live on the stack and are thus destroyed at the end of the <code>init</code> function. So how do we fix this problem?</p>
-<p>We could allocate our TSS and GDT on the heap using <code>Box</code> and use <a href="https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw">into_raw</a> and a bit of <code>unsafe</code> to convert it to <code>&amp;'static</code> references (<a href="https://github.com/rust-lang/rfcs/pull/1233">RFC 1233</a> was closed unfortunately).</p>
-<p>Alternatively, we could store them in a <code>static</code> somehow. The <a href="https://docs.rs/lazy_static/0.2.2/lazy_static/"><code>lazy_static</code> macro</a> doesn’t work here, since we need access to the <code>MemoryController</code> for initialization. However, we can use its fundamental building block, the <a href="https://docs.rs/spin/0.4.5/spin/struct.Once.html"><code>spin::Once</code> type</a>.</p>
+<p>We could allocate our TSS and GDT on the heap using <code>Box</code> and use <a rel="external" href="https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw">into_raw</a> and a bit of <code>unsafe</code> to convert it to <code>&amp;'static</code> references (<a rel="external" href="https://github.com/rust-lang/rfcs/pull/1233">RFC 1233</a> was closed unfortunately).</p>
+<p>Alternatively, we could store them in a <code>static</code> somehow. The <a rel="external" href="https://docs.rs/lazy_static/0.2.2/lazy_static/"><code>lazy_static</code> macro</a> doesn’t work here, since we need access to the <code>MemoryController</code> for initialization. However, we can use its fundamental building block, the <a rel="external" href="https://docs.rs/spin/0.4.5/spin/struct.Once.html"><code>spin::Once</code> type</a>.</p>
 <h4 id="spin-once"><a class="zola-anchor" href="#spin-once" aria-label="Anchor link for: spin-once">🔗</a>spin::Once</h4>
-<p>Let’s try to solve our problem using <a href="https://docs.rs/spin/0.4.5/spin/struct.Once.html"><code>spin::Once</code></a>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>spin::Once;
-</span><span>
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">TSS</span><span>: Once&lt;TaskStateSegment&gt; = Once::new();
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">GDT</span><span>: Once&lt;gdt::Gdt&gt; = Once::new();
-</span></code></pre>
-<p>The <code>Once</code> type allows us to initialize a <code>static</code> at runtime. It is safe because the only way to access the static value is through the provided methods (<a href="https://docs.rs/spin/0.4.5/spin/struct.Once.html#method.call_once">call_once</a>, <a href="https://docs.rs/spin/0.4.5/spin/struct.Once.html#method.try">try</a>, and <a href="https://docs.rs/spin/0.4.5/spin/struct.Once.html#method.wait">wait</a>). Thus, no value can be read before initialization and the value can only be initialized once.</p>
+<p>Let’s try to solve our problem using <a rel="external" href="https://docs.rs/spin/0.4.5/spin/struct.Once.html"><code>spin::Once</code></a>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> spin</span><span>::</span><span style="color: #4EC9B0;">Once</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> TSS:</span><span style="color: #4EC9B0;"> Once</span><span>&lt;</span><span style="color: #4EC9B0;">TaskStateSegment</span><span>&gt; =</span><span style="color: #4EC9B0;"> Once</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> GDT:</span><span style="color: #4EC9B0;"> Once</span><span>&lt;</span><span style="color: #9CDCFE;">gdt</span><span>::</span><span style="color: #4EC9B0;">Gdt</span><span>&gt; =</span><span style="color: #4EC9B0;"> Once</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span></code></pre>
+<p>The <code>Once</code> type allows us to initialize a <code>static</code> at runtime. It is safe because the only way to access the static value is through the provided methods (<a rel="external" href="https://docs.rs/spin/0.4.5/spin/struct.Once.html#method.call_once">call_once</a>, <a rel="external" href="https://docs.rs/spin/0.4.5/spin/struct.Once.html#method.try">try</a>, and <a rel="external" href="https://docs.rs/spin/0.4.5/spin/struct.Once.html#method.wait">wait</a>). Thus, no value can be read before initialization and the value can only be initialized once.</p>
 <p>(The <code>Once</code> was added in spin 0.4, so you’re probably need to update your spin dependency.)</p>
 <p>So let’s rewrite our <code>interrupts::init</code> function to use the static <code>TSS</code> and <code>GDT</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>init(memory_controller: </span><span style="color:#569cd6;">&amp;mut</span><span> MemoryController) {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> double_fault_stack = memory_controller.alloc_stack(</span><span style="color:#b5cea8;">1</span><span>)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;could not allocate double fault stack&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> tss = </span><span style="color:#b4cea8;">TSS</span><span>.call_once(|| {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> tss = TaskStateSegment::new();
-</span><span>        tss.interrupt_stack_table[</span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX</span><span>] = VirtualAddress(
-</span><span>            double_fault_stack.top());
-</span><span>        tss
-</span><span>    });
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> gdt = </span><span style="color:#b4cea8;">GDT</span><span>.call_once(|| {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> gdt = gdt::Gdt::new();
-</span><span>        </span><span style="color:#569cd6;">let</span><span> code_selector = gdt.add_entry(gdt::Descriptor::
-</span><span>                            kernel_code_segment());
-</span><span>        </span><span style="color:#569cd6;">let</span><span> tss_selector = gdt.add_entry(gdt::Descriptor::tss_segment(</span><span style="color:#569cd6;">&amp;</span><span>tss));
-</span><span>        gdt
-</span><span>    });
-</span><span>    gdt.load();
-</span><span>
-</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>(</span><span style="color: #9CDCFE;">memory_controller</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> MemoryController</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> double_fault_stack</span><span> =</span><span style="color: #9CDCFE;"> memory_controller</span><span>.</span><span style="color: #DCDCAA;">alloc_stack</span><span>(</span><span style="color: #B5CEA8;">1</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;could not allocate double fault stack&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> tss</span><span> = TSS.</span><span style="color: #DCDCAA;">call_once</span><span>(|| {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> tss</span><span> =</span><span style="color: #4EC9B0;"> TaskStateSegment</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        tss</span><span>.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX] =</span><span style="color: #DCDCAA;"> VirtualAddress</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            double_fault_stack</span><span>.</span><span style="color: #DCDCAA;">top</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        tss</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> gdt</span><span> = GDT.</span><span style="color: #DCDCAA;">call_once</span><span>(|| {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> gdt</span><span> =</span><span style="color: #4EC9B0;"> gdt</span><span>::</span><span style="color: #4EC9B0;">Gdt</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> code_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">                            kernel_code_segment</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> tss_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;</span><span style="color: #9CDCFE;">tss</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    gdt</span><span>.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    IDT.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Now it should compile again!</p>
 <h4 id="the-final-steps"><a class="zola-anchor" href="#the-final-steps" aria-label="Anchor link for: the-final-steps">🔗</a>The final Steps</h4>
 <p>We’re almost done. We successfully loaded our new GDT, which contains a TSS descriptor. Now there are just a few steps left:</p>
@@ -710,56 +678,54 @@
 <li>As soon as our TSS is loaded, the CPU has access to a valid interrupt stack table (IST). Then we can tell the CPU that it should use our new double fault stack by modifying our double fault IDT entry.</li>
 </ol>
 <p>For the first two steps, we need access to the <code>code_selector</code> and <code>tss_selector</code> variables outside of the closure. We can achieve this by moving the <code>let</code> declarations out of the closure:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/mod.rs
-</span><span style="color:#569cd6;">pub fn </span><span>init(memory_controller: </span><span style="color:#569cd6;">&amp;mut</span><span> MemoryController) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::structures::gdt::SegmentSelector;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::segmentation::set_cs;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::tables::load_tss;
-</span><span>    </span><span style="color:#569cd6;">...
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> code_selector = SegmentSelector(</span><span style="color:#b5cea8;">0</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> tss_selector = SegmentSelector(</span><span style="color:#b5cea8;">0</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> gdt = </span><span style="color:#b4cea8;">GDT</span><span>.call_once(|| {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> gdt = gdt::Gdt::new();
-</span><span>        code_selector = gdt.add_entry(gdt::Descriptor::kernel_code_segment());
-</span><span>        tss_selector = gdt.add_entry(gdt::Descriptor::tss_segment(</span><span style="color:#569cd6;">&amp;</span><span>tss));
-</span><span>        gdt
-</span><span>    });
-</span><span>    gdt.load();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#608b4e;">// reload code segment register
-</span><span>        set_cs(code_selector);
-</span><span>        </span><span style="color:#608b4e;">// load TSS
-</span><span>        load_tss(tss_selector);
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
-</span><span>}
-</span></code></pre>
-<p>We first set the descriptors to <code>empty</code> and then update them from inside the closure (which implicitly borrows them as <code>&amp;mut</code>). Now we’re able to reload the code segment register using <a href="https://docs.rs/x86_64/0.1.2/x86_64/instructions/segmentation/fn.set_cs.html"><code>set_cs</code></a> and to load the TSS using <a href="https://docs.rs/x86_64/0.1.2/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/mod.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>(</span><span style="color: #9CDCFE;">memory_controller</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> MemoryController</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">SegmentSelector</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">segmentation</span><span>::set_cs;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">tables</span><span>::load_tss;</span></span>
+<span class="giallo-l"><span>    ...</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> code_selector</span><span> =</span><span style="color: #DCDCAA;"> SegmentSelector</span><span>(</span><span style="color: #B5CEA8;">0</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> tss_selector</span><span> =</span><span style="color: #DCDCAA;"> SegmentSelector</span><span>(</span><span style="color: #B5CEA8;">0</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> gdt</span><span> = GDT.</span><span style="color: #DCDCAA;">call_once</span><span>(|| {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> gdt</span><span> =</span><span style="color: #4EC9B0;"> gdt</span><span>::</span><span style="color: #4EC9B0;">Gdt</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        code_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        tss_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;</span><span style="color: #9CDCFE;">tss</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    gdt</span><span>.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // reload code segment register</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        set_cs</span><span>(</span><span style="color: #9CDCFE;">code_selector</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // load TSS</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        load_tss</span><span>(</span><span style="color: #9CDCFE;">tss_selector</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    IDT.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>We first set the descriptors to <code>empty</code> and then update them from inside the closure (which implicitly borrows them as <code>&amp;mut</code>). Now we’re able to reload the code segment register using <a rel="external" href="https://docs.rs/x86_64/0.1.2/x86_64/instructions/segmentation/fn.set_cs.html"><code>set_cs</code></a> and to load the TSS using <a rel="external" href="https://docs.rs/x86_64/0.1.2/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>.</p>
 <p>Now that we loaded a valid TSS and interrupt stack table, we can set the stack index for our double fault handler in the IDT:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupt/mod.rs
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: idt::Idt = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = idt::Idt::new();
-</span><span>        </span><span style="color:#569cd6;">...
-</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>            idt.double_fault.set_handler_fn(double_fault_handler)
-</span><span>                .set_stack_index(</span><span style="color:#b4cea8;">DOUBLE_FAULT_IST_INDEX </span><span style="color:#569cd6;">as u16</span><span>);
-</span><span>        }
-</span><span>        </span><span style="color:#569cd6;">...
-</span><span>    };
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupt/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> IDT:</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span>        ...</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            idt</span><span>.double_fault.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">double_fault_handler</span><span>)</span></span>
+<span class="giallo-l"><span>                .</span><span style="color: #DCDCAA;">set_stack_index</span><span>(DOUBLE_FAULT_IST_INDEX</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u16</span><span>);</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>        ...</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The <code>set_stack_index</code> method is unsafe because the the caller must ensure that the used index is valid and not already used for another exception.</p>
 <p>That’s it! Now the CPU should switch to the double fault stack whenever a double fault occurs. Thus, we are able to catch <em>all</em> double faults, including kernel stack overflows:</p>
 <p><img src="https://os.phil-opp.com/double-faults/qemu-double-fault-on-stack-overflow.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT and a dump of the exception stack frame" /></p>
 <p>From now on we should never see a triple fault again!</p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What’s next?</h2>
 <p>Now that we mastered exceptions, it’s time to explore another kind of interrupts: interrupts from external devices such as timers, keyboards, or network controllers. These hardware interrupts are very similar to exceptions, e.g. they are also dispatched through the IDT.</p>
-<p>However, unlike exceptions, they don’t arise directly on the CPU. Instead, an <em>interrupt controller</em> aggregates these interrupts and forwards them to CPU depending on their priority. In the next posts we will explore the two interrupt controller variants on x86: the <a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> (“PIC”) and the <a href="https://en.wikipedia.org/wiki/Advanced_Programmable_Interrupt_Controller">APIC</a>. This will allow us to react to keyboard and mouse input.</p>
+<p>However, unlike exceptions, they don’t arise directly on the CPU. Instead, an <em>interrupt controller</em> aggregates these interrupts and forwards them to CPU depending on their priority. In the next posts we will explore the two interrupt controller variants on x86: the <a rel="external" href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> (“PIC”) and the <a rel="external" href="https://en.wikipedia.org/wiki/Advanced_Programmable_Interrupt_Controller">APIC</a>. This will allow us to react to keyboard and mouse input.</p>
 
 </main>
 

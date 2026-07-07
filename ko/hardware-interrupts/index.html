@@ -141,7 +141,7 @@
     <div class="">
     <p>이 글에서는 프로그래밍 할 수 있는 인터럽트 컨트롤러가 인터럽트들을 CPU로 정확히 전달하도록 설정할 것입니다. 새로운 인터럽트들을 처리하기 위해 인터럽트 서술자 테이블 (interrupt descriptor table)에 새로운 엔트리들을 추가할 것입니다 (이전에 예외 처리 함수를 등록했듯이). 또한 일정 주기마다 타이머 인터럽트를 일으키는 방법 및 키보드 입력 받는 방법도 알아볼 것입니다.</p>
 <span id="continue-reading"></span>
-<p>이 블로그는 <a href="https://github.com/phil-opp/blog_os">GitHub 저장소</a>에서 오픈 소스로 개발되고 있으니, 문제나 문의사항이 있다면 저장소의 ‘Issue’ 기능을 이용해 제보해주세요. <a href="https://os.phil-opp.com/ko/hardware-interrupts/#comments">페이지 맨 아래</a>에 댓글을 남기실 수도 있습니다. 이 포스트와 관련된 모든 소스 코드는 저장소의 <a href="https://github.com/phil-opp/blog_os/tree/post-07"><code>post-07 브랜치</code></a>에서 확인하실 수 있습니다.</p>
+<p>이 블로그는 <a rel="external" href="https://github.com/phil-opp/blog_os">GitHub 저장소</a>에서 오픈 소스로 개발되고 있으니, 문제나 문의사항이 있다면 저장소의 ‘Issue’ 기능을 이용해 제보해주세요. <a href="https://os.phil-opp.com/ko/hardware-interrupts/#comments">페이지 맨 아래</a>에 댓글을 남기실 수도 있습니다. 이 포스트와 관련된 모든 소스 코드는 저장소의 <a rel="external" href="https://github.com/phil-opp/blog_os/tree/post-07"><code>post-07 브랜치</code></a>에서 확인하실 수 있습니다.</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -207,162 +207,152 @@
     </details>
 
 <h2 id="gaeyo"><a class="zola-anchor" href="#gaeyo" aria-label="Anchor link for: gaeyo">🔗</a>개요</h2>
-<p>CPU에 연결된 주변 장치들은 인터럽트를 통해 CPU에 알림을 보낼 수 있습니다. 그래서 커널이 주기적으로 키보드 입력이 들어왔는지 확인하게 하는 대신 (이를 <a href="https://en.wikipedia.org/wiki/Polling_(computer_science)"><em>폴링(polling)</em></a> 방식이라고 합니다), 키보드 입력이 들어올 때마다 키보드가 직접 커널에 알림을 보낼 수 있습니다. 이 방식을 사용하면 이벤트 발생 시에만 커널이 행동을 취하면 되므로 에너지 효율성이 더 좋습니다. 또한 이벤트가 발생 시 커널이 다음 poll까지 기다리지 않고 바로 반응할 수 있기에 이벤트에 대한 반응 속도도 더 빠릅니다.</p>
+<p>CPU에 연결된 주변 장치들은 인터럽트를 통해 CPU에 알림을 보낼 수 있습니다. 그래서 커널이 주기적으로 키보드 입력이 들어왔는지 확인하게 하는 대신 (이를 <a rel="external" href="https://en.wikipedia.org/wiki/Polling_(computer_science)"><em>폴링(polling)</em></a> 방식이라고 합니다), 키보드 입력이 들어올 때마다 키보드가 직접 커널에 알림을 보낼 수 있습니다. 이 방식을 사용하면 이벤트 발생 시에만 커널이 행동을 취하면 되므로 에너지 효율성이 더 좋습니다. 또한 이벤트가 발생 시 커널이 다음 poll까지 기다리지 않고 바로 반응할 수 있기에 이벤트에 대한 반응 속도도 더 빠릅니다.</p>
 <p>하드웨어 장치들을 모두 CPU에 직접 연결하는 것은 불가능합니다. 대신 별도의 <em>인터럽트 컨트롤러 (interrupt controller)</em> 가 주변 장치로부터 전송된 인터럽트들을 수합한 뒤 CPU에 알림을 보냅니다.</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>                                    ____________             _____
-</span><span>               Timer ------------&gt; |            |           |     |
-</span><span>               Keyboard ---------&gt; | Interrupt  |---------&gt; | CPU |
-</span><span>               Other Hardware ---&gt; | Controller |           |_____|
-</span><span>               Etc. -------------&gt; |____________|
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>                                    ____________             _____</span></span>
+<span class="giallo-l"><span>               Timer ------------&gt; |            |           |     |</span></span>
+<span class="giallo-l"><span>               Keyboard ---------&gt; | Interrupt  |---------&gt; | CPU |</span></span>
+<span class="giallo-l"><span>               Other Hardware ---&gt; | Controller |           |_____|</span></span>
+<span class="giallo-l"><span>               Etc. -------------&gt; |____________|</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>대부분의 인터럽트 컨트롤러들은 프로그래밍을 통해 인터럽트마다 다른 우선순위 레벨을 배정하는 것이 가능합니다. 예를 들어, 키보드 인터럽트보다 타이머 인터럽트에 더 높은 우선순위 레벨을 배정하여 CPU에서 시간을 더 정확히 측정할 수 있습니다.</p>
 <p>예외와 달리 하드웨어 인터럽트는 <em>비동기적으로 (asynchronously)</em> 일어납니다. 즉 CPU에서 실행 중인 코드와 별개로 인터럽트는 언제든 발생할 수 있다는 것입니다. 따라서, 커널에 인터럽트를 도입하면서 동시성(concurrency)의 형태가 등장하고 동시성 관련 버그 발생의 가능성도 생깁니다. Rust의 엄격한 소유권 (ownership) 모델이 전역 가변 변수 사용을 금지해 동시성 관련 버그 발생 가능성을 줄여주지만, 교착 상태(deadlock)를 막아주지는 못하며 이는 본문 아래에서 곧 확인하실 수 있습니다.</p>
 <h2 id="8259-pic"><a class="zola-anchor" href="#8259-pic" aria-label="Anchor link for: 8259-pic">🔗</a>8259 PIC</h2>
-<p><a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> 는 프로그래밍 가능한 인터럽트 컨트롤러 (PIC; Programmable Interrupt Controller)이며, 1976년에 처음 도입되었습니다. 이 장치는 오래전에 신형 장치 <a href="https://en.wikipedia.org/wiki/Intel_APIC_Architecture">APIC</a>로 대체됐지만, 이전 버전과의 호환성 유지를 위해 그 인터페이스만은 최신 시스템들도 지원하고 있습니다. 8259 PIC를 다루는 것이 APIC를 다루는 것보다 쉽습니다. 그렇기에 인터럽트에 대해 배우고 입문하는 현재 단계에서는 8259 PIC를 쓰고, 이 블로그 시리즈의 이후 글에서는 APIC로 교체하여 사용하겠습니다.</p>
+<p><a rel="external" href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> 는 프로그래밍 가능한 인터럽트 컨트롤러 (PIC; Programmable Interrupt Controller)이며, 1976년에 처음 도입되었습니다. 이 장치는 오래전에 신형 장치 <a rel="external" href="https://en.wikipedia.org/wiki/Intel_APIC_Architecture">APIC</a>로 대체됐지만, 이전 버전과의 호환성 유지를 위해 그 인터페이스만은 최신 시스템들도 지원하고 있습니다. 8259 PIC를 다루는 것이 APIC를 다루는 것보다 쉽습니다. 그렇기에 인터럽트에 대해 배우고 입문하는 현재 단계에서는 8259 PIC를 쓰고, 이 블로그 시리즈의 이후 글에서는 APIC로 교체하여 사용하겠습니다.</p>
 <p>Intel 8259 PIC는 8개의 인터럽트 통신선과 CPU와 통신하기 위한 몇 개의 통신선을 가집니다. 과거의 전형적인 PC 시스템은 8259 PIC를 2개 장착하고 있었는데 (주 PIC와 부 PIC), 주 PIC의 인터럽트 통신선 중 하나를 부 PIC에 연결했습니다.</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>                     ____________                          ____________
-</span><span>Real Time Clock --&gt; |            |   Timer -------------&gt; |            |
-</span><span>ACPI -------------&gt; |            |   Keyboard-----------&gt; |            |      _____
-</span><span>Available --------&gt; | Secondary  |----------------------&gt; | Primary    |     |     |
-</span><span>Available --------&gt; | Interrupt  |   Serial Port 2 -----&gt; | Interrupt  |---&gt; | CPU |
-</span><span>Mouse ------------&gt; | Controller |   Serial Port 1 -----&gt; | Controller |     |_____|
-</span><span>Co-Processor -----&gt; |            |   Parallel Port 2/3 -&gt; |            |
-</span><span>Primary ATA ------&gt; |            |   Floppy disk -------&gt; |            |
-</span><span>Secondary ATA ----&gt; |____________|   Parallel Port 1----&gt; |____________|
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>                     ____________                          ____________</span></span>
+<span class="giallo-l"><span>Real Time Clock --&gt; |            |   Timer -------------&gt; |            |</span></span>
+<span class="giallo-l"><span>ACPI -------------&gt; |            |   Keyboard-----------&gt; |            |      _____</span></span>
+<span class="giallo-l"><span>Available --------&gt; | Secondary  |----------------------&gt; | Primary    |     |     |</span></span>
+<span class="giallo-l"><span>Available --------&gt; | Interrupt  |   Serial Port 2 -----&gt; | Interrupt  |---&gt; | CPU |</span></span>
+<span class="giallo-l"><span>Mouse ------------&gt; | Controller |   Serial Port 1 -----&gt; | Controller |     |_____|</span></span>
+<span class="giallo-l"><span>Co-Processor -----&gt; |            |   Parallel Port 2/3 -&gt; |            |</span></span>
+<span class="giallo-l"><span>Primary ATA ------&gt; |            |   Floppy disk -------&gt; |            |</span></span>
+<span class="giallo-l"><span>Secondary ATA ----&gt; |____________|   Parallel Port 1----&gt; |____________|</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>위 도표는 인터럽트 통신선을 배정하는 전형적인 방식을 보여줍니다. 15개의 선 중 대부분은 어떤 장치와 연결할지 이미 정해져 있습니다. 예를 들어, 부 PIC의 4번 통신선은 마우스에 연결됩니다.</p>
-<p>각 컨트롤러는 “command” 포트와 “data” 포트, 이 2개의 <a href="https://os.phil-opp.com/testing/#i-o-ports">입출력 포트</a>들을 사용해 설정합니다. 주 PIC는 <code>0x20</code>번 포트가 command 포트, <code>0x21</code>번 포트가 data 포트입니다. 부 PIC는 <code>0xa0</code>번 포트가 command 포트, <code>0xa1</code> 포트가 data 포트입니다. PIC를 설정하는 자세한 방법에 대해서는 <a href="https://wiki.osdev.org/8259_PIC">osdev.org의 글</a>을 찾아보시길 바랍니다.</p>
+<p>각 컨트롤러는 “command” 포트와 “data” 포트, 이 2개의 <a href="https://os.phil-opp.com/testing/#i-o-ports">입출력 포트</a>들을 사용해 설정합니다. 주 PIC는 <code>0x20</code>번 포트가 command 포트, <code>0x21</code>번 포트가 data 포트입니다. 부 PIC는 <code>0xa0</code>번 포트가 command 포트, <code>0xa1</code> 포트가 data 포트입니다. PIC를 설정하는 자세한 방법에 대해서는 <a rel="external" href="https://wiki.osdev.org/8259_PIC">osdev.org의 글</a>을 찾아보시길 바랍니다.</p>
 <h3 id="guhyeon"><a class="zola-anchor" href="#guhyeon" aria-label="Anchor link for: guhyeon">🔗</a>구현</h3>
 <p>위 PIC들의 기본 설정에서 PIC는 0-15 구간의 인터럽트 벡터 번호를 CPU에 전송합니다. IDT에서 이 구간의 인터럽트 벡터 번호들은 이미 CPU 예외들에 배정되어 있기에, PIC의 기본 설정을 그대로 사용하지 못합니다. 예를 들면 벡터 번호 8은 더블 폴트에 배정되어 있습니다. 벡터 번호가 중복되는 문제를 해결하려면 PIC가 전송하는 인터럽트들을 다른 벡터 번호에 재배정 해야 합니다. 기존 예외들의 벡터 번호와 겹치지 않는 이상 인터럽트들에 어떤 번호를 배정하는지는 크게 중요하지 않습니다만, 예외들에 배정된 첫 32개의 슬롯 다음 비는 32-47 구간의 벡터 번호를 고르는 것이 일반적입니다.</p>
-<p>PIC 장치의 command 포트 및 data 포트에 특수한 값을 쓰면 장치 설정을 변경할 수 있습니다. 운 좋게도 <a href="https://docs.rs/pic8259/0.10.1/pic8259/"><code>pic8259</code></a> 크레이트 덕에 우리가 장치 설정 초기화/변경 로직을 직접 작성할 필요는 없습니다. 작동 원리가 궁금하시다면 해당 크레이트의 <a href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">소스 코드</a>를 직접 확인해보세요. 코드양이 많지 않고 문서화도 잘 되어 있습니다.</p>
+<p>PIC 장치의 command 포트 및 data 포트에 특수한 값을 쓰면 장치 설정을 변경할 수 있습니다. 운 좋게도 <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/"><code>pic8259</code></a> 크레이트 덕에 우리가 장치 설정 초기화/변경 로직을 직접 작성할 필요는 없습니다. 작동 원리가 궁금하시다면 해당 크레이트의 <a rel="external" href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">소스 코드</a>를 직접 확인해보세요. 코드양이 많지 않고 문서화도 잘 되어 있습니다.</p>
 <p>의존 크레이트로 해당 크레이트를 추가하기 위해 아래의 코드를 추가합니다.</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">pic8259 </span><span>= </span><span style="color:#d69d85;">&quot;0.10.1&quot;
-</span></code></pre>
-<p>이 크레이트의 <a href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a> 구조체는 위에서 봤던 주/부 PIC 연결 방식을 적절한 추상 레벨에서 표현합니다. 이 구조체는 아래처럼 사용하도록 설계되었습니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>pic8259::ChainedPics;
-</span><span style="color:#569cd6;">use</span><span> spin;
-</span><span>
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#b5cea8;">32</span><span>;
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span>: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#b4cea8;">PIC_1_OFFSET </span><span>+ </span><span style="color:#b5cea8;">8</span><span>;
-</span><span>
-</span><span style="color:#569cd6;">pub static </span><span style="color:#b4cea8;">PICS</span><span>: spin::Mutex&lt;ChainedPics&gt; =
-</span><span>    spin::Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{ ChainedPics::new(</span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>, </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span>) });
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">pic8259</span><span> =</span><span style="color: #CE9178;"> &quot;0.10.1&quot;</span></span></code></pre>
+<p>이 크레이트의 <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a> 구조체는 위에서 봤던 주/부 PIC 연결 방식을 적절한 추상 레벨에서 표현합니다. 이 구조체는 아래처럼 사용하도록 설계되었습니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> pic8259</span><span>::</span><span style="color: #4EC9B0;">ChainedPics</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span> spin;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> PIC_1_OFFSET:</span><span style="color: #4EC9B0;"> u8</span><span> =</span><span style="color: #B5CEA8;"> 32</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> PIC_2_OFFSET:</span><span style="color: #4EC9B0;"> u8</span><span> = PIC_1_OFFSET +</span><span style="color: #B5CEA8;"> 8</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub static</span><span> PICS:</span><span style="color: #4EC9B0;"> spin</span><span>::</span><span style="color: #4EC9B0;">Mutex</span><span>&lt;</span><span style="color: #4EC9B0;">ChainedPics</span><span>&gt; =</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    spin</span><span>::</span><span style="color: #4EC9B0;">Mutex</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #569CD6;">unsafe</span><span> {</span><span style="color: #4EC9B0;"> ChainedPics</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(PIC_1_OFFSET, PIC_2_OFFSET) });</span></span></code></pre>
 <p>위에서 언급했듯이 PIC들이 사용할 벡터 번호의 오프셋을 32-47 구간에서 선택합니다. <code>ChainedPics</code> 구조체를 감싼 <code>Mutex</code>의 <code>lock</code> 함수를 통해 안전하게 값을 수정할 수 있는데, 이는 다음 단계에서 유용합니다. <code>ChainedPics::new</code> 함수에 잘못된 오프셋을 넘기면 undefined behavior가 일어날 수 있어 이 함수는 unsafe 함수로 정의되었습니다.</p>
 <p>이제 <code>init</code> 함수에서 8259 PIC 장치를 초기화할 수 있습니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init() {
-</span><span>    gdt::init();
-</span><span>    interrupts::init_idt();
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span>.lock().initialize() }; </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>}
-</span></code></pre>
-<p><a href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> 함수를 사용해 PIC 장치를 초기화합니다.  PIC 장치를 잘못 초기화하면 undefined behavior를 일으킬 수 있으므로, <code>ChainedPics::new</code> 함수와 마찬가지로 이 함수도 unsafe 함수로 정의되었습니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    gdt</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init_idt</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #4EC9B0;"> interrupts</span><span>::PICS.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">initialize</span><span>() };</span><span style="color: #6A9955;"> // 새로 추가함</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> 함수를 사용해 PIC 장치를 초기화합니다.  PIC 장치를 잘못 초기화하면 undefined behavior를 일으킬 수 있으므로, <code>ChainedPics::new</code> 함수와 마찬가지로 이 함수도 unsafe 함수로 정의되었습니다.</p>
 <p>추가한 코드에 문제가 없었다면, 다시 <code>cargo run</code>을 실행해도 예전처럼 “It did not crash“라는 메시지가 출력될 것입니다.</p>
 <h2 id="inteoreobteu-hwalseonghwahagi"><a class="zola-anchor" href="#inteoreobteu-hwalseonghwahagi" aria-label="Anchor link for: inteoreobteu-hwalseonghwahagi">🔗</a>인터럽트 활성화하기</h2>
 <p>CPU 설정에서 인터럽트 사용이 해제되어 있었기에 아직 아무 일도 일어나지 않았습니다. 인터럽트 사용이 해제되어 있으면 CPU는 인터럽트 컨트롤러부터 오는 신호를 전혀 받지 않고, 따라서 어떤 인터럽트도 CPU에 도달할 수 없습니다. CPU 설정을 바꿔보겠습니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init() {
-</span><span>    gdt::init();
-</span><span>    interrupts::init_idt();
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span>.lock().initialize() };
-</span><span>    x86_64::instructions::interrupts::enable();     </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    gdt</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init_idt</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #4EC9B0;"> interrupts</span><span>::PICS.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">initialize</span><span>() };</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">interrupts</span><span>::</span><span style="color: #DCDCAA;">enable</span><span>();</span><span style="color: #6A9955;">     // 새로 추가함</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p><code>x86_64</code> 크레이트의 <code>interrupts::enable</code> 함수는 <code>sti</code> 명령어 (“set interrupts”)를 실행해 외부 인터럽트를 사용하도록 설정합니다. 이제 <code>cargo run</code>을 실행하면 더블 폴트가 발생하는 것을 확인할 수 있습니다.</p>
 <p><img src="https://os.phil-opp.com/ko/hardware-interrupts/qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT because of hardware timer" /></p>
-<p>더블 폴트가 발생하는 이유는, <a href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a> 장치에서 기본적으로 하드웨어 타이머를 사용하도록 설정이 되어 있고, CPU에서 인터럽트 사용을 활성화한 직후부터 타이머 인터럽트가 CPU로 전송되기 때문입니다. 우리가 아직 타이머 인터럽트 처리 함수를 정의하지 않았기 때문에 더블 폴트 처리 함수가 호출됩니다.</p>
+<p>더블 폴트가 발생하는 이유는, <a rel="external" href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a> 장치에서 기본적으로 하드웨어 타이머를 사용하도록 설정이 되어 있고, CPU에서 인터럽트 사용을 활성화한 직후부터 타이머 인터럽트가 CPU로 전송되기 때문입니다. 우리가 아직 타이머 인터럽트 처리 함수를 정의하지 않았기 때문에 더블 폴트 처리 함수가 호출됩니다.</p>
 <h2 id="taimeo-inteoreobteu-ceorihagi"><a class="zola-anchor" href="#taimeo-inteoreobteu-ceorihagi" aria-label="Anchor link for: taimeo-inteoreobteu-ceorihagi">🔗</a>타이머 인터럽트 처리하기</h2>
 <p><a href="https://os.phil-opp.com/ko/hardware-interrupts/#8259-pic">위 도표</a>를 보면 타이머는 주 PIC의 0번 통신선을 사용합니다. 이는 즉 타이머 인터럽트가 CPU에 인터럽트 벡터 번호가 32 (0 + 오프셋 32)인 인터럽트로 전송된다는 것을 뜻합니다. 코드에 번호 32를 그대로 적지 않고 <code>InterruptIndex</code> enum에 저장합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span>#[derive(Debug, Clone, Copy)]
-</span><span>#[repr(u8)]
-</span><span style="color:#569cd6;">pub enum </span><span>InterruptIndex {
-</span><span>    Timer = </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>InterruptIndex {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>as_u8(self) -&gt; </span><span style="color:#569cd6;">u8 </span><span>{
-</span><span>        self </span><span style="color:#569cd6;">as u8
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>as_usize(self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>        </span><span style="color:#569cd6;">usize</span><span>::from(self.as_u8())
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p><a href="https://doc.rust-lang.org/reference/items/enumerations.html#custom-discriminant-values-for-fieldless-enumerations">C언어의 enum</a>처럼 이 enum은 각 분류에 사용할 인덱스 값을 지정할 수 있습니다. <code>repr(u8)</code> 속성은 해당 enum을 <code>u8</code> 타입으로서 저장 및 표현되도록 합니다. 향후에 새로운 인터럽트들을 지원해야 할 때 이 enum에 새로운 분류를 추가할 것입니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>)]</span></span>
+<span class="giallo-l"><span>#[repr(</span><span style="color: #4EC9B0;">u8</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> InterruptIndex</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Timer</span><span> = PIC_1_OFFSET,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> InterruptIndex</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> as_u8</span><span>(</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> u8</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self as</span><span style="color: #4EC9B0;"> u8</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> as_usize</span><span>(</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        usize</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>())</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><a rel="external" href="https://doc.rust-lang.org/reference/items/enumerations.html#custom-discriminant-values-for-fieldless-enumerations">C언어의 enum</a>처럼 이 enum은 각 분류에 사용할 인덱스 값을 지정할 수 있습니다. <code>repr(u8)</code> 속성은 해당 enum을 <code>u8</code> 타입으로서 저장 및 표현되도록 합니다. 향후에 새로운 인터럽트들을 지원해야 할 때 이 enum에 새로운 분류를 추가할 것입니다.</p>
 <p>이제 타이머 인터럽트를 처리할 함수를 작성할 수 있습니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">use crate</span><span>::print;
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
-</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
-</span><span>        […]
-</span><span>        idt[InterruptIndex::Timer.as_usize()]
-</span><span>            .set_handler_fn(timer_interrupt_handler); </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>
-</span><span>        idt
-</span><span>    };
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>timer_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;.&quot;</span><span>);
-</span><span>}
-</span></code></pre>
-<p><code>timer_interrupt_handler</code> 함수는 우리가 가진 다른 예외 처리 함수들과 같은 함수 원형을 가지는데, 그 이유는 CPU가 예외와 인터럽트에 같은 방식으로 대응하기 때문입니다 (유일한 차이점은 일부 예외들이 오류 코드를 추가로 push한다는 것). <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> 구조체는 <a href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> 트레이트를 구현해서 배열을 색인하는 것과 동일한 문법을 써서 테이블의 각 엔트리에 접근할 수 있습니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use crate</span><span>::print;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> IDT:</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
+<span class="giallo-l"><span>        […]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Timer</span><span>.</span><span style="color: #DCDCAA;">as_usize</span><span>()]</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">timer_interrupt_handler</span><span>);</span><span style="color: #6A9955;"> // 새로 추가함</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> timer_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;.&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><code>timer_interrupt_handler</code> 함수는 우리가 가진 다른 예외 처리 함수들과 같은 함수 원형을 가지는데, 그 이유는 CPU가 예외와 인터럽트에 같은 방식으로 대응하기 때문입니다 (유일한 차이점은 일부 예외들이 오류 코드를 추가로 push한다는 것). <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> 구조체는 <a rel="external" href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> 트레이트를 구현해서 배열을 색인하는 것과 동일한 문법을 써서 테이블의 각 엔트리에 접근할 수 있습니다.</p>
 <p>우리가 작성한 타이머 인트럽트 처리 함수는 화면에 점을 출력합니다. 타이머 인터럽트는 주기적으로 발생하므로, 타이머 주기마다 화면에 새로운 점이 출력되기를 기대하는 것이 자연스럽습니다. 하지만 커널을 실행해 보면 화면에 점이 단 1개만 출력될 것입니다.</p>
 <p><img src="https://os.phil-opp.com/ko/hardware-interrupts/qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
 <h3 id="end-of-interrupt"><a class="zola-anchor" href="#end-of-interrupt" aria-label="Anchor link for: end-of-interrupt">🔗</a>End of Interrupt</h3>
 <p>점이 1개만 출력되는 이유는 PIC가 인터럽트 처리 함수로부터 명시적으로 “end of interrupt” (EOI) 신호가 전송되어 오기를 기다리기 때문입니다. 이 신호는 PIC에 해당 인터럽트가 처리되었으며 시스템이 다음 인터럽트를 받을 준비가 된 것을 알립니다. 신호를 받지 못한 PIC는 시스템이 아직 첫 타이머 인터럽트를 처리 중이라 생각하고 EOI 신호가 올 때까지 다음 인터럽트를 보내지 않고 기다리는 것입니다.</p>
 <p>static으로 선언된 <code>PICS</code> 구조체를 다시 사용해 EOI 신호를 보냅니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>timer_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;.&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> timer_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;.&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Timer</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p><code>notify_end_of_interrupt</code> 함수는 주 PIC와 부 PIC 중 누가 인터럽트를 보냈었는지 파악하고, 그 후 <code>command</code> 포트와 <code>data</code> 포트를 사용해 인터럽트를 전송했던 PIC로 EOI 신호를 보냅니다. 부 PIC가 인터럽트를 보냈었다면, 부 PIC가 주 PIC의 입력 통신선에 연결되어 있다 보니 두 PIC 모두 EOI 신호를 받게 됩니다.</p>
 <p>여기서 우리는 올바른 인터럽트 벡터 번호를 사용하도록 주의해야 합니다. 잘못된 번호를 쓰면, 아직 CPU로 전송하지 않은 중요한 인터럽트가 소실되거나 시스템이 아무 반응도 하지 않게 될 수 있습니다. 이런 이유로 <code>notify_end_of_interrupt</code> 함수가 <code>unsafe</code>로 선언된 것입니다.</p>
 <p>다시 <code>cargo run</code>을 실행하면 화면에 주기적으로 점이 찍히는 것을 확인할 수 있습니다.</p>
 <p><img src="https://os.phil-opp.com/ko/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
 <h3 id="taimeo-seoljeonghagi"><a class="zola-anchor" href="#taimeo-seoljeonghagi" aria-label="Anchor link for: taimeo-seoljeonghagi">🔗</a>타이머 설정하기</h3>
-<p>우리가 쓰는 하드웨어 타이머는 <em>Programmable Interval Timer</em>, 또는 줄여서 PIT라고 부릅니다. 이름에서 알 수 있듯이, 프로그래밍을 통해 인터럽트 사이 시간 간격을 조정할 수 있습니다. 곧 <a href="https://wiki.osdev.org/APIC_timer">APIC 타이머</a>로 교체해 사용할 것이기 때문에 PIT에 대해 자세히 다루지는 않겠습니다만, OSDev 위키에 <a href="https://wiki.osdev.org/Programmable_Interval_Timer">PIT를 설정하는 방법</a>에 대한 자세한 글이 있으니 참고하시기 바랍니다.</p>
+<p>우리가 쓰는 하드웨어 타이머는 <em>Programmable Interval Timer</em>, 또는 줄여서 PIT라고 부릅니다. 이름에서 알 수 있듯이, 프로그래밍을 통해 인터럽트 사이 시간 간격을 조정할 수 있습니다. 곧 <a rel="external" href="https://wiki.osdev.org/APIC_timer">APIC 타이머</a>로 교체해 사용할 것이기 때문에 PIT에 대해 자세히 다루지는 않겠습니다만, OSDev 위키에 <a rel="external" href="https://wiki.osdev.org/Programmable_Interval_Timer">PIT를 설정하는 방법</a>에 대한 자세한 글이 있으니 참고하시기 바랍니다.</p>
 <h2 id="gyocag-sangtae-deadlock"><a class="zola-anchor" href="#gyocag-sangtae-deadlock" aria-label="Anchor link for: gyocag-sangtae-deadlock">🔗</a>교착 상태 (Deadlock)</h2>
 <p>이제 우리의 커널에 동시성의 개념이 등장했습니다. 타이머 인터럽트는 비동기적으로 발생하기에 <code>_start</code> 함수 실행 중 언제든 발생할 수 있습니다. Rust의 소유권 (ownership) 시스템이 다양한 동시성 관련 버그를 컴파일 시간에 방지하지만, 교착 상태는 막지 못합니다. 스레드(thread)가 해제되지 않을 lock을 얻으려고 할 때 교착 상태가 일어나며, 해당 스레드는 영원히 대기 상태에 갇히게 됩니다.</p>
 <p>현재 우리의 커널에서 교착 상태를 일으킬 수 있습니다. 우리가 쓰는 <code>println</code> 매크로가 호출하는 <code>vga_buffer::_print</code> 함수는 스핀 락(spinlock)을 통해 <a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">전역 변수 <code>WRITER</code>에 대한 lock을 잠급니다</a>.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
-</span><span>
-</span><span>[…]
-</span><span>
-</span><span>#[doc(hidden)]
-</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[…]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[doc(hidden)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> _print</span><span>(</span><span style="color: #9CDCFE;">args</span><span>:</span><span style="color: #4EC9B0;"> fmt</span><span>::</span><span style="color: #4EC9B0;">Arguments</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span>    WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>위 함수는 <code>WRITER</code>에 대한 lock을 잠그고 <code>write_fmt</code>를 호출하며, 위 함수의 반환 직전에 <code>WRITER</code>에 대한 lock을 암묵적으로 해제합니다. <code>WRITER</code>에 대한 lock이 잠긴 상태에서 인터럽트가 발생하고, 해당 인터럽트의 처리 함수가 화면에 뭔가 출력하려 한다고 가정해봅시다.</p>
 <table><thead><tr><th>시간 순서</th><th>_start</th><th>인터럽트 처리 함수</th></tr></thead><tbody>
 <tr><td>0</td><td><code>println!</code> 호출</td><td> </td></tr>
@@ -377,105 +367,99 @@
 <p><code>WRITER</code>에 대한 lock이 잠겨 있으니, 인터럽트 처리 함수는 해당 lock이 풀릴 때까지 기다립니다. 하지만 <code>_start</code> 함수는 인터럽트 처리 함수가 반환한 후에 실행을 재개하기 때문에 lock이 풀리지 않습니다. 그 결과, 시스템 전체가 응답 불가 상태가 됩니다.</p>
 <h3 id="gyocag-sangtae-ileukigi"><a class="zola-anchor" href="#gyocag-sangtae-ileukigi" aria-label="Anchor link for: gyocag-sangtae-ileukigi">🔗</a>교착 상태 일으키기</h3>
 <p><code>_start</code> 함수의 맨 마지막 loop 안에서 화면에 출력을 시도하면 쉽게 커널에 교착 상태를 일으킬 수 있습니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    […]
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{
-</span><span>        </span><span style="color:#569cd6;">use </span><span>blog_os::print;
-</span><span>        print!(</span><span style="color:#d69d85;">&quot;-&quot;</span><span>);        </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        use</span><span style="color: #4EC9B0;"> blog_os</span><span>::print;</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        print!</span><span>(</span><span style="color: #CE9178;">&quot;-&quot;</span><span>);</span><span style="color: #6A9955;">        // 새로 추가함</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>QEMU에서 실행하면 아래와 같은 출력을 얻게 됩니다.</p>
 <p><img src="https://os.phil-opp.com/ko/hardware-interrupts/./qemu-deadlock.png" alt="QEMU output with many rows of hyphens and no dots" /></p>
 <p>첫 타이머 인터럽트 발생 전까지는 제한된 수의 붙임표(<code>-</code>)가 출력됩니다. 첫 타이머 인터럽트 후, 타이머 인터럽트 처리 함수가 온점(<code>.</code>)을 출력하려다 교착 상태에 빠지고 시스템은 아무 반응을 하지 않습니다. 이것이 출력 내용에 온점이 전혀 없는 이유입니다.</p>
 <p>타이머 인터럽트가 비동기적으로 발생하다보니 커널을 실행할 때마다 출력되는 붙임표의 수가 다를 수 있습니다. 동시성 관련 버그들은 실행 결과가 이렇게 비결정론적(non-deterministic)인 경우가 많아 디버깅하기 쉽지 않습니다.</p>
 <h3 id="gyocag-sangtae-bangjihagi"><a class="zola-anchor" href="#gyocag-sangtae-bangjihagi" aria-label="Anchor link for: gyocag-sangtae-bangjihagi">🔗</a>교착 상태 방지하기</h3>
 <p><code>Mutex</code>가 잠긴 동안 인터럽트를 해제하면 교착 상태를 방지할 수 있습니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
-</span><span>
-</span><span style="color:#608b4e;">/// Prints the given formatted string to the VGA text buffer
-</span><span style="color:#608b4e;">/// through the global `WRITER` instance.
-</span><span>#[doc(hidden)]
-</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;   </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>
-</span><span>    interrupts::without_interrupts(|| {     </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>        </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
-</span><span>    });
-</span><span>}
-</span></code></pre>
-<p><a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> 함수는 인자로 받은 <a href="https://doc.rust-lang.org/book/ch13-01-closures.html">클로저(closure)</a>를 인터럽트가 없는 환경에서 실행합니다. 이 함수를 통해 <code>Mutex</code>가 잠긴 동안 인터럽트가 발생하지 않게 보장합니다. 커널을 다시 실행하면 커널이 응답 불가 상태에 빠지지 않고 계속 실행되는 것을 확인할 수 있습니다. (화면 스크롤이 너무 빠르게 내려가다 보니 화면에 점이 출력되는 것을 확인하기 어려울 수 있습니다. <code>_start</code> 함수의 loop 안에 <code>for _ in 0..10000 {}</code>를 삽입하는 등의 방법으로 출력 속도를 늦춰 보세요.)</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Prints the given formatted string to the VGA text buffer</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// through the global `WRITER` instance.</span></span>
+<span class="giallo-l"><span>#[doc(hidden)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> _print</span><span>(</span><span style="color: #9CDCFE;">args</span><span>:</span><span style="color: #4EC9B0;"> fmt</span><span>::</span><span style="color: #4EC9B0;">Arguments</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::interrupts;</span><span style="color: #6A9955;">   // 새로 추가함</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">without_interrupts</span><span>(|| {</span><span style="color: #6A9955;">     // 새로 추가함</span></span>
+<span class="giallo-l"><span>        WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> 함수는 인자로 받은 <a rel="external" href="https://doc.rust-lang.org/book/ch13-01-closures.html">클로저(closure)</a>를 인터럽트가 없는 환경에서 실행합니다. 이 함수를 통해 <code>Mutex</code>가 잠긴 동안 인터럽트가 발생하지 않게 보장합니다. 커널을 다시 실행하면 커널이 응답 불가 상태에 빠지지 않고 계속 실행되는 것을 확인할 수 있습니다. (화면 스크롤이 너무 빠르게 내려가다 보니 화면에 점이 출력되는 것을 확인하기 어려울 수 있습니다. <code>_start</code> 함수의 loop 안에 <code>for _ in 0..10000 {}</code>를 삽입하는 등의 방법으로 출력 속도를 늦춰 보세요.)</p>
 <p>직렬 포트를 이용한 출력 함수 코드 역시 같은 방식으로 수정하여 교착 상태를 방지합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
-</span><span>
-</span><span>#[doc(hidden)]
-</span><span style="color:#569cd6;">pub fn </span><span>_print(args: ::core::fmt::Arguments) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;       </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>
-</span><span>    interrupts::without_interrupts(|| {         </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>        </span><span style="color:#b4cea8;">SERIAL1
-</span><span>            .lock()
-</span><span>            .write_fmt(args)
-</span><span>            .expect(</span><span style="color:#d69d85;">&quot;Printing to serial failed&quot;</span><span>);
-</span><span>    });
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/serial.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[doc(hidden)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> _print</span><span>(</span><span style="color: #9CDCFE;">args</span><span>: ::</span><span style="color: #4EC9B0;">core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Arguments</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::interrupts;</span><span style="color: #6A9955;">       // 새로 추가함</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">without_interrupts</span><span>(|| {</span><span style="color: #6A9955;">         // 새로 추가함</span></span>
+<span class="giallo-l"><span>        SERIAL1</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>)</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;Printing to serial failed&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>인터럽트를 해제하는 것이 일반적으로 사용할 해결 방식이 아니라는 것을 아셔야 합니다. 인터럽트를 해제하면 인터럽트가 최대로 많이 몰렸을 때 시스템이 인터럽트에 반응할 수 있는 시간 (worst-case interrupt latency)이 늦어집니다. 따라서 인터럽트를 해제하려면 아주 짧은 시간 동안만 해야 합니다.</p>
 <h2 id="gyeongjaeng-sangtae-race-condition-yebanghagi"><a class="zola-anchor" href="#gyeongjaeng-sangtae-race-condition-yebanghagi" aria-label="Anchor link for: gyeongjaeng-sangtae-race-condition-yebanghagi">🔗</a>경쟁 상태 (Race Condition) 예방하기</h2>
 <p><code>cargo test</code>를 실행하면 테스트 <code>test_println_output</code>가 때때로 실패하는 것을 확인할 수 있습니다:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --lib
-</span><span>[…]
-</span><span>Running 4 tests
-</span><span>test_breakpoint_exception...[ok]
-</span><span>test_println... [ok]
-</span><span>test_println_many... [ok]
-</span><span>test_println_output... [failed]
-</span><span>
-</span><span>Error: panicked at &#39;assertion failed: `(left == right)`
-</span><span>  left: `&#39;.&#39;`,
-</span><span> right: `&#39;S&#39;`&#39;, src/vga_buffer.rs:205:9
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test --lib</span></span>
+<span class="giallo-l"><span>[…]</span></span>
+<span class="giallo-l"><span>Running 4 tests</span></span>
+<span class="giallo-l"><span>test_breakpoint_exception...[ok]</span></span>
+<span class="giallo-l"><span>test_println... [ok]</span></span>
+<span class="giallo-l"><span>test_println_many... [ok]</span></span>
+<span class="giallo-l"><span>test_println_output... [failed]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Error: panicked at &#39;assertion failed: `(left == right)`</span></span>
+<span class="giallo-l"><span>  left: `&#39;.&#39;`,</span></span>
+<span class="giallo-l"><span> right: `&#39;S&#39;`&#39;, src/vga_buffer.rs:205:9</span></span></code></pre>
 <p>이 테스트가 때때로 실패하는 것은 이 테스트와 우리가 작성한 타이머 처리 함수 간 <em>경쟁 상태 (race condition)</em> 때문입니다. 예전에 작성했던 이 테스트의 코드를 다시 살펴보겠습니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span>;
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s);
-</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> screen_char = </span><span style="color:#b4cea8;">WRITER</span><span>.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
-</span><span>        assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>이 테스트는 VGA 버퍼에 문자열에 출력한 후 <code>buffer_chars</code> 배열을 직접 순회하여 출력된 내용을 확인합니다. 경쟁 상태가 생기는 이유는, <code>println</code>과 <code>screen_char</code>를 읽는 코드 사이에 타이머 인터럽트 처리 함수가 호출될 수 있기 때문입니다. 이는 컴파일 시간에 Rust가 막아주는 위험한 <em>데이터 레이스 (data race)</em> 와는 다릅니다. 자세한 내용은 <a href="https://doc.rust-lang.org/nomicon/races.html"><em>Rustonomicon</em></a>을 참고해주세요.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_println_output</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> s</span><span> =</span><span style="color: #CE9178;"> &quot;Some test string that fits on a single line&quot;</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> s</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span> (</span><span style="color: #9CDCFE;">i</span><span>,</span><span style="color: #9CDCFE;"> c</span><span>)</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> s</span><span>.</span><span style="color: #DCDCAA;">chars</span><span>().</span><span style="color: #DCDCAA;">enumerate</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> screen_char</span><span> = WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().buffer.chars[BUFFER_HEIGHT -</span><span style="color: #B5CEA8;"> 2</span><span>][</span><span style="color: #9CDCFE;">i</span><span>].</span><span style="color: #DCDCAA;">read</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        assert_eq!</span><span>(</span><span style="color: #4EC9B0;">char</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #9CDCFE;">screen_char</span><span>.ascii_character),</span><span style="color: #9CDCFE;"> c</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>이 테스트는 VGA 버퍼에 문자열에 출력한 후 <code>buffer_chars</code> 배열을 직접 순회하여 출력된 내용을 확인합니다. 경쟁 상태가 생기는 이유는, <code>println</code>과 <code>screen_char</code>를 읽는 코드 사이에 타이머 인터럽트 처리 함수가 호출될 수 있기 때문입니다. 이는 컴파일 시간에 Rust가 막아주는 위험한 <em>데이터 레이스 (data race)</em> 와는 다릅니다. 자세한 내용은 <a rel="external" href="https://doc.rust-lang.org/nomicon/races.html"><em>Rustonomicon</em></a>을 참고해주세요.</p>
 <p>이 문제를 고치려면 위 테스트가 실행 중에 <code>WRITER</code>에 대한 lock을 계속 잠그고 있어야 합니다. 그렇게 해야 타이머 처리 함수가 그 사이에 <code>.</code>을 출력하지 못합니다. 아래와 같이 테스트를 수정합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span>;
-</span><span>    interrupts::without_interrupts(|| {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> writer = </span><span style="color:#b4cea8;">WRITER</span><span>.lock();
-</span><span>        writeln!(writer, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s).expect(</span><span style="color:#d69d85;">&quot;writeln failed&quot;</span><span>);
-</span><span>        </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
-</span><span>            </span><span style="color:#569cd6;">let</span><span> screen_char = writer.buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
-</span><span>            assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
-</span><span>        }
-</span><span>    });
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_println_output</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::interrupts;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> s</span><span> =</span><span style="color: #CE9178;"> &quot;Some test string that fits on a single line&quot;</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">without_interrupts</span><span>(|| {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> writer</span><span> = WRITER.</span><span style="color: #DCDCAA;">lock</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        writeln!</span><span>(</span><span style="color: #9CDCFE;">writer</span><span>,</span><span style="color: #CE9178;"> &quot;</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> s</span><span>).</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;writeln failed&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">        for</span><span> (</span><span style="color: #9CDCFE;">i</span><span>,</span><span style="color: #9CDCFE;"> c</span><span>)</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> s</span><span>.</span><span style="color: #DCDCAA;">chars</span><span>().</span><span style="color: #DCDCAA;">enumerate</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> screen_char</span><span> =</span><span style="color: #9CDCFE;"> writer</span><span>.buffer.chars[BUFFER_HEIGHT -</span><span style="color: #B5CEA8;"> 2</span><span>][</span><span style="color: #9CDCFE;">i</span><span>].</span><span style="color: #DCDCAA;">read</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">            assert_eq!</span><span>(</span><span style="color: #4EC9B0;">char</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #9CDCFE;">screen_char</span><span>.ascii_character),</span><span style="color: #9CDCFE;"> c</span><span>);</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>변경 사항들을 정리하면 아래와 같습니다.</p>
 <ul>
-<li>테스트 실행 중에는 <code>lock()</code> 함수를 사용해 WRITER를 잠가 놓습니다. <code>println</code> 대신 <a href="https://doc.rust-lang.org/core/macro.writeln.html"><code>writeln</code></a> 매크로를 써서 이미 잠긴 WRITER를 이용해 메시지를 출력합니다.</li>
+<li>테스트 실행 중에는 <code>lock()</code> 함수를 사용해 WRITER를 잠가 놓습니다. <code>println</code> 대신 <a rel="external" href="https://doc.rust-lang.org/core/macro.writeln.html"><code>writeln</code></a> 매크로를 써서 이미 잠긴 WRITER를 이용해 메시지를 출력합니다.</li>
 <li>또 다른 교착 상태를 피하려고 테스트 중에는 인터럽트의 사용을 해제합니다. 그렇게 하지 않으면 테스트 실행 중 WRITER가 잠긴 상태에서 발생한 다른 인터럽트가 테스트 실행을 방해할 수 있습니다.</li>
 <li>테스트 실행 시작 전에 타이머 인터럽트 처리 함수가 실행될 수 있으니 문자열 <code>s</code> 출력 전에 개행 문자 <code>\n</code>을 출력합니다. 이렇게 하면 타이머 인터럽트 처리 함수가 현재 행에 이미 <code>.</code> 문자를 여럿 출력했더라도 이 테스트가 실패하지 않을 것입니다.</li>
 </ul>
@@ -484,209 +468,201 @@
 <h2 id="hlt-myeongryeongeo"><a class="zola-anchor" href="#hlt-myeongryeongeo" aria-label="Anchor link for: hlt-myeongryeongeo">🔗</a><code>hlt</code> 명령어</h2>
 <p>여태까지는 <code>_start</code> 및 <code>panic</code> 함수들의 맨 마지막에 간단한 빈 loop를 사용했습니다. 이 loop 때문에 CPU는 실행을 종료하지 않는데, CPU가 딱히 할 일이 없는데 CPU를 최고 속도로 가동하는 것은 에너지 효율성 측면에서 매우 비효율적입니다. 커널 실행 후 태스크 매니저를 보시면 QEMU 프로세스가 항상 CPU 시간을 100% 가까이 사용하고 있을 것입니다.</p>
 <p>우리가 정말 해야 할 일은 다음 인터럽트 전까지 CPU가 정지하도록 하는 것입니다. CPU는 저전력 상태의 대기 모드에서 실행을 정지하고 대기할 수 있습니다. <code>hlt</code> 명령어를 쓰면 CPU가 저전력 대기 상태에 들어가게 할 수 있습니다. 이 명령어를 사용해 에너지를 효율적으로 사용하는 무한 루프를 작성합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>hlt_loop() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{
-</span><span>        x86_64::instructions::hlt();
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>함수 <code>instructions::hlt</code>는 그저 hlt 어셈블리 명령어를 <a href="https://github.com/rust-osdev/x86_64/blob/5e8e218381c5205f5777cb50da3ecac5d7e3b1ab/src/instructions/mod.rs#L16-L22">얇게 감싸 포장</a>합니다. 이 명령어로는 메모리 안전성을 해칠 방법이 없어 안전합니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> hlt_loop</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #DCDCAA;">hlt</span><span>();</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>함수 <code>instructions::hlt</code>는 그저 hlt 어셈블리 명령어를 <a rel="external" href="https://github.com/rust-osdev/x86_64/blob/5e8e218381c5205f5777cb50da3ecac5d7e3b1ab/src/instructions/mod.rs#L16-L22">얇게 감싸 포장</a>합니다. 이 명령어로는 메모리 안전성을 해칠 방법이 없어 안전합니다.</p>
 <p><code>_start</code> 및 <code>panic</code> 함수에서 사용하던 무한 루프를 방금 작성한 <code>hlt_loop</code>로 교체합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    […]
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();            </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>}
-</span><span>
-</span><span>
-</span><span>#[cfg(not(test))]
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
-</span><span>    blog_os::hlt_loop();            </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>}
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span><span style="color: #6A9955;">            // 새로 추가함</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(not(test))]</span></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> info</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span><span style="color: #6A9955;">            // 새로 추가함</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span></code></pre>
 <p><code>lib.rs</code> 또한 마찬가지로 수정합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#608b4e;">/// `cargo test`의 실행 시작 지점
-</span><span>#[cfg(test)]
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    init();
-</span><span>    test_main();
-</span><span>    hlt_loop();         </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>test_panic_handler(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
-</span><span>    exit_qemu(QemuExitCode::Failed);
-</span><span>    hlt_loop();         </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// `cargo test`의 실행 시작 지점</span></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    hlt_loop</span><span>();</span><span style="color: #6A9955;">         // 새로 추가함</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[failed]</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Error: {}</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>,</span><span style="color: #9CDCFE;"> info</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Failed</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    hlt_loop</span><span>();</span><span style="color: #6A9955;">         // 새로 추가함</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>이제 QEMU에서 커널을 실행하면 CPU 사용량이 훨씬 감소한 것을 확인할 수 있습니다.</p>
 <h2 id="kibodeu-ibryeog"><a class="zola-anchor" href="#kibodeu-ibryeog" aria-label="Anchor link for: kibodeu-ibryeog">🔗</a>키보드 입력</h2>
 <p>외부 장치로부터 오는 인터럽트를 커널에서 처리할 수 있게 되었으니, 이제 드디어 커널이 키보드 입력을 지원하도록 만들 차례입니다. 키보드 입력을 지원함으로써 커널과 상호작용할 수 있게 될 것입니다.</p>
 <aside class="post_aside">
-<p>이 글에서는 <a href="https://en.wikipedia.org/wiki/PS/2_port">PS/2</a> 키보드에 대해서만 다루고 USB 키보드는 다루지 않습니다. 하지만 메인보드가 구식 소프트웨어를 지원하기 위해 USB 키보드를 PS/2 장치로 에뮬레이팅하기 때문에, 추후 커널에 정식으로 USB 지원을 추가하기 전까지는 USB 키보드에 대해 고민하지 않아도 됩니다.</p>
+<p>이 글에서는 <a rel="external" href="https://en.wikipedia.org/wiki/PS/2_port">PS/2</a> 키보드에 대해서만 다루고 USB 키보드는 다루지 않습니다. 하지만 메인보드가 구식 소프트웨어를 지원하기 위해 USB 키보드를 PS/2 장치로 에뮬레이팅하기 때문에, 추후 커널에 정식으로 USB 지원을 추가하기 전까지는 USB 키보드에 대해 고민하지 않아도 됩니다.</p>
 </aside>
 <p>하드웨어 타이머와 마찬가지로, 키보드 컨트롤러의 인터럽트도 기본적으로 사용이 활성화되어 있습니다. 키보드 키를 누르면 키보드 컨트롤러는 PIC로 인터럽트를 보내고, PIC는 다시 그 인터럽트를 CPU로 전달합니다. CPU는 IDT에서 키보드 인터럽트의 엔트리를 조회하지만, 등록된 인터럽트 처리 함수가 없어 더블 폴트가 발생합니다.</p>
 <p>키보드 인터럽트를 처리하는 함수를 추가합니다. 다른 인터럽트 번호를 사용한다는 점을 빼면, 이전에 타이머 인터럽트 처리 함수를 작성했던 것과 매우 유사합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span>#[derive(Debug, Clone, Copy)]
-</span><span>#[repr(u8)]
-</span><span style="color:#569cd6;">pub enum </span><span>InterruptIndex {
-</span><span>    Timer = </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>,
-</span><span>    Keyboard, </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>}
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
-</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
-</span><span>        […]
-</span><span>        </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>        idt[InterruptIndex::Keyboard.as_usize()]
-</span><span>            .set_handler_fn(keyboard_interrupt_handler);
-</span><span>
-</span><span>        idt
-</span><span>    };
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;k&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>)]</span></span>
+<span class="giallo-l"><span>#[repr(</span><span style="color: #4EC9B0;">u8</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> InterruptIndex</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Timer</span><span> = PIC_1_OFFSET,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Keyboard</span><span>,</span><span style="color: #6A9955;"> // 새로 추가함</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> IDT:</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
+<span class="giallo-l"><span>        […]</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // 새로 추가함</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_usize</span><span>()]</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">keyboard_interrupt_handler</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> keyboard_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;k&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p><a href="https://os.phil-opp.com/ko/hardware-interrupts/#8259-pic">위 도표</a>를 보면 키보드는 주 PIC의 1번 통신선을 사용합니다. 즉 CPU에 전달된 키보드 인터럽트의 벡터 번호는 33 (1 + 오프셋 32)이 됩니다. 해당 번호를 <code>InterruptIndex</code> enum의 새 분류 <code>Keyboard</code>에 배정합니다. <code>Keyboard</code>의 값을 명시적으로 정해주지 않아도 바로 이전 분류의 값에 1을 더한 값(=33)이 배정됩니다. 인터럽트 처리 함수는 <code>k</code>를 출력한 후 인터럽트 컨트롤러에 EOI 신호를 전송합니다.</p>
 <p>이제 아무 키를 하나 입력하면 화면에 <code>k</code>가 출력됩니다. 하지만 아무 키를 하나 새로 입력하면 화면에 <code>k</code>가 새로 출력되지 않습니다. 그 이유는 기존에 입력된 키의 <em>스캔 코드 (scancode)</em> 를 우리가 읽어 가지 않는 한 키보드 컨트롤러가 새 인터럽트를 보내지 않기 때문입니다.</p>
 <h3 id="seukaen-kodeu-ilggi"><a class="zola-anchor" href="#seukaen-kodeu-ilggi" aria-label="Anchor link for: seukaen-kodeu-ilggi">🔗</a>스캔 코드 읽기</h3>
 <p><em>어떤</em> 키가 입력됐는지 확인하려면 키보드 컨트롤러에 저장된 정보를 확인해야 합니다. PS/2 컨트롤러의 데이터 포트, 즉 <code>0x60</code>번 <a href="https://os.phil-opp.com/testing/#i-o-ports">입출력 포트 (I/O port)</a>를 읽어 들여 어떤 키가 입력됐는지 확인할 수 있습니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, scancode);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p><code>x86_64</code> 크레이트의 <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> 타입을 사용해 키보드의 데이터 포트로부터 1바이트를 읽어옵니다. 이 1바이트의 데이터를 <a href="https://en.wikipedia.org/wiki/Scancode"><em>스캔 코드 (scancode)</em></a>라고 부르며, 누른 키 또는 누른 상태에서 뗀 키의 정보를 가집니다. 일단은 스캔 코드를 출력하기만 할 뿐, 읽은 스캔 코드 값을 이용한 작업은 하지 않습니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> keyboard_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">port</span><span>::</span><span style="color: #4EC9B0;">Port</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> port</span><span> =</span><span style="color: #4EC9B0;"> Port</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0x60</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> scancode</span><span>:</span><span style="color: #4EC9B0;"> u8</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #9CDCFE;"> port</span><span>.</span><span style="color: #DCDCAA;">read</span><span>() };</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> scancode</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><code>x86_64</code> 크레이트의 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> 타입을 사용해 키보드의 데이터 포트로부터 1바이트를 읽어옵니다. 이 1바이트의 데이터를 <a rel="external" href="https://en.wikipedia.org/wiki/Scancode"><em>스캔 코드 (scancode)</em></a>라고 부르며, 누른 키 또는 누른 상태에서 뗀 키의 정보를 가집니다. 일단은 스캔 코드를 출력하기만 할 뿐, 읽은 스캔 코드 값을 이용한 작업은 하지 않습니다.</p>
 <p><img src="https://os.phil-opp.com/ko/hardware-interrupts/qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
 <p>위 이미지는 제가 키보드로 천천히 “123“을 입력했을 때의 화면을 보여줍니다. 이를 통해 인접한 키들은 인접한 값의 스캔 코드를 가진다는 것, 그리고 키를 누를 때와 누른 키를 뗄 때 서로 다른 스캔 코드가 발생한다는 것을 알 수 있습니다. 근데 각 스캔 코드는 실제 키 누름/뗌에 어떤 기준으로 배정된 것일까요?</p>
 <h3 id="seukaen-kodeu-haeseoghagi"><a class="zola-anchor" href="#seukaen-kodeu-haeseoghagi" aria-label="Anchor link for: seukaen-kodeu-haeseoghagi">🔗</a>스캔 코드 해석하기</h3>
-<p>스캔 코드를 키보드 키에 배정하는 표준을 <em>스캔코드 셋 (scancode set)</em> 이라 부르며, 서로 다른 3가지 표준이 존재합니다. 셋 모두 초기의 IBM 컴퓨터들 (<a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a>, <a href="https://en.wikipedia.org/wiki/IBM_3270_PC">IBM 3270 PC</a>, <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer/AT">IBM AT</a>)로부터 기원합니다. 이후의 컴퓨터들은 새로운 스캔코드 셋을 정의하는 대신 기존의 것들을 지원하거나 확장해 사용했습니다. 오늘날 대부분의 키보드는 에뮬레이팅을 통해 이 3가지 셋 중 어느 것이든 사용할 수 있습니다.</p>
-<p>PS/2 키보드는 기본적으로 1번 스캔 코드 셋 (“XT”)를 사용하게 되어 있습니다. 이 셋에서 스캔 코드의 하위 7비트는 입력된 키를 표현하고, 최상위 비트는 키를 누른 것인지 (“0”) 혹은 키에서 손을 뗀 것인지 (“1”) 표현합니다. 엔터 키처럼 <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a> 키보드에 없었던 키들은 2개의 스캔 코드 (<code>0xe0</code> 그리고 그 후 키를 나타내는 1바이트)를 연이어 생성합니다. <a href="https://wiki.osdev.org/Keyboard#Scan_Code_Set_1">OSDev Wiki</a>를 보시면 1번 스캔코드 셋의 모든 스캔 코드와 그에 대응하는 키를 확인하실 수 있습니다.</p>
+<p>스캔 코드를 키보드 키에 배정하는 표준을 <em>스캔코드 셋 (scancode set)</em> 이라 부르며, 서로 다른 3가지 표준이 존재합니다. 셋 모두 초기의 IBM 컴퓨터들 (<a rel="external" href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a>, <a rel="external" href="https://en.wikipedia.org/wiki/IBM_3270_PC">IBM 3270 PC</a>, <a rel="external" href="https://en.wikipedia.org/wiki/IBM_Personal_Computer/AT">IBM AT</a>)로부터 기원합니다. 이후의 컴퓨터들은 새로운 스캔코드 셋을 정의하는 대신 기존의 것들을 지원하거나 확장해 사용했습니다. 오늘날 대부분의 키보드는 에뮬레이팅을 통해 이 3가지 셋 중 어느 것이든 사용할 수 있습니다.</p>
+<p>PS/2 키보드는 기본적으로 1번 스캔 코드 셋 (“XT”)를 사용하게 되어 있습니다. 이 셋에서 스캔 코드의 하위 7비트는 입력된 키를 표현하고, 최상위 비트는 키를 누른 것인지 (“0”) 혹은 키에서 손을 뗀 것인지 (“1”) 표현합니다. 엔터 키처럼 <a rel="external" href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a> 키보드에 없었던 키들은 2개의 스캔 코드 (<code>0xe0</code> 그리고 그 후 키를 나타내는 1바이트)를 연이어 생성합니다. <a rel="external" href="https://wiki.osdev.org/Keyboard#Scan_Code_Set_1">OSDev Wiki</a>를 보시면 1번 스캔코드 셋의 모든 스캔 코드와 그에 대응하는 키를 확인하실 수 있습니다.</p>
 <p><code>match</code>문을 사용해 스캔 코드를 알맞는 키에 대응시켜 해석합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// 새로 추가함
-</span><span>    </span><span style="color:#569cd6;">let</span><span> key = </span><span style="color:#569cd6;">match</span><span> scancode {
-</span><span>        </span><span style="color:#b5cea8;">0x02 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;1&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x03 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;2&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x04 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;3&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x05 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;4&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x06 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;5&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x07 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;6&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x08 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;7&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x09 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;8&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x0a </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;9&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x0b </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;0&#39;</span><span>),
-</span><span>        </span><span style="color:#569cd6;">_ =&gt; </span><span>None,
-</span><span>    };
-</span><span>    </span><span style="color:#569cd6;">if let </span><span>Some(key) = key {
-</span><span>        print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, key);
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>위 코드는 0-9의 숫자 키 누름을 인식하고 출력하며, 다른 키는 무시합니다. <a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a>문을 사용해 각 스캔코드에 문자 또는 <code>None</code>을 배정합니다. 그 후 <a href="https://doc.rust-lang.org/book/ch19-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a>을 사용해 스캔 코드에 배정된 문자 <code>key</code>를 추출합니다. 이미 존재하던 변수 <code>key</code>와 같은 이름을 패턴에서 사용해 기존 변수의 정의를 <a href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">shadow</a>하는데, 이는 Rust에서 <code>Option</code> 타입 안의 값을 추출할 때 자주 사용되는 방식입니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> keyboard_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">port</span><span>::</span><span style="color: #4EC9B0;">Port</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> port</span><span> =</span><span style="color: #4EC9B0;"> Port</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0x60</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> scancode</span><span>:</span><span style="color: #4EC9B0;"> u8</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #9CDCFE;"> port</span><span>.</span><span style="color: #DCDCAA;">read</span><span>() };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // 새로 추가함</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> key</span><span> =</span><span style="color: #C586C0;"> match</span><span style="color: #9CDCFE;"> scancode</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x02</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;1&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x03</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;2&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x04</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;3&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x05</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;4&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x06</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;5&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x07</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;6&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x08</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;7&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x09</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;8&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x0a</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;9&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x0b</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;0&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        _</span><span> =&gt;</span><span style="color: #4EC9B0;"> None</span><span>,</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">key</span><span>) =</span><span style="color: #9CDCFE;"> key</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        print!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> key</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>위 코드는 0-9의 숫자 키 누름을 인식하고 출력하며, 다른 키는 무시합니다. <a rel="external" href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a>문을 사용해 각 스캔코드에 문자 또는 <code>None</code>을 배정합니다. 그 후 <a rel="external" href="https://doc.rust-lang.org/book/ch19-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a>을 사용해 스캔 코드에 배정된 문자 <code>key</code>를 추출합니다. 이미 존재하던 변수 <code>key</code>와 같은 이름을 패턴에서 사용해 기존 변수의 정의를 <a rel="external" href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">shadow</a>하는데, 이는 Rust에서 <code>Option</code> 타입 안의 값을 추출할 때 자주 사용되는 방식입니다.</p>
 <p>이제 키보드로 숫자를 입력할 수 있습니다.</p>
 <p><img src="https://os.phil-opp.com/ko/hardware-interrupts/qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
-<p>나머지 키를 인식하는 것도 위와 마찬가지 방법으로 진행하면 됩니다. 다행히도, <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/"><code>pc-keyboard</code></a> 크레이트가 1번/2번 스캔코드 셋을 해석하는 기능을 제공합니다. <code>Cargo.toml</code>에 이 크레이트를 추가하고 <code>lib.rs</code>에서 불러와 사용합니다.</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">pc-keyboard </span><span>= </span><span style="color:#d69d85;">&quot;0.7.0&quot;
-</span></code></pre>
+<p>나머지 키를 인식하는 것도 위와 마찬가지 방법으로 진행하면 됩니다. 다행히도, <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/"><code>pc-keyboard</code></a> 크레이트가 1번/2번 스캔코드 셋을 해석하는 기능을 제공합니다. <code>Cargo.toml</code>에 이 크레이트를 추가하고 <code>lib.rs</code>에서 불러와 사용합니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">pc-keyboard</span><span> =</span><span style="color: #CE9178;"> &quot;0.7.0&quot;</span></span></code></pre>
 <p><code>pc-keyboard</code> 크레이트를 사용해 <code>keyboard_interrupt_handler</code> 함수를 새로 작성합니다.</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in/src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
-</span><span>    </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
-</span><span>        Mutex::new(Keyboard::new(
-</span><span>            ScancodeSet1::new(),
-</span><span>            layouts::Us104Key,
-</span><span>            HandleControl::Ignore,
-</span><span>        ));
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> keyboard = </span><span style="color:#b4cea8;">KEYBOARD</span><span>.lock();
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
-</span><span>    </span><span style="color:#569cd6;">if let </span><span>Ok(Some(key_event)) = keyboard.add_byte(scancode) {
-</span><span>        </span><span style="color:#569cd6;">if let </span><span>Some(key) = keyboard.process_keyevent(key_event) {
-</span><span>            </span><span style="color:#569cd6;">match</span><span> key {
-</span><span>                DecodedKey::Unicode(character) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, character),
-</span><span>                DecodedKey::RawKey(key) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, key),
-</span><span>            }
-</span><span>        }
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>Mutex로 감싼 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> 타입의 static 오브젝트를 만듭니다. <code>Keyboard::new</code>와 <code>ScancodeSet1::new</code>가 <code>const fn</code>이기 때문에 <code>KEYBOARD</code> static을 컴파일 타임에 초기화할 수 있어, 여기서는 <code>lazy_static</code> 매크로가 필요하지 않습니다. <code>Keyboard</code>가 미국 키보드 레이아웃과 1번 스캔코드 셋을 사용하도록 초기화합니다. <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> 매개변수를 사용하면 <code>ctrl+[a-z]</code> 키 입력을 유니코드 <code>U+0001</code>에서 <code>U+001A</code>까지 값에 대응시킬 수 있습니다. 우리는 그렇게 하지 않기 위해 해당 매개변수에 <code>Ignore</code> 옵션을 주고 <code>ctrl</code> 키를 일반 키로서 취급합니다.</p>
-<p>인터럽트마다 우리는 Mutex를 잠그고 키보드 컨트롤러로부터 스캔 코드를 읽어온 후, 그 스캔 코드를 <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> 함수에 전달합니다. 이 함수는 스캔 코드를 <code>Option&lt;KeyEvent&gt;</code>으로 변환합니다. <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> 타입은 입력된 키의 정보와 키의 누름/뗌 정보를 저장합니다.</p>
-<p><a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> 함수가 인자로 받은 <code>KeyEvent</code>를 변환하여 입력된 키의 문자를 반환합니다 (변환 불가한 경우 <code>None</code> 반환). 예를 들어, <code>A</code>키 입력 시 shift키 입력 여부에 따라 소문자 <code>a</code> 또는 대문자 <code>A</code>를 얻습니다.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in/src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> keyboard_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> pc_keyboard</span><span>::{layouts,</span><span style="color: #4EC9B0;"> DecodedKey</span><span>,</span><span style="color: #4EC9B0;"> HandleControl</span><span>,</span><span style="color: #4EC9B0;"> Keyboard</span><span>,</span><span style="color: #4EC9B0;"> ScancodeSet1</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> spin</span><span>::</span><span style="color: #4EC9B0;">Mutex</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">port</span><span>::</span><span style="color: #4EC9B0;">Port</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static</span><span> KEYBOARD:</span><span style="color: #4EC9B0;"> Mutex</span><span>&lt;</span><span style="color: #4EC9B0;">Keyboard</span><span>&lt;</span><span style="color: #9CDCFE;">layouts</span><span>::</span><span style="color: #4EC9B0;">Us104Key</span><span>,</span><span style="color: #4EC9B0;"> ScancodeSet1</span><span>&gt;&gt; =</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Mutex</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #4EC9B0;">Keyboard</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            ScancodeSet1</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(),</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            layouts</span><span>::</span><span style="color: #4EC9B0;">Us104Key</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            HandleControl</span><span>::</span><span style="color: #4EC9B0;">Ignore</span><span>,</span></span>
+<span class="giallo-l"><span>        ));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> keyboard</span><span> = KEYBOARD.</span><span style="color: #DCDCAA;">lock</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> port</span><span> =</span><span style="color: #4EC9B0;"> Port</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0x60</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> scancode</span><span>:</span><span style="color: #4EC9B0;"> u8</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #9CDCFE;"> port</span><span>.</span><span style="color: #DCDCAA;">read</span><span>() };</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Ok</span><span>(</span><span style="color: #4EC9B0;">Some</span><span>(</span><span style="color: #9CDCFE;">key_event</span><span>)) =</span><span style="color: #9CDCFE;"> keyboard</span><span>.</span><span style="color: #DCDCAA;">add_byte</span><span>(</span><span style="color: #9CDCFE;">scancode</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">        if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">key</span><span>) =</span><span style="color: #9CDCFE;"> keyboard</span><span>.</span><span style="color: #DCDCAA;">process_keyevent</span><span>(</span><span style="color: #9CDCFE;">key_event</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">            match</span><span style="color: #9CDCFE;"> key</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">                DecodedKey</span><span>::</span><span style="color: #DCDCAA;">Unicode</span><span>(</span><span style="color: #9CDCFE;">character</span><span>) =&gt;</span><span style="color: #DCDCAA;"> print!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> character</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">                DecodedKey</span><span>::</span><span style="color: #DCDCAA;">RawKey</span><span>(</span><span style="color: #9CDCFE;">key</span><span>) =&gt;</span><span style="color: #DCDCAA;"> print!</span><span>(</span><span style="color: #CE9178;">&quot;{:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> key</span><span>),</span></span>
+<span class="giallo-l"><span>            }</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Mutex로 감싼 <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> 타입의 static 오브젝트를 만듭니다. <code>Keyboard::new</code>와 <code>ScancodeSet1::new</code>가 <code>const fn</code>이기 때문에 <code>KEYBOARD</code> static을 컴파일 타임에 초기화할 수 있어, 여기서는 <code>lazy_static</code> 매크로가 필요하지 않습니다. <code>Keyboard</code>가 미국 키보드 레이아웃과 1번 스캔코드 셋을 사용하도록 초기화합니다. <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> 매개변수를 사용하면 <code>ctrl+[a-z]</code> 키 입력을 유니코드 <code>U+0001</code>에서 <code>U+001A</code>까지 값에 대응시킬 수 있습니다. 우리는 그렇게 하지 않기 위해 해당 매개변수에 <code>Ignore</code> 옵션을 주고 <code>ctrl</code> 키를 일반 키로서 취급합니다.</p>
+<p>인터럽트마다 우리는 Mutex를 잠그고 키보드 컨트롤러로부터 스캔 코드를 읽어온 후, 그 스캔 코드를 <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a> 함수에 전달합니다. 이 함수는 스캔 코드를 <code>Option&lt;KeyEvent&gt;</code>으로 변환합니다. <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> 타입은 입력된 키의 정보와 키의 누름/뗌 정보를 저장합니다.</p>
+<p><a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a> 함수가 인자로 받은 <code>KeyEvent</code>를 변환하여 입력된 키의 문자를 반환합니다 (변환 불가한 경우 <code>None</code> 반환). 예를 들어, <code>A</code>키 입력 시 shift키 입력 여부에 따라 소문자 <code>a</code> 또는 대문자 <code>A</code>를 얻습니다.</p>
 <p>수정한 인터럽트 처리 함수를 통해 텍스트를 입력한 대로 화면에 출력할 수 있습니다.</p>
 <p><img src="https://os.phil-opp.com/ko/hardware-interrupts/qemu-typing.gif" alt="Typing “Hello World” in QEMU" /></p>
 <h3 id="kibodeu-seoljeonghagi"><a class="zola-anchor" href="#kibodeu-seoljeonghagi" aria-label="Anchor link for: kibodeu-seoljeonghagi">🔗</a>키보드 설정하기</h3>
-<p>PS/2 키보드의 일부 설정을 변경하는 것이 가능한데, 예를 들면 어떤 스캔 코드 집합을 사용할지 지정할 수 있습니다. 본문이 너무 길어지니 해당 내용까지 다루지는 않겠지만, OSDev 위키를 확인하시면 <a href="https://wiki.osdev.org/PS/2_Keyboard#Commands">키보드 설정을 변경할 때 사용할 수 있는 명령어</a>들의 목록을 보실 수 있습니다.</p>
+<p>PS/2 키보드의 일부 설정을 변경하는 것이 가능한데, 예를 들면 어떤 스캔 코드 집합을 사용할지 지정할 수 있습니다. 본문이 너무 길어지니 해당 내용까지 다루지는 않겠지만, OSDev 위키를 확인하시면 <a rel="external" href="https://wiki.osdev.org/PS/2_Keyboard#Commands">키보드 설정을 변경할 때 사용할 수 있는 명령어</a>들의 목록을 보실 수 있습니다.</p>
 <h2 id="jeongri"><a class="zola-anchor" href="#jeongri" aria-label="Anchor link for: jeongri">🔗</a>정리</h2>
 <p>이 글에서는 인터럽트를 활성화하고 외부 인터럽트를 처리하는 방법에 대해 설명했습니다. 우리는 8259 PIC 장치, 주 PIC와 부 PIC를 연결하는 방식, 인터럽트 번호를 재배정하는 방법, 그리고 “end of interrupt” 신호 등에 대해 배웠습니다. 우리는 하드웨어 타이머와 키보드의 인터럽트 처리 함수를 구현했고, CPU를 다음 인터럽트까지 멈추는 <code>hlt</code> 명령어에 대해 배웠습니다.</p>
 <p>이제 커널과 상호작용할 수 있게 되었으니, 간단한 커맨드 쉘이나 게임을 작성할 기본적인 도구를 갖춘 셈입니다.</p>

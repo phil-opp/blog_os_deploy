@@ -129,7 +129,7 @@
     <div class="">
     <p>В этой статье мы добавим поддержку аллокаций памяти в куче для нашего ядра. Сначала мы рассмотрим как работает динамическая память и покажем как механизм проверки заимствований (borrow checker) предотвращает распространённые ошибки при работе с выделением памяти. Затем напишем базовый интерфейс аллокаций на Rust, создадим область памяти на куче и настроим крейт-аллокатор. К концу публикации все типы аллокаций и коллекций из встроенного крейта <code>alloc</code> станут доступны нашему ядру.</p>
 <span id="continue-reading"></span>
-<p>Этот блог открыто разрабатывается на <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Если у вас есть какие-либо проблемы или вопросы, пожалуйста, создайте issue. Вы также можете оставлять комментарии <a href="https://os.phil-opp.com/ru/heap-allocation/#comments">внизу страницы</a>. Полный исходный код для этого поста можно найти в ветке <a href="https://github.com/phil-opp/blog_os/tree/post-10"><code>post-10</code></a>.</p>
+<p>Этот блог открыто разрабатывается на <a rel="external" href="https://github.com/phil-opp/blog_os">GitHub</a>. Если у вас есть какие-либо проблемы или вопросы, пожалуйста, создайте issue. Вы также можете оставлять комментарии <a href="https://os.phil-opp.com/ru/heap-allocation/#comments">внизу страницы</a>. Полный исходный код для этого поста можно найти в ветке <a rel="external" href="https://github.com/phil-opp/blog_os/tree/post-10"><code>post-10</code></a>.</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -187,38 +187,37 @@
     </details>
 
 <h2 id="lokal-nye-i-staticheskie-peremennye"><a class="zola-anchor" href="#lokal-nye-i-staticheskie-peremennye" aria-label="Anchor link for: lokal-nye-i-staticheskie-peremennye">🔗</a>Локальные и статические переменные</h2>
-<p>Сечас мы используем два типа переменных в ядре: локальные и <code>static</code> переменные. Локальные храняться в <a href="https://en.wikipedia.org/wiki/Call_stack">стеке вызовов</a> и действительны только до возврата окружающей функции. Статические переменные храняться по фиксированному адресу памяти и живут в течение всего жизненного цикла программы.</p>
+<p>Сечас мы используем два типа переменных в ядре: локальные и <code>static</code> переменные. Локальные храняться в <a rel="external" href="https://en.wikipedia.org/wiki/Call_stack">стеке вызовов</a> и действительны только до возврата окружающей функции. Статические переменные храняться по фиксированному адресу памяти и живут в течение всего жизненного цикла программы.</p>
 <h3 id="lokal-nye-peremennye"><a class="zola-anchor" href="#lokal-nye-peremennye" aria-label="Anchor link for: lokal-nye-peremennye">🔗</a>Локальные переменные</h3>
-<p>Локальные переменные хранятся в <a href="https://en.wikipedia.org/wiki/Call_stack">стеке вызовов</a> - <a href="https://en.wikipedia.org/wiki/Stack_(abstract_data_type)">стековой структуре данных</a> с поддержкой операции <code>push</code> и <code>pop</code>. При каждом входе в функцию компилятор помещает параметры, адрес возврата и локальные переменные вызванной функции на стеке:</p>
+<p>Локальные переменные хранятся в <a rel="external" href="https://en.wikipedia.org/wiki/Call_stack">стеке вызовов</a> - <a rel="external" href="https://en.wikipedia.org/wiki/Stack_(abstract_data_type)">стековой структуре данных</a> с поддержкой операции <code>push</code> и <code>pop</code>. При каждом входе в функцию компилятор помещает параметры, адрес возврата и локальные переменные вызванной функции на стеке:</p>
 <p><img src="https://os.phil-opp.com/ru/heap-allocation/call-stack.svg" alt="Функции outer() и inner(i: usize) , где outer вызывает inner(1). У обеих есть локальные переменные. Стек вызовов содержит следующие слоты: локальные переменные outer, затем аргумент i =1, затем адрес возврата, затем локальные переменные inner." /></p>
 <p>Приведенный выше пример показывает стек вызовов после того, как функция <code>outer</code> вызвала <code>inne</code>. Мы видим, что стек вызовов в первую очередь содержит локальные переменные <code>outer</code>. При вызове <code>inner</code> на стек помещаются параметр <code>1</code> и адрес возврата для функции. Затем управление передается <code>inner</code>, которая помечает свои локальные переменные.</p>
 <p>После того как функция <code>inner</code> возвращает управление, её часть стека вызовов снова удаляется, и остаются только локальные переменные <code>outer</code>:</p>
 <p><img src="https://os.phil-opp.com/ru/heap-allocation/call-stack-return.svg" alt="Стек вызовов, содержащий только локальные переменные outer" /></p>
 <p>Мы видим, что локальные переменные <code>inner</code> живут только до возврата из функции. Компилятор Rust обеспечивает соблюдение этих жизненных циклов и выдает ошибку при попытке использовать значение слишком долго, например, когда мы пытаемся вернуть ссылку на локальную переменную:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>inner(i: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;&#39;static u32 </span><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = [</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">2</span><span>, </span><span style="color:#b5cea8;">3</span><span>];
-</span><span>    </span><span style="color:#569cd6;">&amp;</span><span>z[i]
-</span><span>}
-</span></code></pre>
-<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=6186a0f3a54f468e1de8894996d12819">запустить в песочнице</a>)</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> inner</span><span>(</span><span style="color: #9CDCFE;">i</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt; &amp;&#39;</span><span style="color: #4EC9B0;">static u32</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> = [</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 2</span><span>,</span><span style="color: #B5CEA8;"> 3</span><span>];</span></span>
+<span class="giallo-l"><span>    &amp;</span><span style="color: #9CDCFE;">z</span><span>[</span><span style="color: #9CDCFE;">i</span><span>]</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>(<a rel="external" href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=6186a0f3a54f468e1de8894996d12819">запустить в песочнице</a>)</p>
 <p>Хотя возврат ссылки в данном примере бессмыслен, есть случаи, когда нам нужно, чтобы переменная жила дольше функции. Мы уже видели подобный случай в нашем ядре при попытке <a href="https://os.phil-opp.com/cpu-exceptions/#loading-the-idt">загрузить таблицу дескрипторов прерываний</a> и были вынуждены использовать <code>static</code> переменную для продления жизненного цикла.</p>
 <h3 id="staticheskie-peremennye"><a class="zola-anchor" href="#staticheskie-peremennye" aria-label="Anchor link for: staticheskie-peremennye">🔗</a>Статические переменные</h3>
 <p>Статические переменные хранятся в фиксированном месте памяти, отделенном от стека. Это место назначается во время компиляции линковщиком и зашифровано в исполняемом файле. Статики живут во время всего выполнения программы, поэтому имеют жизненный цикл <code>'static</code> и могут всегда ссылаться из локальных переменных:</p>
 <p><img src="https://os.phil-opp.com/ru/heap-allocation/call-stack-static.svg" alt="Тот же пример outer/inner, но inner имеет static Z: [u32; 3] = [1,2,3]; и возвращает ссылку &amp;Z[i]" /></p>
 <p>Когда функция <code>inner</code> возвращается в приведённом выше примере, её часть стека вызовов уничтожается. Статические переменные живут в отдельном диапазоне памяти, который никогда не уничтожается, поэтому ссылка <code>&amp;Z[1]</code> остаётся валидной даже после возврата.</p>
 <p>Помимо жизненного цикла <code>'static</code>, статические переменные также обладают полезным свойством: их адрес известен на этапе компиляции, поэтому для доступа к ним не требуется ни одна из ссылок. Мы использовали это свойство для нашего макроса <code>println</code>: используя <a href="https://os.phil-opp.com/vga-text-mode/#a-global-interface">статический <code>Writer</code></a> внутри, нам не нужна ссылка <code>&amp;mut Writer</code> для вызова макроса, что очень полезно в <a href="https://os.phil-opp.com/cpu-exceptions/#implementation">обработчиках исключений</a>, где мы не имеем доступа к каким-либо дополнительным переменным.</p>
-<p>Однако это свойство статических переменных несёт в себе критический недостаток: по умолчанию они доступны только для чтения. Rust принуждает к этому, так как иначе может появиться <a href="https://doc.rust-lang.org/nomicon/races.html">гонка данных</a>. Например, если два потока хотят изменить статическую переменную одновременно. Единственный способ изменить статическую переменную - обернуть ее в <a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a>, который гарантирует, что в любой момент времени существует только одна <code>&amp;mut</code>-ссылка. Мы уже использовали <code>Mutex</code> для нашего <a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">статического буфера VGA <code>Writer</code></a>.</p>
+<p>Однако это свойство статических переменных несёт в себе критический недостаток: по умолчанию они доступны только для чтения. Rust принуждает к этому, так как иначе может появиться <a rel="external" href="https://doc.rust-lang.org/nomicon/races.html">гонка данных</a>. Например, если два потока хотят изменить статическую переменную одновременно. Единственный способ изменить статическую переменную - обернуть ее в <a rel="external" href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a>, который гарантирует, что в любой момент времени существует только одна <code>&amp;mut</code>-ссылка. Мы уже использовали <code>Mutex</code> для нашего <a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">статического буфера VGA <code>Writer</code></a>.</p>
 <h2 id="dinamicheskaia-pamiat"><a class="zola-anchor" href="#dinamicheskaia-pamiat" aria-label="Anchor link for: dinamicheskaia-pamiat">🔗</a>Динамическая память</h2>
 <p>Локальные и статические переменные уже очень мощны вместе и обеспечивают большинство use cases (использований). Однако мы увидели, что у обоих есть свои ограничения:</p>
 <ul>
 <li>Локальные переменные живут только до конца окружающей функции или блока. Это происходит потому, что они находятся на стеке вызовов и уничтожаются после возврата окружающей функции.</li>
-<li>Статические переменные живут в течение всего времени выполнения программы, поэтому нет способа освободить и повторно использовать их память, когда она больше не нужна. Также у них размытые семантики владения, и они доступны из всех функций, поэтому их нужно защищать с помощью <a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a>, если есть нужда в их изменении.</li>
+<li>Статические переменные живут в течение всего времени выполнения программы, поэтому нет способа освободить и повторно использовать их память, когда она больше не нужна. Также у них размытые семантики владения, и они доступны из всех функций, поэтому их нужно защищать с помощью <a rel="external" href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a>, если есть нужда в их изменении.</li>
 </ul>
-<p>Другое ограничение локальных и статических переменных это их фиксированный размер. То есть они не могут хранить коллекции, которые динамически растут при добавлении новых элементов. (Есть предложение по внедрению <a href="https://github.com/rust-lang/rust/issues/48055">unsized rvalues</a>, что позволило бы использовать локальные переменные с изменяемым размером, однако это работает только в определенных случаях.)</p>
+<p>Другое ограничение локальных и статических переменных это их фиксированный размер. То есть они не могут хранить коллекции, которые динамически растут при добавлении новых элементов. (Есть предложение по внедрению <a rel="external" href="https://github.com/rust-lang/rust/issues/48055">unsized rvalues</a>, что позволило бы использовать локальные переменные с изменяемым размером, однако это работает только в определенных случаях.)</p>
 <p>Чтобы обойти эти недостатки, языки программирования часто поддерживают третий регион памяти для хранения переменных в <strong>куче</strong>. Куча поддерживает <em>динамически аллоцировать память</em> во время выполнения программы через функции <code>allocate</code> и <code>deallocate</code>. Это работает следующим образом: <code>allocate</code> возвращает свободный чанк памяти определенного размера, который может быть использован для размещения переменной. Эта переменная живет пока не будет вызвана функция <code>deallocate</code> с указателем на эту переменную.</p>
 <p>Рассмотрим пример:</p>
 <p><img src="https://os.phil-opp.com/ru/heap-allocation/call-stack-heap.svg" alt="Внутренняя функция вызывает allocate(size_of([u32; 3])), записывает z.write([1,2,3]); и возвращает (z as *mut u32).offset(i). Внешняя функция, получив значение y, выполняет deallocate(y, size_of(u32))." /></p>
-<p>Здесь внутренняя функция использует память heap вместо статических переменных для хранения <code>z</code>. Сначала она выделяет блок памяти необходимого размера, который возвращает <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">сырой указатель</a> (<code>*mut u32</code>). Затем с помощью метода <a href="https://doc.rust-lang.org/core/ptr/fn.write.html"><code>ptr::write</code></a> записывает в него массив <code>[1, 2, 3]</code>. На последнем этапе использует функцию <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a> для вычисления указателя на <code>i</code>-й элемент и возвращает его. (Обратите внимание: в этом примере функции мы упростили код, опустив некоторые обязательные приведения типов и блоки unsafe.)</p>
+<p>Здесь внутренняя функция использует память heap вместо статических переменных для хранения <code>z</code>. Сначала она выделяет блок памяти необходимого размера, который возвращает <a rel="external" href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">сырой указатель</a> (<code>*mut u32</code>). Затем с помощью метода <a rel="external" href="https://doc.rust-lang.org/core/ptr/fn.write.html"><code>ptr::write</code></a> записывает в него массив <code>[1, 2, 3]</code>. На последнем этапе использует функцию <a rel="external" href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a> для вычисления указателя на <code>i</code>-й элемент и возвращает его. (Обратите внимание: в этом примере функции мы упростили код, опустив некоторые обязательные приведения типов и блоки unsafe.)</p>
 <p>Выделенная память существует до тех пор, пока её явно не освободят путём вызова <code>deallocate</code>. Поэтому возвращённый указатель остаётся валидным даже после того, как функция <code>inner</code> завершила выполнение и её часть стека была уничтожена. Преимущество использования heap-памяти по сравнению со статической в том, что после освобождения эта память может быть переиспользована - мы делаем это через вызов <code>deallocate</code> внутри функции <code>outer</code>. После этого вызова ситуация выглядит следующим образом:</p>
 <p><img src="https://os.phil-opp.com/ru/heap-allocation/call-stack-heap-freed.svg" alt="Стек вызовов содержит локальные переменные функции outer, heap-память хранит элементы z[0] и z[2], но уже не z[1]." /></p>
 <p>Мы видим, что слот <code>z[1]</code> снова свободен и может быть переиспользован при следующем вызове <code>allocate</code>. Однако также видно, что элементы <code>z[0]</code> и <code>z[2]</code> никогда не освобождены, так как мы их никогда не передали в функцию deallocate. Такой тип ошибки называется <em>memory leak</em> (утечка памяти) и часто приводит к чрезмерному потреблению памяти программами (представьте себе, что будет, если вызывать функцию <code>inner</code> многократно внутри цикла). Это может показаться неприятным, но существуют гораздо более опасные типы ошибок, возникающие при динамическом выделении.</p>
@@ -228,148 +227,137 @@
 <li>когда мы случайно продолжаем использовать переменную после вызова <code>deallocate</code> возникает <strong>use-after-free</strong> уязвимость. Такие ошибки приводят к неопределенному поведению и часто используются атакующими для выполнения произвольного кода.</li>
 <li>когда мы случайно освобождаем переменную дважды, возникает уязвимость <strong>double-free</strong>. Это может привести к освобождению другого выделенного блока памяти, который был размещён в том же месте после первого вызова <code>deallocate</code>. Таким образом, это снова может привести к уязвимости use-after-free.</li>
 </ul>
-<p>Эти типы уязвимостей хорошо известны, поэтому можно было бы ожидать, что люди научились их избегать. Однако нет, подобные уязвимости регулярно обнаруживаются. Например, в 2019 году была найдена <a href="https://securityboulevard.com/2019/02/linux-use-after-free-vulnerability-found-in-linux-2-6-through-4-20-11/">уязвимость use-after-free в Linux</a>, позволяющая выполнять произвольный код. Поиск по запросу <code>use-after-free linux {текущий год}</code> наверняка всегда даст результаты. Это показывает, что даже лучшие программисты не всегда способны корректно управлять динамической памятью в сложных проектах.</p>
-<p>Чтобы избежать этих проблем, многие языки, такие как Java или Python, управляют динамической памятью автоматически с помощью техники, называемой <a href="https://en.wikipedia.org/wiki/Garbage_collection_(computer_science)"><em>garbage collection</em></a> или сборщик мусора. Идея заключается в том, что программист никогда не вызывает <code>deallocate</code> вручную. Вместо этого программа регулярно приостанавливается и сканируется на предмет неиспользуемых переменных heap, которые затем автоматически освобождаются. Таким образом, вышеописанные уязвимости могут никогда не возникнуть. Недостатком являются накладные расходы от регулярного сканирования и паузы во время рабты.</p>
-<p>Rust подходит к решению этой проблемы иначе: он использует концепцию, называемую <a href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"><em>ownership</em></a> (владение), которая позволяет проверять корректность операций с динамической памятью на этапе компиляции. Таким образом, для предотвращения указанных уязвимостей не требуется сборщик мусора, а значит и нету штрафов к производительности. Другим преимуществом этого подхода является то, что программист может точно настраивать поведение для данамической памяти, как в C или C++.</p>
+<p>Эти типы уязвимостей хорошо известны, поэтому можно было бы ожидать, что люди научились их избегать. Однако нет, подобные уязвимости регулярно обнаруживаются. Например, в 2019 году была найдена <a rel="external" href="https://securityboulevard.com/2019/02/linux-use-after-free-vulnerability-found-in-linux-2-6-through-4-20-11/">уязвимость use-after-free в Linux</a>, позволяющая выполнять произвольный код. Поиск по запросу <code>use-after-free linux {текущий год}</code> наверняка всегда даст результаты. Это показывает, что даже лучшие программисты не всегда способны корректно управлять динамической памятью в сложных проектах.</p>
+<p>Чтобы избежать этих проблем, многие языки, такие как Java или Python, управляют динамической памятью автоматически с помощью техники, называемой <a rel="external" href="https://en.wikipedia.org/wiki/Garbage_collection_(computer_science)"><em>garbage collection</em></a> или сборщик мусора. Идея заключается в том, что программист никогда не вызывает <code>deallocate</code> вручную. Вместо этого программа регулярно приостанавливается и сканируется на предмет неиспользуемых переменных heap, которые затем автоматически освобождаются. Таким образом, вышеописанные уязвимости могут никогда не возникнуть. Недостатком являются накладные расходы от регулярного сканирования и паузы во время рабты.</p>
+<p>Rust подходит к решению этой проблемы иначе: он использует концепцию, называемую <a rel="external" href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"><em>ownership</em></a> (владение), которая позволяет проверять корректность операций с динамической памятью на этапе компиляции. Таким образом, для предотвращения указанных уязвимостей не требуется сборщик мусора, а значит и нету штрафов к производительности. Другим преимуществом этого подхода является то, что программист может точно настраивать поведение для данамической памяти, как в C или C++.</p>
 <h3 id="allokatsii-v-rust"><a class="zola-anchor" href="#allokatsii-v-rust" aria-label="Anchor link for: allokatsii-v-rust">🔗</a>Аллокации в Rust</h3>
-<p>Вместо того чтобы заставлять программиста вручную вызывать <code>allocate</code> и <code>deallocate</code>, стандартная библиотека Rust предоставляет абстрактные типы, которые вызывают эти функции неявно. Самый важный из них - <a href="https://doc.rust-lang.org/std/boxed/index.html"><strong><code>Box</code></strong></a>, являющийся абстракцией для значения, размещенного на куче (heap). Он предоставляет конструктор <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a>, который принимает значение, вызывает <code>allocate</code> с размером этого значения и затем перемещает его в новый слот в памяти кучи. Чтобы освободить память кучи, тип <code>Box</code> реализует трейт <a href="https://doc.rust-lang.org/book/ch15-03-drop.html"><code>Drop</code> trait</a> для вызова <code>deallocate</code> при выходе за пределы области видимости:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = Box::new([</span><span style="color:#b5cea8;">1</span><span>,</span><span style="color:#b5cea8;">2</span><span>,</span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    […]
-</span><span>} </span><span style="color:#608b4e;">// z выходит из области видимости и `deallocate` вызывается
-</span></code></pre>
-<p>Этот паттерн имеет странное название <a href="https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization"><em>resource acquisition is initialization</em></a> (или сокращенно <em>RAII</em>). Он появился в C++, где используется для реализации аналогичного абстрактного типа под названием <a href="https://en.cppreference.com/w/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a>.</p>
+<p>Вместо того чтобы заставлять программиста вручную вызывать <code>allocate</code> и <code>deallocate</code>, стандартная библиотека Rust предоставляет абстрактные типы, которые вызывают эти функции неявно. Самый важный из них - <a rel="external" href="https://doc.rust-lang.org/std/boxed/index.html"><strong><code>Box</code></strong></a>, являющийся абстракцией для значения, размещенного на куче (heap). Он предоставляет конструктор <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a>, который принимает значение, вызывает <code>allocate</code> с размером этого значения и затем перемещает его в новый слот в памяти кучи. Чтобы освободить память кучи, тип <code>Box</code> реализует трейт <a rel="external" href="https://doc.rust-lang.org/book/ch15-03-drop.html"><code>Drop</code> trait</a> для вызова <code>deallocate</code> при выходе за пределы области видимости:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>([</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;">2</span><span>,</span><span style="color: #B5CEA8;">3</span><span>]);</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #6A9955;"> // z выходит из области видимости и `deallocate` вызывается</span></span></code></pre>
+<p>Этот паттерн имеет странное название <a rel="external" href="https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization"><em>resource acquisition is initialization</em></a> (или сокращенно <em>RAII</em>). Он появился в C++, где используется для реализации аналогичного абстрактного типа под названием <a rel="external" href="https://en.cppreference.com/w/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a>.</p>
 <p>Одного лишь такого типа недостаточно для предотвращения всех ошибок use-after-free, поскольку программисты все еще могут удерживать ссылки после того, как <code>Box</code> выйдет из области видимости и соответствующий слот памяти в куче будет освобожден:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> x = {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = Box::new([</span><span style="color:#b5cea8;">1</span><span>,</span><span style="color:#b5cea8;">2</span><span>,</span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    </span><span style="color:#569cd6;">&amp;</span><span>z[</span><span style="color:#b5cea8;">1</span><span>]
-</span><span>}; </span><span style="color:#608b4e;">// z выходит из области видимости и `deallocate` вызывается
-</span><span>println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, x);
-</span></code></pre>
-<p>Здесь на сцену выходит система владения (ownership) Rust. Она присваивает каждой ссылке абстрактный <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">lifetime</a>, который представляет собой область видимости, в которой ссылка действительна. В приведенном выше примере ссылка <code>x</code> берется из массива <code>z</code>, поэтому она становится недействительной после того, как <code>z</code> выйдет из области видимости. Если вы запустите приведенный выше пример в <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">песочнице</a>, вы увидите, что компилятор Rust генерирует ошибку:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0597]: `z[_]` does not live long enough
-</span><span> --&gt; src/main.rs:4:9
-</span><span>  |
-</span><span>2 |     let x = {
-</span><span>  |         - borrow later stored here
-</span><span>3 |         let z = Box::new([1,2,3]);
-</span><span>  |             - binding `z` declared here
-</span><span>4 |         &amp;z[1]
-</span><span>  |         ^^^^^ borrowed value does not live long enough
-</span><span>5 |     }; // z выходит из области видимости и `deallocate` вызывается
-</span><span>  |     - `z[_]` dropped here while still borrowed
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> x</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>([</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;">2</span><span>,</span><span style="color: #B5CEA8;">3</span><span>]);</span></span>
+<span class="giallo-l"><span>    &amp;</span><span style="color: #9CDCFE;">z</span><span>[</span><span style="color: #B5CEA8;">1</span><span>]</span></span>
+<span class="giallo-l"><span>};</span><span style="color: #6A9955;"> // z выходит из области видимости и `deallocate` вызывается</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> x</span><span>);</span></span></code></pre>
+<p>Здесь на сцену выходит система владения (ownership) Rust. Она присваивает каждой ссылке абстрактный <a rel="external" href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">lifetime</a>, который представляет собой область видимости, в которой ссылка действительна. В приведенном выше примере ссылка <code>x</code> берется из массива <code>z</code>, поэтому она становится недействительной после того, как <code>z</code> выйдет из области видимости. Если вы запустите приведенный выше пример в <a rel="external" href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">песочнице</a>, вы увидите, что компилятор Rust генерирует ошибку:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error[E0597]: `z[_]` does not live long enough</span></span>
+<span class="giallo-l"><span> --&gt; src/main.rs:4:9</span></span>
+<span class="giallo-l"><span>  |</span></span>
+<span class="giallo-l"><span>2 |     let x = {</span></span>
+<span class="giallo-l"><span>  |         - borrow later stored here</span></span>
+<span class="giallo-l"><span>3 |         let z = Box::new([1,2,3]);</span></span>
+<span class="giallo-l"><span>  |             - binding `z` declared here</span></span>
+<span class="giallo-l"><span>4 |         &amp;z[1]</span></span>
+<span class="giallo-l"><span>  |         ^^^^^ borrowed value does not live long enough</span></span>
+<span class="giallo-l"><span>5 |     }; // z выходит из области видимости и `deallocate` вызывается</span></span>
+<span class="giallo-l"><span>  |     - `z[_]` dropped here while still borrowed</span></span></code></pre>
 <p>Терминология в начале может быть немного запутывающей. Взятие ссылки на значение называется <em>заимствованием</em> (borrowing) этого значения, так как это похоже на заимствование в реальной жизни: вы получаете временный доступ к объекту, но должны его вернуть позже и не можете уничтожить его. Проверяя, что все заимствования завершаются до уничтожения объекта, компилятор Rust гарантирует, что ситуация use-after-free никогда не произойдет.</p>
-<p>Система владения Rust заходит еще дальше: она предотвращает не только ошибки use-after-free, но и обеспечивает полную <a href="https://en.wikipedia.org/wiki/Memory_safety"><em>memory safety</em></a> (как это делают языки с сборкой мусора, например Java или Python). Кроме того, она гарантирует <a href="https://en.wikipedia.org/wiki/Thread_safety"><em>thread safety</em></a> и поэтому даже безопаснее этих языков при работе с многопоточным кодом. И самое главное: все эти проверки происходят на этапе компиляции, поэтому отсутствуют накладные расходы во время исполнения программы по сравнению со встроенной обработкой памяти в C.</p>
+<p>Система владения Rust заходит еще дальше: она предотвращает не только ошибки use-after-free, но и обеспечивает полную <a rel="external" href="https://en.wikipedia.org/wiki/Memory_safety"><em>memory safety</em></a> (как это делают языки с сборкой мусора, например Java или Python). Кроме того, она гарантирует <a rel="external" href="https://en.wikipedia.org/wiki/Thread_safety"><em>thread safety</em></a> и поэтому даже безопаснее этих языков при работе с многопоточным кодом. И самое главное: все эти проверки происходят на этапе компиляции, поэтому отсутствуют накладные расходы во время исполнения программы по сравнению со встроенной обработкой памяти в C.</p>
 <h3 id="stsenarii-ispol-zovaniia"><a class="zola-anchor" href="#stsenarii-ispol-zovaniia" aria-label="Anchor link for: stsenarii-ispol-zovaniia">🔗</a>Сценарии использования</h3>
 <p>Теперь мы знаем основы динамической аллокации памяти в Rust, но когда именно нам ее использовать? Мы уже довольно далеко продвинулись с нашим ядром без динамической аллокации, так почему же нам она сейчас нужна?</p>
 <p>Для начала - динамическая аллокация всегда несет небольшую накладную нагрузку на производительность, поскольку для каждой аллокации необходимо найти свободный слот в куче. По этой причине локальные переменные обычно предпочтительнее, особенно в коде ядра, чувствительном к производительности. Однако существуют случаи, когда динамическая аллокация является лучшим выбором.</p>
-<p>В качестве базового правила динамическая память требуется для переменных с динамическим временем жизни или переменным размером. Самый важный тип с динамическим временем жизни это <a href="https://doc.rust-lang.org/alloc/rc/index.html"><strong><code>Rc</code></strong></a>, который считает количество ссылок на свое обертываемое значение и освобождает его после того, как все ссылки вышли из области видимости. Примерами типов с переменным размером являются <a href="https://doc.rust-lang.org/alloc/vec/index.html"><strong><code>Vec</code></strong></a>, <a href="https://doc.rust-lang.org/alloc/string/index.html"><strong><code>String</code></strong></a> и другие <a href="https://doc.rust-lang.org/alloc/collections/index.html">collection types</a>, которые динамически растут при добавлении новых элементов. Эти типы работают путем выделения большего объема памяти, когда они заполняются, копирования всех элементов в новую область и затем освобождения старой памяти.</p>
+<p>В качестве базового правила динамическая память требуется для переменных с динамическим временем жизни или переменным размером. Самый важный тип с динамическим временем жизни это <a rel="external" href="https://doc.rust-lang.org/alloc/rc/index.html"><strong><code>Rc</code></strong></a>, который считает количество ссылок на свое обертываемое значение и освобождает его после того, как все ссылки вышли из области видимости. Примерами типов с переменным размером являются <a rel="external" href="https://doc.rust-lang.org/alloc/vec/index.html"><strong><code>Vec</code></strong></a>, <a rel="external" href="https://doc.rust-lang.org/alloc/string/index.html"><strong><code>String</code></strong></a> и другие <a rel="external" href="https://doc.rust-lang.org/alloc/collections/index.html">collection types</a>, которые динамически растут при добавлении новых элементов. Эти типы работают путем выделения большего объема памяти, когда они заполняются, копирования всех элементов в новую область и затем освобождения старой памяти.</p>
 <p>Для нашего ядра нам будут в основном нужны типы коллекций, например, для хранения списка активных задач при реализации многозадачности в будущих постах.</p>
 <h2 id="interfeis-allokatora"><a class="zola-anchor" href="#interfeis-allokatora" aria-label="Anchor link for: interfeis-allokatora">🔗</a>Интерфейс Аллокатора</h2>
-<p>Первым шагом в реализации кучевого (heap) аллокатора является добавление зависимости от встроенного крейта <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a>. Подобно крейту <a href="https://doc.rust-lang.org/core/"><code>core</code></a>, он представляет собой подмножество стандартной библиотеки, которое дополнительно содержит типы для работы с памятью и коллекциями. Для добавления зависимости на <code>alloc</code>, мы вносим следующее изменение в наш файл <code>lib.rs</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span></code></pre>
+<p>Первым шагом в реализации кучевого (heap) аллокатора является добавление зависимости от встроенного крейта <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a>. Подобно крейту <a rel="external" href="https://doc.rust-lang.org/core/"><code>core</code></a>, он представляет собой подмножество стандартной библиотеки, которое дополнительно содержит типы для работы с памятью и коллекциями. Для добавления зависимости на <code>alloc</code>, мы вносим следующее изменение в наш файл <code>lib.rs</code>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span></code></pre>
 <p>В отличие от обычных зависимостей, нам не нужно изменять файл <code>Cargo.toml</code>. Причиной тому является то, что крейт <code>alloc</code> поставляется вместе с компилятором Rust как часть стандартной библиотеки, поэтому компилятор уже знает о существовании этого крейта. Добавив эту директиву <code>extern crate</code>, мы указываем компилятору попытаться включить его в сборку (исторически все зависимости требовали директивы <code>extern crate</code>, которая теперь является опциональной).</p>
 <p>Поскольку мы компилируем для кастомного целевого устройства, мы не можем использовать предварительно скомпилированную версию <code>alloc</code>, поставляемую с установкой Rust. Вместо этого нам нужно сообщить Cargo пересобрать этот крейт из исходного кода. Мы можем сделать это, добавив его в массив <code>unstable.build-std</code> в нашем файле <code>.cargo/config.toml</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># .cargo/config.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">unstable</span><span>]
-</span><span style="color:#569cd6;">build-std </span><span>= [</span><span style="color:#d69d85;">&quot;core&quot;</span><span>, </span><span style="color:#d69d85;">&quot;compiler_builtins&quot;</span><span>, </span><span style="color:#d69d85;">&quot;alloc&quot;</span><span>]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># .cargo/config.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[unstable]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">build-std</span><span> = [</span><span style="color: #CE9178;">&quot;core&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;compiler_builtins&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;alloc&quot;</span><span>]</span></span></code></pre>
 <p>Теперь компилятор пересоберет и включит крейт <code>alloc</code> в наше ядро.</p>
 <p>Причина, по которой крейт <code>alloc</code> отключен по умолчанию в том, что для крейтах с атрибутом <code>#[no_std]</code> есть дополнительные требования. Когда мы попытаемся скомпилировать наш проект сейчас, увидим эти требования в виде ошибок:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: no global memory allocator found but one is required; link to std or add
-</span><span>       #[global_allocator] to a static item that implements the GlobalAlloc trait.
-</span></code></pre>
-<p>Ошибка возникает потому, что крейт <code>alloc</code> требует наличия heap-аллокатора - объекта, предоставляющего функции <code>allocate</code> и <code>deallocate</code>. В Rust heap-аллокатор описываются трейтом <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>, который упомянут в сообщении об ошибке. Чтобы задать аллокатор на куче для крейта, атрибут <code>#[global_allocator]</code> должен быть применен к переменной <code>static</code>, реализующей трейт <code>GlobalAlloc</code>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: no global memory allocator found but one is required; link to std or add</span></span>
+<span class="giallo-l"><span>       #[global_allocator] to a static item that implements the GlobalAlloc trait.</span></span></code></pre>
+<p>Ошибка возникает потому, что крейт <code>alloc</code> требует наличия heap-аллокатора - объекта, предоставляющего функции <code>allocate</code> и <code>deallocate</code>. В Rust heap-аллокатор описываются трейтом <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>, который упомянут в сообщении об ошибке. Чтобы задать аллокатор на куче для крейта, атрибут <code>#[global_allocator]</code> должен быть применен к переменной <code>static</code>, реализующей трейт <code>GlobalAlloc</code>.</p>
 <h3 id="treit-globalalloc"><a class="zola-anchor" href="#treit-globalalloc" aria-label="Anchor link for: treit-globalalloc">🔗</a>Трейт <code>GlobalAlloc</code></h3>
-<p>Трейт <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> определяет функции, которые должен предоставлять heap-аллокатор. Этот трейт особенный тем, что программисты почти никогда не используют его напрямую. Вместо этого компилятор автоматически вставляет соответствующие вызовы методов трейта при использовании типов для работы с памятью и коллекциями из <code>alloc</code>.</p>
+<p>Трейт <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> определяет функции, которые должен предоставлять heap-аллокатор. Этот трейт особенный тем, что программисты почти никогда не используют его напрямую. Вместо этого компилятор автоматически вставляет соответствующие вызовы методов трейта при использовании типов для работы с памятью и коллекциями из <code>alloc</code>.</p>
 <p>Так как нам придется реализовать этот трейт для всех наших типов аллокаторов, стоит внимательно изучить его декларацию:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub unsafe trait </span><span>GlobalAlloc {
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8</span><span>;
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc_zeroed(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>realloc(
-</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self,
-</span><span>        ptr: </span><span style="color:#569cd6;">*mut u8</span><span>,
-</span><span>        layout: Layout,
-</span><span>        new_size: </span><span style="color:#569cd6;">usize
-</span><span>    ) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
-</span><span>}
-</span></code></pre>
-<p>Он определяет два обязательных метода <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> и <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>, которые соответствуют функциям <code>allocate</code> и <code>deallocate</code>, что мы использовали в наших примерах:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub unsafe trait</span><span style="color: #4EC9B0;"> GlobalAlloc</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> dealloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc_zeroed</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> { ... }</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> realloc</span><span>(</span></span>
+<span class="giallo-l"><span>        &amp;</span><span style="color: #569CD6;">self</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        new_size</span><span>:</span><span style="color: #4EC9B0;"> usize</span></span>
+<span class="giallo-l"><span>    ) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> { ... }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Он определяет два обязательных метода <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> и <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>, которые соответствуют функциям <code>allocate</code> и <code>deallocate</code>, что мы использовали в наших примерах:</p>
 <ul>
-<li>Метод <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> принимает аргумент типа <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>, который описывает желаемый размер и выравнивание (alignment), которыми должна обладать выделенная память. Он возвращает <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">сырой указатель</a> на первый байт выделенного блока памяти. Вместо явного значения ошибки метод <code>alloc</code> возвращает нулевой указатель для сигнализации об ошибке выделения. Это немного неидиоматично, но имеет преимущество: облегчается создание обертки над существующими системными аллокаторами, так как они используют ту же конвенцию.</li>
-<li>Метод <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> является аналогом и отвечает за освобождение блока памяти обратно. Он принимает два аргумента: указатель, возвращенный <code>alloc</code>, и <code>Layout</code>, использованный при выделении.</li>
+<li>Метод <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> принимает аргумент типа <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>, который описывает желаемый размер и выравнивание (alignment), которыми должна обладать выделенная память. Он возвращает <a rel="external" href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">сырой указатель</a> на первый байт выделенного блока памяти. Вместо явного значения ошибки метод <code>alloc</code> возвращает нулевой указатель для сигнализации об ошибке выделения. Это немного неидиоматично, но имеет преимущество: облегчается создание обертки над существующими системными аллокаторами, так как они используют ту же конвенцию.</li>
+<li>Метод <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> является аналогом и отвечает за освобождение блока памяти обратно. Он принимает два аргумента: указатель, возвращенный <code>alloc</code>, и <code>Layout</code>, использованный при выделении.</li>
 </ul>
-<p>Трейт дополнительно определяет два метода <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a> и <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a> с реализацией по умолчанию:</p>
+<p>Трейт дополнительно определяет два метода <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a> и <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a> с реализацией по умолчанию:</p>
 <ul>
-<li>Метод <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a> эквивалентен вызову <code>alloc</code>, за которым следует установка выделенного блока памяти в ноль, что точно делает предоставленная реализация по умолчанию. Реализация аллокатора может переопределить дефолтный более эффективной кастомной версией, если это возможно.</li>
-<li>Метод <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a> позволяет увеличить или уменьшить размер выделения. Реализация по умолчанию выделяет новый блок памяти с желаемым размером и копирует туда все содержимое из предыдущего выделения. Снова, реализация аллокатора может предоставить более эффективную версию этого метода, например, путем изменения размера выделение на месте (in-place), если это возможно.</li>
+<li>Метод <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a> эквивалентен вызову <code>alloc</code>, за которым следует установка выделенного блока памяти в ноль, что точно делает предоставленная реализация по умолчанию. Реализация аллокатора может переопределить дефолтный более эффективной кастомной версией, если это возможно.</li>
+<li>Метод <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a> позволяет увеличить или уменьшить размер выделения. Реализация по умолчанию выделяет новый блок памяти с желаемым размером и копирует туда все содержимое из предыдущего выделения. Снова, реализация аллокатора может предоставить более эффективную версию этого метода, например, путем изменения размера выделение на месте (in-place), если это возможно.</li>
 </ul>
 <h4 id="nenadezhnost-unsafety"><a class="zola-anchor" href="#nenadezhnost-unsafety" aria-label="Anchor link for: nenadezhnost-unsafety">🔗</a>Ненадежность (Unsafety)</h4>
 <p>Стоит отметить одно: и сам трейт, и все его методы объявлены как <code>unsafe</code>:</p>
 <ul>
 <li>Причина объявления трейта как <code>unsafe</code> в том, что программист должен гарантировать корректность реализации трейта для типа аллокатора. Например, метод <code>alloc</code> никогда не должен возвращать блок памяти, который уже используется где-то еще, так как это приведет к неопределенному поведению.</li>
-<li>Аналогично, методы объявляются <code>unsafe</code>, потому что вызывающая сторона должна обеспечить соблюдение различных инвариантов при их использовании. Например, переданный в метод <code>alloc</code> объект <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> должен указывать ненулевой размер. На практике это не так важно, поскольку эти методы обычно вызываются напрямую компилятором, который гарантирует выполнение требований.</li>
+<li>Аналогично, методы объявляются <code>unsafe</code>, потому что вызывающая сторона должна обеспечить соблюдение различных инвариантов при их использовании. Например, переданный в метод <code>alloc</code> объект <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> должен указывать ненулевой размер. На практике это не так важно, поскольку эти методы обычно вызываются напрямую компилятором, который гарантирует выполнение требований.</li>
 </ul>
 <h3 id="dummyallocator"><a class="zola-anchor" href="#dummyallocator" aria-label="Anchor link for: dummyallocator">🔗</a><code>DummyAllocator</code></h3>
 <p>Теперь, когда мы знаем, что тип аллокатора должен предоставлять, можно создать простой тестовый аллокатор. Для этого создадим новый модуль <code>allocator</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub mod </span><span>allocator;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub mod</span><span> allocator;</span></span></code></pre>
 <p>Наш тестовый аллокатор выполняет абсолютно минимум для реализации трейта и всегда возвращает ошибку при вызове <code>alloc</code>. Он выглядит следующим образом:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
-</span><span style="color:#569cd6;">use </span><span>core::ptr::null_mut;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Dummy;
-</span><span>
-</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Dummy {
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
-</span><span>        null_mut()
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
-</span><span>        panic!(</span><span style="color:#d69d85;">&quot;dealloc should be never called&quot;</span><span>)
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>Структура не требует каких-либо полей, поэтому мы создаем её как <a href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">тип нулевого размера</a> (zero-sized type). Как упоминалось выше, метод <code>alloc</code> всегда возвращает нулевой указатель, что соответствует ошибке выделения. Поскольку аллокатор никогда не возвращает память, вызов метода <code>dealloc</code> никогда не должен происходить. По этой причине мы просто вызываем <code>panic!</code> в методе <code>dealloc</code>. Методы <code>alloc_zeroed</code> и <code>realloc</code> имеют реализации по умолчанию, поэтому нам не нужно предоставлять свои версии для них.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">alloc</span><span>::{</span><span style="color: #4EC9B0;">GlobalAlloc</span><span>,</span><span style="color: #4EC9B0;"> Layout</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">ptr</span><span>::null_mut;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Dummy</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe impl</span><span style="color: #4EC9B0;"> GlobalAlloc</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Dummy</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> _layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        null_mut</span><span>()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> dealloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> _ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span><span style="color: #9CDCFE;"> _layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        panic!</span><span>(</span><span style="color: #CE9178;">&quot;dealloc should be never called&quot;</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Структура не требует каких-либо полей, поэтому мы создаем её как <a rel="external" href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">тип нулевого размера</a> (zero-sized type). Как упоминалось выше, метод <code>alloc</code> всегда возвращает нулевой указатель, что соответствует ошибке выделения. Поскольку аллокатор никогда не возвращает память, вызов метода <code>dealloc</code> никогда не должен происходить. По этой причине мы просто вызываем <code>panic!</code> в методе <code>dealloc</code>. Методы <code>alloc_zeroed</code> и <code>realloc</code> имеют реализации по умолчанию, поэтому нам не нужно предоставлять свои версии для них.</p>
 <p>Теперь у нас есть простой аллокатор, но мы всё ещё должны сообщить компилятору Rust использовать именно его. Здесь на сцену выходит атрибут <code>#[global_allocator]</code>.</p>
 <h3 id="atribut-global-allocator"><a class="zola-anchor" href="#atribut-global-allocator" aria-label="Anchor link for: atribut-global-allocator">🔗</a>Атрибут <code>#[global_allocator]</code></h3>
 <p>Атрибут <code>#[global_allocator]</code> сообщает компилятору Rust, какой экземпляр аллокатора следует использовать в качестве глобального кучевого аллокатора. Этот атрибут применим только к переменной <code>static</code>, реализующей трейт <code>GlobalAlloc</code>. Давайте зарегистрируем экземпляр нашего аллокатора <code>Dummy</code> как глобальный:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
-</span><span>
-</span><span>#[global_allocator]
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Dummy = Dummy;
-</span></code></pre>
-<p>Поскольку аллокатор <code>Dummy</code> является <a href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">типом нулевого размера</a>, нам не нужно указывать какие-либо поля в выражении инициализации.</p>
-<p>С этим статическим объектом ошибки компиляции должны исчезнуть. Теперь мы можем использовать типы для работы с памятью и коллекциями из <code>alloc</code>. Например, мы можем использовать <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> для выделения значения в куче:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::boxed::Box;
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// […] печать &quot;Hello World!&quot;, вызов `init`, создание `mapper` и `frame_allocator`
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> x = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] вызов `test_main` в тестовом режиме
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[global_allocator]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> ALLOCATOR:</span><span style="color: #4EC9B0;"> Dummy</span><span> =</span><span style="color: #4EC9B0;"> Dummy</span><span>;</span></span></code></pre>
+<p>Поскольку аллокатор <code>Dummy</code> является <a rel="external" href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">типом нулевого размера</a>, нам не нужно указывать какие-либо поля в выражении инициализации.</p>
+<p>С этим статическим объектом ошибки компиляции должны исчезнуть. Теперь мы можем использовать типы для работы с памятью и коллекциями из <code>alloc</code>. Например, мы можем использовать <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> для выделения значения в куче:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] печать &quot;Hello World!&quot;, вызов `init`, создание `mapper` и `frame_allocator`</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] вызов `test_main` в тестовом режиме</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>Обратите внимание, что нам также необходимо указать директиву <code>extern crate alloc</code> в файле <code>main.rs</code>, потому что это части <code>lib.rs</code> и <code>main.rs</code> рассматриваются как отдельные крейты (crate). Однако создавать дополнительный статический объект <code>#[global_allocator]</code> не нужно, так как глобальный аллокатор применяется ко всем крейтам в проекте. Более того, указание дополнительного аллокатора в другом крейте привело бы к ошибке.</p>
 <p>При запуске вышеуказанного кода мы увидим возникновение паники:</p>
 <p><img src="https://os.phil-opp.com/ru/heap-allocation/qemu-dummy-output.png" alt="QEMU печатает “panicked at `allocation error: Layout { size_: 4, align_: 4 }, src/lib.rs:89:5”" /></p>
@@ -377,280 +365,267 @@
 <h2 id="sozdanie-kuchi-dlia-iadra"><a class="zola-anchor" href="#sozdanie-kuchi-dlia-iadra" aria-label="Anchor link for: sozdanie-kuchi-dlia-iadra">🔗</a>Создание Кучи для Ядра</h2>
 <p>Прежде чем мы сможем создать настоящий аллокатор, сначала нужно создать область кучи в памяти, из которой он сможет аллоцировать память. Для этого необходимо определить виртуальный диапазон памяти для области кучи и затем маппнуть его на физические страницы (фреймы). См. пост <a href="https://os.phil-opp.com/paging-introduction/"><em>Введение в пагинацию</em></a> для общего обзора виртуальной памяти и таблиц страниц.</p>
 <p>Первым шагом является определение виртуального диапазона памяти для кучи. Мы можем выбрать любой диапазон виртуальных адресов, который нам нравится, при условии, что он не занят другой областью памяти. Давайте определим его как память, начинающуюся по адресу <code>0x_4444_4444_0000</code>, чтобы в дальнейшем легко идентифицировать указатели на кучу:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
-</span><span>
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_START</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">0x_4444_4444_0000</span><span>;
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_SIZE</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">100 </span><span>* </span><span style="color:#b5cea8;">1024</span><span>; </span><span style="color:#608b4e;">// 100 Кб
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> HEAP_START:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 0x_4444_4444_0000</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> HEAP_SIZE:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 100</span><span> *</span><span style="color: #B5CEA8;"> 1024</span><span>;</span><span style="color: #6A9955;"> // 100 Кб</span></span></code></pre>
 <p>Размер кучи пока установлен на 100 Кб. Если в будущем потребуется больше пространства, мы можем просто увеличить этот размер.</p>
 <p>Если бы мы попытались использовать эту область кучи прямо сейчас, то получили бы “отказ страницы” (page fault), так как виртуальная область памяти ещё не маппнута на физическую. Для решения этой проблемы создадим функцию <code>init_heap</code>, которая маппнит страницы кучи с использованием <a href="https://os.phil-opp.com/paging-implementation/#using-offsetpagetable"><code>Mapper</code> API</a>, представленного в посте <a href="https://os.phil-opp.com/paging-implementation/"><em>“Реализация пагинации”</em></a>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::{
-</span><span>    structures::paging::{
-</span><span>        mapper::MapToError, FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB,
-</span><span>    },
-</span><span>    VirtAddr,
-</span><span>};
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init_heap(
-</span><span>    mapper: </span><span style="color:#569cd6;">&amp;mut</span><span> impl Mapper&lt;Size4KiB&gt;,
-</span><span>    frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> impl FrameAllocator&lt;Size4KiB&gt;,
-</span><span>) -&gt; Result&lt;(), MapToError&lt;Size4KiB&gt;&gt; {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> page_range = {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_start = VirtAddr::new(</span><span style="color:#b4cea8;">HEAP_START </span><span style="color:#569cd6;">as u64</span><span>);
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_end = heap_start + </span><span style="color:#b4cea8;">HEAP_SIZE </span><span>- </span><span style="color:#b5cea8;">1</span><span style="color:#569cd6;">u64</span><span>;
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_start_page = Page::containing_address(heap_start);
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_end_page = Page::containing_address(heap_end);
-</span><span>        Page::range_inclusive(heap_start_page, heap_end_page)
-</span><span>    };
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">for</span><span> page </span><span style="color:#569cd6;">in</span><span> page_range {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> frame = frame_allocator
-</span><span>            .allocate_frame()
-</span><span>            .ok_or(MapToError::FrameAllocationFailed)</span><span style="color:#569cd6;">?</span><span>;
-</span><span>        </span><span style="color:#569cd6;">let</span><span> flags = PageTableFlags::</span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span>PageTableFlags::</span><span style="color:#b4cea8;">WRITABLE</span><span>;
-</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>            mapper.map_to(page, frame, flags, frame_allocator)</span><span style="color:#569cd6;">?</span><span>.flush()
-</span><span>        };
-</span><span>    }
-</span><span>
-</span><span>    Ok(())
-</span><span>}
-</span></code></pre>
-<p>Функция принимает мутабельные ссылки на экземпляр <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> и <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a>, оба ограниченные страницами размером в 4 Кб с использованием параметра общего типа <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a>. Функции возвращают <a href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a> с типом <code>()</code> для успешной операции и <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a> метода <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> для ошибки. Повторное использование типа ошибок здесь имеет смысл, поскольку метод <code>map_to</code> является основным источником ошибок в этой функции.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::{</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::{</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        mapper</span><span>::</span><span style="color: #4EC9B0;">MapToError</span><span>,</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>,</span><span style="color: #4EC9B0;"> Mapper</span><span>,</span><span style="color: #4EC9B0;"> Page</span><span>,</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>,</span><span style="color: #4EC9B0;"> Size4KiB</span><span>,</span></span>
+<span class="giallo-l"><span>    },</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    VirtAddr</span><span>,</span></span>
+<span class="giallo-l"><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init_heap</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    mapper</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> Mapper</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    frame_allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span>) -&gt;</span><span style="color: #4EC9B0;"> Result</span><span>&lt;(),</span><span style="color: #4EC9B0;"> MapToError</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page_range</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_start</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(HEAP_START</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end</span><span> =</span><span style="color: #9CDCFE;"> heap_start</span><span> + HEAP_SIZE -</span><span style="color: #B5CEA8;"> 1</span><span style="color: #4EC9B0;">u64</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_start_page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">heap_start</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end_page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">heap_end</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Page</span><span>::</span><span style="color: #DCDCAA;">range_inclusive</span><span>(</span><span style="color: #9CDCFE;">heap_start_page</span><span>,</span><span style="color: #9CDCFE;"> heap_end_page</span><span>)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> page</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> page_range</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> frame_allocator</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">allocate_frame</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">ok_or</span><span>(</span><span style="color: #4EC9B0;">MapToError</span><span>::</span><span style="color: #4EC9B0;">FrameAllocationFailed</span><span>)?;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> flags</span><span> =</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>::PRESENT |</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>::WRITABLE;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            mapper</span><span>.</span><span style="color: #DCDCAA;">map_to</span><span>(</span><span style="color: #9CDCFE;">page</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>,</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)?.</span><span style="color: #DCDCAA;">flush</span><span>()</span></span>
+<span class="giallo-l"><span>        };</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Ok</span><span>(())</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Функция принимает мутабельные ссылки на экземпляр <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> и <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a>, оба ограниченные страницами размером в 4 Кб с использованием параметра общего типа <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a>. Функции возвращают <a rel="external" href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a> с типом <code>()</code> для успешной операции и <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a> метода <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> для ошибки. Повторное использование типа ошибок здесь имеет смысл, поскольку метод <code>map_to</code> является основным источником ошибок в этой функции.</p>
 <p>Реализацию можно разбить на две части:</p>
 <ul>
 <li>
-<p><strong>Создание диапазона страниц:</strong> Чтобы создать диапазон страниц, которые мы хотим маппнуть, преобразуем указатель <code>HEAP_START</code> в тип <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a>. Затем вычисляем конечный адрес кучи, прибавив к нему <code>HEAP_SIZE</code>. Нам нужен инклюзивный предел (адрес последнего байта кучи), поэтому мы вычитаем 1. Далее преобразуем адреса в типы <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html"><code>Page</code></a> с помощью функции <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.containing_address"><code>containing_address</code></a>. Наконец, создаём диапазон страниц из начальной и конечной страниц с помощью функции <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.range_inclusive"><code>Page::range_inclusive</code></a>.</p>
+<p><strong>Создание диапазона страниц:</strong> Чтобы создать диапазон страниц, которые мы хотим маппнуть, преобразуем указатель <code>HEAP_START</code> в тип <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a>. Затем вычисляем конечный адрес кучи, прибавив к нему <code>HEAP_SIZE</code>. Нам нужен инклюзивный предел (адрес последнего байта кучи), поэтому мы вычитаем 1. Далее преобразуем адреса в типы <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html"><code>Page</code></a> с помощью функции <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.containing_address"><code>containing_address</code></a>. Наконец, создаём диапазон страниц из начальной и конечной страниц с помощью функции <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.range_inclusive"><code>Page::range_inclusive</code></a>.</p>
 </li>
 <li>
 <p><strong>Маппнинг страниц:</strong> Второй шаг заключается в маппнинге всех страниц созданного диапазона. Для этого мы проходим по этим страницам через цикл <code>for</code>. Для каждой страницы делаем следующее:</p>
 <ul>
 <li>
-<p>Мы аллоцируем физический фрейм, к которому должна быть замаплена страница через метод <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a>. Этот метод возвращает <a href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a>, если доступных фреймов нету. В этом случае мы преобразуем результат в ошибку <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a> через метод <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a>, а затем используем <a href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">оператор “вопрос”</a> для раннего возврата ошибки.</p>
+<p>Мы аллоцируем физический фрейм, к которому должна быть замаплена страница через метод <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a>. Этот метод возвращает <a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a>, если доступных фреймов нету. В этом случае мы преобразуем результат в ошибку <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a> через метод <a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a>, а затем используем <a rel="external" href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">оператор “вопрос”</a> для раннего возврата ошибки.</p>
 </li>
 <li>
 <p>Мы устанавливаем для страницы необходимые флаги <code>PRESENT</code> и <code>WRITABLE</code>. При наличии этих флагов разрешены как чтение, так и запись, что вполне уместно для куче.</p>
 </li>
 <li>
-<p>Для создания маппинга в таблице активных страниц мы используем метод <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a>. Этот метод может завершиться с ошибкой, поэтому мы снова используем <a href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">оператор “вопрос”</a>, чтобы передать ошибку вызывающему коду. В случае успешного выполнения метод возвращает экземпляр <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a>, который мы можем использовать для обновления <a href="https://os.phil-opp.com/paging-introduction/#the-translation-lookaside-buffer">буфера ассоциативной трансляции</a> с помощью метода <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a>.</p>
+<p>Для создания маппинга в таблице активных страниц мы используем метод <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a>. Этот метод может завершиться с ошибкой, поэтому мы снова используем <a rel="external" href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">оператор “вопрос”</a>, чтобы передать ошибку вызывающему коду. В случае успешного выполнения метод возвращает экземпляр <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a>, который мы можем использовать для обновления <a href="https://os.phil-opp.com/paging-introduction/#the-translation-lookaside-buffer">буфера ассоциативной трансляции</a> с помощью метода <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a>.</p>
 </li>
 </ul>
 </li>
 </ul>
 <p>Финальным шагом является вызов этой функции из нашего <code>kernel_main</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::allocator; </span><span style="color:#608b4e;">// новый импорт
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::{self, BootInfoFrameAllocator};
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
-</span><span>    blog_os::init();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span>boot_info.memory_map)
-</span><span>    };
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// новый вызов
-</span><span>    allocator::init_heap(</span><span style="color:#569cd6;">&amp;mut</span><span> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;heap initialization failed&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> x = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] вызов `test_main` в тестовом режиме
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span></code></pre>
-<p>Здесь показана функция полностью для контекста. Единственные новые строки - это импорт <code>blog_os::allocator</code> и вызов функции <code>allocator::init_heap</code>. В случае, если функция <code>init_heap</code> возвращает ошибку, мы вызываем панику через метод <a href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>Result::expect</code></a>, так как в данный момент у нас нет осмысленного способа обработать эту ошибку.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::allocator;</span><span style="color: #6A9955;"> // новый импорт</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::{</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Hello World{}&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> mapper</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        BootInfoFrameAllocator</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(&amp;</span><span style="color: #9CDCFE;">boot_info</span><span>.memory_map)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // новый вызов</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    allocator</span><span>::</span><span style="color: #DCDCAA;">init_heap</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> mapper</span><span>, &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;heap initialization failed&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] вызов `test_main` в тестовом режиме</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Здесь показана функция полностью для контекста. Единственные новые строки - это импорт <code>blog_os::allocator</code> и вызов функции <code>allocator::init_heap</code>. В случае, если функция <code>init_heap</code> возвращает ошибку, мы вызываем панику через метод <a rel="external" href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>Result::expect</code></a>, так как в данный момент у нас нет осмысленного способа обработать эту ошибку.</p>
 <p>Теперь у нас есть маппнутая область памяти кучи, готовая к использованию. Вызов <code>Box::new</code> всё ещё использует наш старый аллокатор <code>Dummy</code>, поэтому при запуске вы по-прежнему увидите ошибку “недостаточно памяти”. Давайте исправим это, используя настоящий аллокатор.</p>
 <h2 id="ispol-zovanie-kreita-dlia-allokatora"><a class="zola-anchor" href="#ispol-zovanie-kreita-dlia-allokatora" aria-label="Anchor link for: ispol-zovanie-kreita-dlia-allokatora">🔗</a>Использование крейта для аллокатора</h2>
 <p>Поскольку реализация собственного аллокатора несколько сложна, начнём с использования внешнего крейта для аллокаторов. В следующем посте мы изучим, как реализовать свой собственный аллокатор.</p>
-<p>Простым крейтом для приложений <code>no_std</code> является <a href="https://github.com/phil-opp/linked-list-allocator/"><code>linked_list_allocator</code></a>. Его название происходит из того факта, что он использует структуру данных связного списка для отслеживания освобождённых областей памяти. Более подробное объяснение этого подхода смотрите в следующем посте.</p>
+<p>Простым крейтом для приложений <code>no_std</code> является <a rel="external" href="https://github.com/phil-opp/linked-list-allocator/"><code>linked_list_allocator</code></a>. Его название происходит из того факта, что он использует структуру данных связного списка для отслеживания освобождённых областей памяти. Более подробное объяснение этого подхода смотрите в следующем посте.</p>
 <p>Для использования крейта сначала нужно добавить зависимость от него в наш файл <code>Cargo.toml</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">linked_list_allocator </span><span>= </span><span style="color:#d69d85;">&quot;0.9.0&quot;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">linked_list_allocator</span><span> =</span><span style="color: #CE9178;"> &quot;0.9.0&quot;</span></span></code></pre>
 <p>Затем мы можем заменить наш тестовый аллокатор на тот, который предоставляется крейтом:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>linked_list_allocator::LockedHeap;
-</span><span>
-</span><span>#[global_allocator]
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: LockedHeap = LockedHeap::empty();
-</span></code></pre>
-<p>Структура называется <code>LockedHeap</code>, потому что она использует тип <a href="https://docs.rs/spinning_top/0.1.0/spinning_top/type.Spinlock.html"><code>spinning_top::Spinlock</code></a> для синхронизации. Это необходимо, поскольку несколько потоков могут одновременно получать доступ к статической переменной <code>ALLOCATOR</code>. Как всегда, при использовании спинлока или мьютекса нужно быть осторожным и избегать случайных взаимоблокировок (deadlocks). Это означает, что мы не должны выполнять операции аллокации в обработчиках прерываний, так как они могут выполняться в любой момент и могут прервать текущую операцию аллокации.</p>
-<p>Просто установки <code>LockedHeap</code> в качестве глобального аллокатора недостаточно. Причина в том, что мы используем конструкторную функцию <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.LockedHeap.html#method.empty"><code>empty</code></a>, которая создаёт аллокатор без резервирующей памяти. Как и наш dummy-аллокатор, он всегда возвращает ошибку при вызове <code>alloc</code>. Для исправления этого нам нужно инициализировать аллокатор после создания кучи:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init_heap(
-</span><span>    mapper: </span><span style="color:#569cd6;">&amp;mut</span><span> impl Mapper&lt;Size4KiB&gt;,
-</span><span>    frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> impl FrameAllocator&lt;Size4KiB&gt;,
-</span><span>) -&gt; Result&lt;(), MapToError&lt;Size4KiB&gt;&gt; {
-</span><span>    </span><span style="color:#608b4e;">// […] маппнит все страницы кучи на физические фреймы
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// новый код
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">ALLOCATOR</span><span>.lock().init(</span><span style="color:#b4cea8;">HEAP_START</span><span>, </span><span style="color:#b4cea8;">HEAP_SIZE</span><span>);
-</span><span>    }
-</span><span>
-</span><span>    Ok(())
-</span><span>}
-</span></code></pre>
-<p>Мы используем метод <a href="https://docs.rs/lock_api/0.3.3/lock_api/struct.Mutex.html#method.lock"><code>lock</code></a> на внутреннем спинлоке типа <code>LockedHeap</code>, чтобы получить эксклюзивную ссылку на обёрнутый экземпляр <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a>, на котором затем вызываем метод <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> с границами кучи в качестве аргументов. Поскольку функция <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> уже пытается записывать в память кучи, мы должны инициализировать кучу только <em>после</em> маппнинга страниц кучи.</p>
-<p>После инициализации кучи мы теперь можем использовать все типы для аллокации и коллекций из встроенного крейта <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> без ошибок:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::{boxed::Box, vec, vec::Vec, rc::Rc};
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// […] инициализация прерываний, mapper, frame_allocator, heap
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// аллоцируем число в куче
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;heap_value at </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, heap_value);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// создаём вектор динамического размера
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> vec = Vec::new();
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">500 </span><span>{
-</span><span>        vec.push(i);
-</span><span>    }
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;vec at </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, vec.as_slice());
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// создаём вектор со счётчиком ссылок -&gt; будет освобождён, когда счётчик достигнет 0
-</span><span>    </span><span style="color:#569cd6;">let</span><span> reference_counted = Rc::new(vec![</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">2</span><span>, </span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> cloned_reference = reference_counted.clone();
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;current reference count is </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, Rc::strong_count(</span><span style="color:#569cd6;">&amp;</span><span>cloned_reference));
-</span><span>    core::mem::drop(reference_counted);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;reference count is </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> now&quot;</span><span>, Rc::strong_count(</span><span style="color:#569cd6;">&amp;</span><span>cloned_reference));
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] вызов `test_main` в тестовом контексте
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span></code></pre>
-<p>Этот пример кода демонстрирует использование типов <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>, <a href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a> и <a href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a>. Для типов <code>Box</code> и <code>Vec</code> мы выводим базовые указатели кучи с помощью спецификатора форматирования [<code>{:p}</code>]. Чтобы продемонстрировать <code>Rc</code>, мы создаём значение в куче со счётчиком ссылок и используем функцию <a href="https://doc.rust-lang.org/alloc/rc/struct.Rc.html#method.strong_count"><code>Rc::strong_count</code></a> для вывода текущего количества ссылок до и после освобождения экземпляра (с помощью <a href="https://doc.rust-lang.org/core/mem/fn.drop.html"><code>core::mem::drop</code></a>).</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> linked_list_allocator</span><span>::</span><span style="color: #4EC9B0;">LockedHeap</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[global_allocator]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> ALLOCATOR:</span><span style="color: #4EC9B0;"> LockedHeap</span><span> =</span><span style="color: #4EC9B0;"> LockedHeap</span><span>::</span><span style="color: #DCDCAA;">empty</span><span>();</span></span></code></pre>
+<p>Структура называется <code>LockedHeap</code>, потому что она использует тип <a rel="external" href="https://docs.rs/spinning_top/0.1.0/spinning_top/type.Spinlock.html"><code>spinning_top::Spinlock</code></a> для синхронизации. Это необходимо, поскольку несколько потоков могут одновременно получать доступ к статической переменной <code>ALLOCATOR</code>. Как всегда, при использовании спинлока или мьютекса нужно быть осторожным и избегать случайных взаимоблокировок (deadlocks). Это означает, что мы не должны выполнять операции аллокации в обработчиках прерываний, так как они могут выполняться в любой момент и могут прервать текущую операцию аллокации.</p>
+<p>Просто установки <code>LockedHeap</code> в качестве глобального аллокатора недостаточно. Причина в том, что мы используем конструкторную функцию <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.LockedHeap.html#method.empty"><code>empty</code></a>, которая создаёт аллокатор без резервирующей памяти. Как и наш dummy-аллокатор, он всегда возвращает ошибку при вызове <code>alloc</code>. Для исправления этого нам нужно инициализировать аллокатор после создания кучи:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init_heap</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    mapper</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> Mapper</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    frame_allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span>) -&gt;</span><span style="color: #4EC9B0;"> Result</span><span>&lt;(),</span><span style="color: #4EC9B0;"> MapToError</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;&gt; {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] маппнит все страницы кучи на физические фреймы</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // новый код</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        ALLOCATOR.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">init</span><span>(HEAP_START, HEAP_SIZE);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Ok</span><span>(())</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Мы используем метод <a rel="external" href="https://docs.rs/lock_api/0.3.3/lock_api/struct.Mutex.html#method.lock"><code>lock</code></a> на внутреннем спинлоке типа <code>LockedHeap</code>, чтобы получить эксклюзивную ссылку на обёрнутый экземпляр <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a>, на котором затем вызываем метод <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> с границами кучи в качестве аргументов. Поскольку функция <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> уже пытается записывать в память кучи, мы должны инициализировать кучу только <em>после</em> маппнинга страниц кучи.</p>
+<p>После инициализации кучи мы теперь можем использовать все типы для аллокации и коллекций из встроенного крейта <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> без ошибок:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::{</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>, vec,</span><span style="color: #4EC9B0;"> vec</span><span>::</span><span style="color: #4EC9B0;">Vec</span><span>,</span><span style="color: #4EC9B0;"> rc</span><span>::</span><span style="color: #4EC9B0;">Rc</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] инициализация прерываний, mapper, frame_allocator, heap</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // аллоцируем число в куче</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;heap_value at {:p}&quot;</span><span>,</span><span style="color: #9CDCFE;"> heap_value</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // создаём вектор динамического размера</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> vec</span><span> =</span><span style="color: #4EC9B0;"> Vec</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..</span><span style="color: #B5CEA8;">500</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        vec</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;vec at {:p}&quot;</span><span>,</span><span style="color: #9CDCFE;"> vec</span><span>.</span><span style="color: #DCDCAA;">as_slice</span><span>());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // создаём вектор со счётчиком ссылок -&gt; будет освобождён, когда счётчик достигнет 0</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> reference_counted</span><span> =</span><span style="color: #4EC9B0;"> Rc</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #DCDCAA;">vec!</span><span>[</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 2</span><span>,</span><span style="color: #B5CEA8;"> 3</span><span>]);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> cloned_reference</span><span> =</span><span style="color: #9CDCFE;"> reference_counted</span><span>.</span><span style="color: #DCDCAA;">clone</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;current reference count is {}&quot;</span><span>,</span><span style="color: #4EC9B0;"> Rc</span><span>::</span><span style="color: #DCDCAA;">strong_count</span><span>(&amp;</span><span style="color: #9CDCFE;">cloned_reference</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    core</span><span>::</span><span style="color: #4EC9B0;">mem</span><span>::</span><span style="color: #DCDCAA;">drop</span><span>(</span><span style="color: #9CDCFE;">reference_counted</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;reference count is {} now&quot;</span><span>,</span><span style="color: #4EC9B0;"> Rc</span><span>::</span><span style="color: #DCDCAA;">strong_count</span><span>(&amp;</span><span style="color: #9CDCFE;">cloned_reference</span><span>));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] вызов `test_main` в тестовом контексте</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Этот пример кода демонстрирует использование типов <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>, <a rel="external" href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a> и <a rel="external" href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a>. Для типов <code>Box</code> и <code>Vec</code> мы выводим базовые указатели кучи с помощью спецификатора форматирования [<code>{:p}</code>]. Чтобы продемонстрировать <code>Rc</code>, мы создаём значение в куче со счётчиком ссылок и используем функцию <a rel="external" href="https://doc.rust-lang.org/alloc/rc/struct.Rc.html#method.strong_count"><code>Rc::strong_count</code></a> для вывода текущего количества ссылок до и после освобождения экземпляра (с помощью <a rel="external" href="https://doc.rust-lang.org/core/mem/fn.drop.html"><code>core::mem::drop</code></a>).</p>
 <p>При запуске мы видим следующее:</p>
 <p><img src="https://os.phil-opp.com/ru/heap-allocation/qemu-alloc-showcase.png" alt="QEMU печатает ` heap_value at 0x444444440000 vec at 0x4444444408000 current reference count is 2 reference count is 1 now " /></p>
 <p>Как и ожидалось, мы видим, что значения <code>Box</code> и <code>Vec</code> находятся в куче, как это указано префиксом указателя, начинающимся с <code>0x_4444_4444_*</code>. Значение со счётчиком ссылок также ведёт себя ожидаемым образом: после вызова <code>clone</code> счётчик равен 2, а после освобождения одного из экземпляров снова становится 1.</p>
-<p>Причина, по которой вектор начинается со смещения <code>0x800</code>, не в том, что размер упакованного значения составляет <code>0x800</code> байт, а в том, что происходят <a href="https://doc.rust-lang.org/alloc/vec/struct.Vec.html#capacity-and-reallocation">перераспределения</a>, когда вектору необходимо увеличить свою вместимость. Например, когда вместимость вектора равна 32, и мы пытаемся добавить следующий элемент, вектор “за кулисами” выделяет новый резервный массив с вместимостью 64 и копирует туда все элементы. Затем он освобождает старое выделение.</p>
+<p>Причина, по которой вектор начинается со смещения <code>0x800</code>, не в том, что размер упакованного значения составляет <code>0x800</code> байт, а в том, что происходят <a rel="external" href="https://doc.rust-lang.org/alloc/vec/struct.Vec.html#capacity-and-reallocation">перераспределения</a>, когда вектору необходимо увеличить свою вместимость. Например, когда вместимость вектора равна 32, и мы пытаемся добавить следующий элемент, вектор “за кулисами” выделяет новый резервный массив с вместимостью 64 и копирует туда все элементы. Затем он освобождает старое выделение.</p>
 <p>Конечно, в крейте <code>alloc</code> существует множество других типов для аллокации и коллекций, которые мы теперь можем использовать в нашем ядре, включая:</p>
 <ul>
-<li>потокобезопасный указатель со счётчиком ссылок <a href="https://doc.rust-lang.org/alloc/sync/struct.Arc.html"><code>Arc</code></a></li>
-<li>тип владения строкой <a href="https://doc.rust-lang.org/alloc/string/struct.String.html"><code>String</code></a> и макрос <a href="https://doc.rust-lang.org/alloc/macro.format.html"><code>format!</code></a></li>
-<li><a href="https://doc.rust-lang.org/alloc/collections/linked_list/struct.LinkedList.html"><code>LinkedList</code></a></li>
-<li>растущий кольцевой буфер <a href="https://doc.rust-lang.org/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a></li>
-<li>очередь приоритетов <a href="https://doc.rust-lang.org/alloc/collections/binary_heap/struct.BinaryHeap.html"><code>BinaryHeap</code></a></li>
-<li><a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a> и <a href="https://doc.rust-lang.org/alloc/collections/btree_set/struct.BTreeSet.html"><code>BTreeSet</code></a></li>
+<li>потокобезопасный указатель со счётчиком ссылок <a rel="external" href="https://doc.rust-lang.org/alloc/sync/struct.Arc.html"><code>Arc</code></a></li>
+<li>тип владения строкой <a rel="external" href="https://doc.rust-lang.org/alloc/string/struct.String.html"><code>String</code></a> и макрос <a rel="external" href="https://doc.rust-lang.org/alloc/macro.format.html"><code>format!</code></a></li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/collections/linked_list/struct.LinkedList.html"><code>LinkedList</code></a></li>
+<li>растущий кольцевой буфер <a rel="external" href="https://doc.rust-lang.org/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a></li>
+<li>очередь приоритетов <a rel="external" href="https://doc.rust-lang.org/alloc/collections/binary_heap/struct.BinaryHeap.html"><code>BinaryHeap</code></a></li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a> и <a rel="external" href="https://doc.rust-lang.org/alloc/collections/btree_set/struct.BTreeSet.html"><code>BTreeSet</code></a></li>
 </ul>
 <p>Эти типы станут очень полезными, когда мы будем реализовывать списки потоков, очереди планирования или поддержку async/await.</p>
 <h2 id="dobavim-testy"><a class="zola-anchor" href="#dobavim-testy" aria-label="Anchor link for: dobavim-testy">🔗</a>Добавим Тесты</h2>
 <p>Что бы убедится, что мы случайно не сломали наш новый код аллокатора, мы должны добавить интеграционные тесты для него. Мы начнем с создания файла <code>tests/heap_allocation.rs</code> с содержимым:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs
-</span><span>
-</span><span>#![no_std]
-</span><span>#![no_main]
-</span><span>#![feature(custom_test_frameworks)]
-</span><span>#![test_runner(blog_os::test_runner)]
-</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
-</span><span>
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>bootloader::{entry_point, BootInfo};
-</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
-</span><span>
-</span><span>entry_point!(main);
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    unimplemented!();
-</span><span>}
-</span><span>
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    blog_os::test_panic_handler(info)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![no_std]</span></span>
+<span class="giallo-l"><span>#![no_main]</span></span>
+<span class="giallo-l"><span>#![feature(custom_test_frameworks)]</span></span>
+<span class="giallo-l"><span>#![test_runner(blog_os::test_runner)]</span></span>
+<span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bootloader</span><span>::{entry_point,</span><span style="color: #4EC9B0;"> BootInfo</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">entry_point!</span><span>(</span><span style="color: #9CDCFE;">main</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    unimplemented!</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Мы переиспользуем <code>test_runner</code> и <code>test_panic_handler</code> функции из <code>lib.rs</code>. Поскольку мы хотим тестировать аллокатор, мы включим крейт <code>alloc</code> через <code>extern crate alloc</code>. Узнать больше о шаблоне (boilerplate) ознакомьтесь с постом про <a href="https://os.phil-opp.com/testing/">тестирование</a>.</p>
 <p>Реализация функции <code>main</code> выглядит следующим образом:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::allocator;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::{self, BootInfoFrameAllocator};
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::VirtAddr;
-</span><span>
-</span><span>    blog_os::init();
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span>boot_info.memory_map)
-</span><span>    };
-</span><span>    allocator::init_heap(</span><span style="color:#569cd6;">&amp;mut</span><span> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;heap initialization failed&quot;</span><span>);
-</span><span>
-</span><span>    test_main();
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::allocator;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::{</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">VirtAddr</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> mapper</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        BootInfoFrameAllocator</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(&amp;</span><span style="color: #9CDCFE;">boot_info</span><span>.memory_map)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    allocator</span><span>::</span><span style="color: #DCDCAA;">init_heap</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> mapper</span><span>, &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;heap initialization failed&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Она очень похожа на функцию <code>kernel_main</code> из файла <code>main.rs</code>, за исключением того, что мы не вызываем <code>println</code>, не включаем примеры аллокаций и безусловно вызываем <code>test_main</code>.</p>
-<p>Теперь мы готовы добавить несколько тестовых случаев. Во-первых, добавим тест, который выполняет простые аллокации используя <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> и проверяет выделенные значения, чтобы убедиться, что базовые аллокации работают:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs
-</span><span style="color:#569cd6;">use </span><span>alloc::boxed::Box;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>simple_allocation() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value_1 = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value_2 = Box::new(</span><span style="color:#b5cea8;">13</span><span>);
-</span><span>    assert_eq!(*heap_value_1, </span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    assert_eq!(*heap_value_2, </span><span style="color:#b5cea8;">13</span><span>);
-</span><span>}
-</span></code></pre>
+<p>Теперь мы готовы добавить несколько тестовых случаев. Во-первых, добавим тест, который выполняет простые аллокации используя <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> и проверяет выделенные значения, чтобы убедиться, что базовые аллокации работают:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> simple_allocation</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value_1</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value_2</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">13</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">heap_value_1</span><span>,</span><span style="color: #B5CEA8;"> 41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">heap_value_2</span><span>,</span><span style="color: #B5CEA8;"> 13</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Наиболее важно то, что тест проверяет отсутсвие ошибок аллокации.</p>
 <p>Далее мы итеративно создаем большой вектор, чтобы протестировать как большие аллокации, так и множественные аллокации (из-за переаллокаций).</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::vec::Vec;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>large_vec() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> n = </span><span style="color:#b5cea8;">1000</span><span>;
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> vec = Vec::new();
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span>n {
-</span><span>        vec.push(i);
-</span><span>    }
-</span><span>    assert_eq!(vec.iter().sum::&lt;</span><span style="color:#569cd6;">u64</span><span>&gt;(), (n - </span><span style="color:#b5cea8;">1</span><span>) * n / </span><span style="color:#b5cea8;">2</span><span>);
-</span><span>}
-</span></code></pre>
-<p>Мы проверяем сумму, сравнивая её с формулой для <a href="https://en.wikipedia.org/wiki/1_%2B_2_%2B_3_%2B_4_%2B_%E2%8B%AF#Partial_sums">суммы первых n членов арифметической прогрессии</a>. Это даёт нам уверенность в том, что все выделенные значения корректны.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">vec</span><span>::</span><span style="color: #4EC9B0;">Vec</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> large_vec</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> n</span><span> =</span><span style="color: #B5CEA8;"> 1000</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> vec</span><span> =</span><span style="color: #4EC9B0;"> Vec</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..</span><span style="color: #9CDCFE;">n</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        vec</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #9CDCFE;">vec</span><span>.</span><span style="color: #DCDCAA;">iter</span><span>().</span><span style="color: #DCDCAA;">sum</span><span>::&lt;</span><span style="color: #4EC9B0;">u64</span><span>&gt;(), (</span><span style="color: #9CDCFE;">n</span><span> -</span><span style="color: #B5CEA8;"> 1</span><span>) *</span><span style="color: #9CDCFE;"> n</span><span> /</span><span style="color: #B5CEA8;"> 2</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Мы проверяем сумму, сравнивая её с формулой для <a rel="external" href="https://en.wikipedia.org/wiki/1_%2B_2_%2B_3_%2B_4_%2B_%E2%8B%AF#Partial_sums">суммы первых n членов арифметической прогрессии</a>. Это даёт нам уверенность в том, что все выделенные значения корректны.</p>
 <p>В качестве третьего теста мы создаём десять тысяч аллокаций подряд:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>blog_os::allocator::</span><span style="color:#b4cea8;">HEAP_SIZE</span><span>;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>many_boxes() {
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">HEAP_SIZE </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let</span><span> x = Box::new(i);
-</span><span>        assert_eq!(*x, i);
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">allocator</span><span>::</span><span style="color: #4EC9B0;">HEAP_SIZE</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> many_boxes</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..HEAP_SIZE {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">x</span><span>,</span><span style="color: #9CDCFE;"> i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Этот тест гарантирует, что аллокатор повторно использует освобождённую память для последующих аллокаций; в противном случае память закончилась бы. Это может показаться очевидным требованием для любого аллокатора, но существуют архитектуры, которые этого не делают. Например bump-аллокатор, который будет объяснен в следующем посте.</p>
 <p>Запустим наш новый интеграционный тест:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
-</span><span>[…]
-</span><span>Running 3 tests
-</span><span>simple_allocation... [ok]
-</span><span>large_vec... [ok]
-</span><span>many_boxes... [ok]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test --test heap_allocation</span></span>
+<span class="giallo-l"><span>[…]</span></span>
+<span class="giallo-l"><span>Running 3 tests</span></span>
+<span class="giallo-l"><span>simple_allocation... [ok]</span></span>
+<span class="giallo-l"><span>large_vec... [ok]</span></span>
+<span class="giallo-l"><span>many_boxes... [ok]</span></span></code></pre>
 <p>Все три теста успешно прошли! Вы также можете вызвать <code>cargo test</code> (без аргумента <code>--test</code>), чтобы запустить все юнит- и интеграционные тесты.</p>
 <h2 id="itogi"><a class="zola-anchor" href="#itogi" aria-label="Anchor link for: itogi">🔗</a>Итоги</h2>
 <p>Этот пост дал введение в динамическую память и объяснил, почему и где она необходима. Мы увидели, как механизм проверки заимствований Rust предотвращает распространённые уязвимости, и изучили работу API аллокации Rust.</p>

@@ -7,8 +7,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <meta name="description" content="本文为我们的内核添加堆分配支持。首先，它介绍了动态内存，并展示了 Rust 的借用检查器如何防止常见的分配错误。接着，它实现了 Rust 基本的分配接口，创建了堆内存区域，并实现了一个分配器 crate。本文结束时，内置的 alloc crate 中的所有分配和集合类型都将在我们的内核中可用。
-">
+    <meta name="description" content="本文为我们的内核添加堆分配支持。首先，它介绍了动态内存，并展示了 Rust 的借用检查器如何防止常见的分配错误。接着，它实现了 Rust 基本的分配接口，创建了堆内存区域，并实现了一个分配器 crate。本文结束时，内置的 alloc crate 中的所有分配和集合类型都将在我们的内核中可用。">
     <meta name="author" content="Philipp Oppermann">
 
     
@@ -130,7 +129,7 @@
     <div class="">
     <p>本文为我们的内核添加堆分配支持。首先，它介绍了动态内存，并展示了 Rust 的借用检查器如何防止常见的分配错误。接着，它实现了 Rust 基本的分配接口，创建了堆内存区域，并实现了一个分配器 crate。本文结束时，内置的 <code>alloc</code> crate 中的所有分配和集合类型都将在我们的内核中可用。</p>
 <span id="continue-reading"></span>
-<p>这个系列的 blog 在<a href="https://github.com/phil-opp/blog_os">GitHub</a>上开放开发，如果你有任何问题，请在这里开一个 issue 来讨论。当然你也可以在<a href="https://os.phil-opp.com/zh-CN/heap-allocation/#comments">底部</a>留言。你可以在<a href="https://github.com/phil-opp/blog_os/tree/post-10"><code>post-10</code></a>找到这篇文章的完整源码。</p>
+<p>这个系列的 blog 在<a rel="external" href="https://github.com/phil-opp/blog_os">GitHub</a>上开放开发，如果你有任何问题，请在这里开一个 issue 来讨论。当然你也可以在<a href="https://os.phil-opp.com/zh-CN/heap-allocation/#comments">底部</a>留言。你可以在<a rel="external" href="https://github.com/phil-opp/blog_os/tree/post-10"><code>post-10</code></a>找到这篇文章的完整源码。</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -188,38 +187,37 @@
     </details>
 
 <h2 id="ju-bu-bian-liang-yu-jing-tai-bian-liang"><a class="zola-anchor" href="#ju-bu-bian-liang-yu-jing-tai-bian-liang" aria-label="Anchor link for: ju-bu-bian-liang-yu-jing-tai-bian-liang">🔗</a>局部变量与静态变量</h2>
-<p>目前，我们的内核中使用了两类变量：局部变量和静态（<code>static</code>） 变量。局部变量存储在<a href="https://en.wikipedia.org/wiki/Call_stack">调用栈</a>上，仅在函数返回前有效。静态变量存储在固定的内存位置，在程序的整个生命周期内有效。</p>
+<p>目前，我们的内核中使用了两类变量：局部变量和静态（<code>static</code>） 变量。局部变量存储在<a rel="external" href="https://en.wikipedia.org/wiki/Call_stack">调用栈</a>上，仅在函数返回前有效。静态变量存储在固定的内存位置，在程序的整个生命周期内有效。</p>
 <h3 id="ju-bu-bian-liang"><a class="zola-anchor" href="#ju-bu-bian-liang" aria-label="Anchor link for: ju-bu-bian-liang">🔗</a>局部变量</h3>
-<p>局部变量存储在调用栈上，调用栈是一个支持 <code>push</code> 和 <code>pop</code> 操作的<a href="https://en.wikipedia.org/wiki/Stack_(abstract_data_type)">栈数据结构</a>。在每次函数调用时，编译器会将函数的参数、返回地址和局部变量压入栈中：</p>
+<p>局部变量存储在调用栈上，调用栈是一个支持 <code>push</code> 和 <code>pop</code> 操作的<a rel="external" href="https://en.wikipedia.org/wiki/Stack_(abstract_data_type)">栈数据结构</a>。在每次函数调用时，编译器会将函数的参数、返回地址和局部变量压入栈中：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/heap-allocation/call-stack.svg" alt="一个 outer() 和 inner(i: usize) 函数，其中 outer 调用 inner(1)。两者均有一些局部变量。调用栈包含以下内容：outer 的局部变量，参数 i = 1，返回地址，inner 的局部变量。" /></p>
 <p>上述示例展示了 <code>outer</code> 函数调用 <code>inner</code> 函数后的调用栈。调用栈首先包含 <code>outer</code> 的局部变量。在调用 <code>inner</code> 时，参数 <code>1</code> 和返回地址被压入栈中。然后控制权转移到 <code>inner</code>，其局部变量也被压入。</p>
 <p>在 <code>inner</code> 函数返回后，其调用栈部分被弹出，仅保留 <code>outer</code> 的局部变量：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/heap-allocation/call-stack-return.svg" alt="调用栈仅包含 outer 的局部变量" /></p>
 <p>我们看到，<code>inner</code> 的局部变量仅在函数返回前有效。Rust 编译器保证了这些变量的生命周期，如果我们其生命周期外使用该变量（例如返回一个局部变量的引用），则会抛出错误：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>inner(i: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;&#39;static u32 </span><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = [</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">2</span><span>, </span><span style="color:#b5cea8;">3</span><span>];
-</span><span>    </span><span style="color:#569cd6;">&amp;</span><span>z[i]
-</span><span>}
-</span></code></pre>
-<p><a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=6186a0f3a54f468e1de8894996d12819">在 playground 上运行示例</a></p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> inner</span><span>(</span><span style="color: #9CDCFE;">i</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt; &amp;&#39;</span><span style="color: #4EC9B0;">static u32</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> = [</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 2</span><span>,</span><span style="color: #B5CEA8;"> 3</span><span>];</span></span>
+<span class="giallo-l"><span>    &amp;</span><span style="color: #9CDCFE;">z</span><span>[</span><span style="color: #9CDCFE;">i</span><span>]</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><a rel="external" href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=6186a0f3a54f468e1de8894996d12819">在 playground 上运行示例</a></p>
 <p>在此示例中返回局部变量的引用没有意义，但在某些情况下，我们希望变量的生命周期超过函数。例如，在我们的内核中加载中断描述符表时，我们需要使用 <code>static</code> 变量来延长生命周期。</p>
 <h3 id="jing-tai-bian-liang"><a class="zola-anchor" href="#jing-tai-bian-liang" aria-label="Anchor link for: jing-tai-bian-liang">🔗</a>静态变量</h3>
 <p>静态变量存储在与栈分开的固定内存位置中，其内存位置由链接器在编译时分配并编码在可执行文件中。静态变量在程序的整个运行期间始终存在，因此具有 <code>'static</code> 生命周期，局部变量总是可以引用它们：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/heap-allocation/call-stack-static.svg" alt="与 outer/inner 示例相同，但 inner 有一个静态变量 Z: [u32; 3] = [1,2,3]; 并返回 &amp;Z[i] 引用" /></p>
 <p>在上述示例中，当 <code>inner</code> 函数返回时，其调用栈分被销毁。静态变量存储在永不销毁的独立内存区域，因此 <code>&amp;Z[1]</code> 引用在返回后仍然有效。</p>
 <p>除了 <code>'static</code> 生命周期，静态变量还有一个有用的特性：它们的内存位置在编译时已知，因此访问时无需引用。我们在 <code>println</code> 宏中利用了这一点：通过内部使用静态<a href="https://os.phil-opp.com/vga-text-mode/#a-global-interface"><code>Writer</code></a>，调用宏时无需 <code>&amp;mut Writer</code> 引用，这在<a href="https://os.phil-opp.com/cpu-exceptions/#implementation">异常处理程序</a>中尤为有用，因为在这些场景中我们无法访问其他变量。</p>
-<p>然而，静态变量的这一特性带来了一个关键缺点：它们默认是只读的。Rust 强制执行这一点，因为如果多个线程同时修改静态变量，会导致<a href="https://doc.rust-lang.org/nomicon/races.html">数据竞争</a>。修改静态变量的唯一方法是将其封装在 <a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a> 类型中，以确保任何时候只有一个 <code>&amp;mut</code> 引用存在。我们已经为<a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">静态 VGA 缓冲区 <code>Writer</code></a>使用了 <code>Mutex</code>。</p>
+<p>然而，静态变量的这一特性带来了一个关键缺点：它们默认是只读的。Rust 强制执行这一点，因为如果多个线程同时修改静态变量，会导致<a rel="external" href="https://doc.rust-lang.org/nomicon/races.html">数据竞争</a>。修改静态变量的唯一方法是将其封装在 <a rel="external" href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a> 类型中，以确保任何时候只有一个 <code>&amp;mut</code> 引用存在。我们已经为<a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">静态 VGA 缓冲区 <code>Writer</code></a>使用了 <code>Mutex</code>。</p>
 <h2 id="dong-tai-nei-cun"><a class="zola-anchor" href="#dong-tai-nei-cun" aria-label="Anchor link for: dong-tai-nei-cun">🔗</a>动态内存</h2>
 <p>局部变量和静态变量结合已经非常强大，足以应对大多数使用场景。然而，它们各有局限性：</p>
 <ul>
 <li><strong>局部变量</strong>：仅在函数或块结束前有效，因为它们存储在调用栈上，函数返回后即被销毁。</li>
-<li><strong>静态变量</strong>：在程序整个运行期间始终存在，无法在不再需要时回收和重用其内存。此外，它们的所有权语义不明确，可被所有函数访问，因此修改时需使用 <a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a> 保护。</li>
+<li><strong>静态变量</strong>：在程序整个运行期间始终存在，无法在不再需要时回收和重用其内存。此外，它们的所有权语义不明确，可被所有函数访问，因此修改时需使用 <a rel="external" href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a> 保护。</li>
 </ul>
-<p>局部变量和静态变量的另一个限制是它们只能有固定大小，因此无法存储动态增长的集合。（Rust 中有关于<a href="https://github.com/rust-lang/rust/issues/48055">非固定大小值</a>的提案，允许动态大小的局部变量，但仅适用于特定场景。）</p>
+<p>局部变量和静态变量的另一个限制是它们只能有固定大小，因此无法存储动态增长的集合。（Rust 中有关于<a rel="external" href="https://github.com/rust-lang/rust/issues/48055">非固定大小值</a>的提案，允许动态大小的局部变量，但仅适用于特定场景。）</p>
 <p>为解决这些缺点，编程语言通常提供第三种内存区域，称为<strong>堆</strong>，用于存储变量。堆通过 <code>allocate</code> 和 <code>deallocate</code> 两个函数支持运行时_动态内存分配_：<code>allocate</code> 函数返回指定大小的空闲内存块，用于存储变量，该变量在被 <code>deallocate</code> 函数释放前一直存在。</p>
 <p>以下是一个示例：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/heap-allocation/call-stack-heap.svg" alt="inner 函数调用 allocate(size_of([u32; 3]))，写入 z.write([1,2,3]);，并返回 (z as *mut u32).offset(i)。outer 函数对返回的 y 执行 deallocate(y, size_of(u32))。" /></p>
-<p>在此，<code>inner</code> 函数使用堆内存而非静态变量来存储 <code>z</code>。它首先分配所需大小的内存块，返回一个 <code>*mut u32</code> <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">裸指针</a>。然后使用 <a href="https://doc.rust-lang.org/core/ptr/fn.write.html"><code>ptr::write</code></a> 方法将数组 <code>[1,2,3]</code> 写入。最后使用 <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a> 函数计算第 <code>i</code> 个元素的指针并返回。（为简洁起见，此示例函数省略了部分必需的类型转换和 unsafe 块）</p>
+<p>在此，<code>inner</code> 函数使用堆内存而非静态变量来存储 <code>z</code>。它首先分配所需大小的内存块，返回一个 <code>*mut u32</code> <a rel="external" href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">裸指针</a>。然后使用 <a rel="external" href="https://doc.rust-lang.org/core/ptr/fn.write.html"><code>ptr::write</code></a> 方法将数组 <code>[1,2,3]</code> 写入。最后使用 <a rel="external" href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a> 函数计算第 <code>i</code> 个元素的指针并返回。（为简洁起见，此示例函数省略了部分必需的类型转换和 unsafe 块）</p>
 <p>分配的内存在调用 <code>deallocate</code> 显式释放前一直存在。因此，虽然 <code>inner</code> 返回并销毁其调用栈部分，返回的指针仍然有效。与静态内存相比，堆内存的优势在于释放后内存可被重用，我们在 <code>outer</code> 中通过 <code>deallocate</code> 调用实现了这一点。之后，情况如下：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/heap-allocation/call-stack-heap-freed.svg" alt="调用栈包含 outer 的局部变量，堆包含 z[0] 和 z[2]，但不再包含 z[1]。" /></p>
 <p>我们看到 <code>z[1]</code> 已被释放，可在下一次 <code>allocate</code> 调用时被重用。然而，<code>z[0]</code> 和 <code>z[2]</code> 从未被释放，这被称为<strong>内存泄漏</strong>，常导致程序内存消耗过高（想象在循环中反复调用 <code>inner</code> 的后果）。这可能导致严重的问题，但动态分配还可能引发更危险的错误。</p>
@@ -229,82 +227,75 @@
 <li><strong>释放后使用（use-after-free）</strong>：在对变量 <code>deallocate</code> 后继续使用，这将导致未定义行为，常被攻击者利用以执行任意代码。</li>
 <li><strong>双重释放（double-free）</strong>：意外对变量进行两次释放，可能释放了在同一位置重新分配的其他内存块，从而导致释放后使用漏洞。</li>
 </ul>
-<p>这些漏洞广为人知，但即使在复杂项目中，最优秀的程序员也难以完全避免。例如，2019 年 Linux 中发现的<a href="https://securityboulevard.com/2019/02/linux-use-after-free-vulnerability-found-in-linux-2-6-through-4-20-11/">释放后使用漏洞</a>可导致任意代码执行。通过搜索 <code>use-after-free linux {年份}</code> 通常能找到相关结果。这表明即使最优秀的程序员在复杂项目中也难以正确处理动态内存。</p>
+<p>这些漏洞广为人知，但即使在复杂项目中，最优秀的程序员也难以完全避免。例如，2019 年 Linux 中发现的<a rel="external" href="https://securityboulevard.com/2019/02/linux-use-after-free-vulnerability-found-in-linux-2-6-through-4-20-11/">释放后使用漏洞</a>可导致任意代码执行。通过搜索 <code>use-after-free linux {年份}</code> 通常能找到相关结果。这表明即使最优秀的程序员在复杂项目中也难以正确处理动态内存。</p>
 <p>为避免这些问题，许多语言（如 Java 或 Python）使用*垃圾回收(garbage collection)*来自动管理动态内存。程序员无需手动调用 <code>deallocate</code>，而程序会定期暂停并扫描未使用的堆变量，并自动释放它们，从而避免上述漏洞。但这种方法的缺点是定期扫描会造成性能开销以及可能的长时间暂停。</p>
-<p>Rust 采用了不同的方法：通过<a href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"><em>所有权</em></a>概念，在编译时检查动态内存操作的正确性，无需垃圾回收即可避免上述漏洞，这意味着无性能开销。另一个好处是程序员仍能像在 C 或 C++ 中一样精细控制动态内存。</p>
+<p>Rust 采用了不同的方法：通过<a rel="external" href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"><em>所有权</em></a>概念，在编译时检查动态内存操作的正确性，无需垃圾回收即可避免上述漏洞，这意味着无性能开销。另一个好处是程序员仍能像在 C 或 C++ 中一样精细控制动态内存。</p>
 <h3 id="rust-zhong-de-fen-pei"><a class="zola-anchor" href="#rust-zhong-de-fen-pei" aria-label="Anchor link for: rust-zhong-de-fen-pei">🔗</a>Rust 中的分配</h3>
-<p>Rust 标准库不需要程序员直接调用 <code>allocate</code> 和 <code>deallocate</code>，而是提供抽象类型隐式调用这些函数。最重要的类型是 <a href="https://doc.rust-lang.org/std/boxed/index.html"><strong><code>Box</code></strong></a>，用于堆分配值。它提供 <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a> 构造函数，其接受一个值，调用 <code>allocate</code> 获取所需大小的内存，并将值移动到堆上新分配的空间中。为了释放堆内存，<code>Box</code> 实现了<a href="https://doc.rust-lang.org/book/ch15-03-drop.html"><code>Drop</code> trait</a>，并在变量离开作用域时调用 <code>deallocate</code>：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = Box::new([</span><span style="color:#b5cea8;">1</span><span>,</span><span style="color:#b5cea8;">2</span><span>,</span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    […]
-</span><span>} </span><span style="color:#608b4e;">// z 离开作用域，`deallocate` 被调用
-</span></code></pre>
-<p>这种模式有一个奇怪的名字，称为<a href="https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization"><em>资源获取即初始化</em></a>（简称为RAII），起源于 C++，用于实现类似 <a href="https://en.cppreference.com/w/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a> 的类型。</p>
+<p>Rust 标准库不需要程序员直接调用 <code>allocate</code> 和 <code>deallocate</code>，而是提供抽象类型隐式调用这些函数。最重要的类型是 <a rel="external" href="https://doc.rust-lang.org/std/boxed/index.html"><strong><code>Box</code></strong></a>，用于堆分配值。它提供 <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a> 构造函数，其接受一个值，调用 <code>allocate</code> 获取所需大小的内存，并将值移动到堆上新分配的空间中。为了释放堆内存，<code>Box</code> 实现了<a rel="external" href="https://doc.rust-lang.org/book/ch15-03-drop.html"><code>Drop</code> trait</a>，并在变量离开作用域时调用 <code>deallocate</code>：</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>([</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;">2</span><span>,</span><span style="color: #B5CEA8;">3</span><span>]);</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #6A9955;"> // z 离开作用域，`deallocate` 被调用</span></span></code></pre>
+<p>这种模式有一个奇怪的名字，称为<a rel="external" href="https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization"><em>资源获取即初始化</em></a>（简称为RAII），起源于 C++，用于实现类似 <a rel="external" href="https://en.cppreference.com/w/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a> 的类型。</p>
 <p>仅靠这种类型无法防止所有释放后使用错误，因为程序员可能在 <code>Box</code> 超出作用域并释放堆内存后仍持有引用：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> x = {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = Box::new([</span><span style="color:#b5cea8;">1</span><span>,</span><span style="color:#b5cea8;">2</span><span>,</span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    </span><span style="color:#569cd6;">&amp;</span><span>z[</span><span style="color:#b5cea8;">1</span><span>]
-</span><span>}; </span><span style="color:#608b4e;">// z 超出作用域，调用 `deallocate`
-</span><span>println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, x);
-</span></code></pre>
-<p>这就是 Rust 的所有权起作用的地方。它通过为每个引用分配一个抽象<a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">生命周期</a>（引用有效的范围）解决此问题。在上述示例中，<code>x</code> 引用了 <code>z</code> 数组，因此在 <code>z</code> 超出作用域后失效。在 <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">playground</a> 运行上述代码，Rust 编译器会报错：</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0597]: `z[_]` does not live long enough
-</span><span> --&gt; src/main.rs:4:9
-</span><span>  |
-</span><span>2 |     let x = {
-</span><span>  |         - borrow later stored here
-</span><span>3 |         let z = Box::new([1,2,3]);
-</span><span>  |             - binding `z` declared here
-</span><span>4 |         &amp;z[1]
-</span><span>  |         ^^^^^ borrowed value does not live long enough
-</span><span>5 |     }; // z goes out of scope and `deallocate` is called
-</span><span>  |     - `z[_]` dropped here while still borrowed
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> x</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>([</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;">2</span><span>,</span><span style="color: #B5CEA8;">3</span><span>]);</span></span>
+<span class="giallo-l"><span>    &amp;</span><span style="color: #9CDCFE;">z</span><span>[</span><span style="color: #B5CEA8;">1</span><span>]</span></span>
+<span class="giallo-l"><span>};</span><span style="color: #6A9955;"> // z 超出作用域，调用 `deallocate`</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> x</span><span>);</span></span></code></pre>
+<p>这就是 Rust 的所有权起作用的地方。它通过为每个引用分配一个抽象<a rel="external" href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">生命周期</a>（引用有效的范围）解决此问题。在上述示例中，<code>x</code> 引用了 <code>z</code> 数组，因此在 <code>z</code> 超出作用域后失效。在 <a rel="external" href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">playground</a> 运行上述代码，Rust 编译器会报错：</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error[E0597]: `z[_]` does not live long enough</span></span>
+<span class="giallo-l"><span> --&gt; src/main.rs:4:9</span></span>
+<span class="giallo-l"><span>  |</span></span>
+<span class="giallo-l"><span>2 |     let x = {</span></span>
+<span class="giallo-l"><span>  |         - borrow later stored here</span></span>
+<span class="giallo-l"><span>3 |         let z = Box::new([1,2,3]);</span></span>
+<span class="giallo-l"><span>  |             - binding `z` declared here</span></span>
+<span class="giallo-l"><span>4 |         &amp;z[1]</span></span>
+<span class="giallo-l"><span>  |         ^^^^^ borrowed value does not live long enough</span></span>
+<span class="giallo-l"><span>5 |     }; // z goes out of scope and `deallocate` is called</span></span>
+<span class="giallo-l"><span>  |     - `z[_]` dropped here while still borrowed</span></span></code></pre>
 <p>这一术语初看可能有些复杂。获取值的引用称为 <em>借用</em>，类似于现实中的借用：临时访问对象，但需在某时归还，且不能销毁。通过检查所有借用在对象销毁前结束，Rust 编译器保证不会发生释放后使用情况。</p>
-<p>Rust 的所有权系统不仅防止释放后使用，还提供与 Java 或 Python 等垃圾回收语言相同的完全<a href="https://en.wikipedia.org/wiki/Memory_safety"><em>内存安全</em></a>。此外，它保证<a href="https://en.wikipedia.org/wiki/Thread_safety"><em>线程安全</em></a>，在多线程代码中比这些语言更安全。最重要的是，所有检查在编译时进行，与 C 的手动内存管理相比没有运行时开销。</p>
+<p>Rust 的所有权系统不仅防止释放后使用，还提供与 Java 或 Python 等垃圾回收语言相同的完全<a rel="external" href="https://en.wikipedia.org/wiki/Memory_safety"><em>内存安全</em></a>。此外，它保证<a rel="external" href="https://en.wikipedia.org/wiki/Thread_safety"><em>线程安全</em></a>，在多线程代码中比这些语言更安全。最重要的是，所有检查在编译时进行，与 C 的手动内存管理相比没有运行时开销。</p>
 <h3 id="shi-yong-chang-jing"><a class="zola-anchor" href="#shi-yong-chang-jing" aria-label="Anchor link for: shi-yong-chang-jing">🔗</a>使用场景</h3>
 <p>我们了解了 Rust 中动态内存分配的基础，但何时使用？我们的内核在不使用动态内存的情况下已经取得了很大进展，为何现在需要？</p>
 <p>首先，动态内存分配总会带来一些性能开销，因为每次分配需在堆上寻找空闲槽。因此，在性能敏感的内核代码中，局部变量通常更优。然而，在某些情况下，动态内存分配是最佳选择。</p>
-<p>基本规则是，动态内存适用于具有动态生命周期或可变大小的变量。最重要的动态生命周期类型是 <a href="https://doc.rust-lang.org/alloc/rc/index.html"><strong><code>Rc</code></strong></a>，它跟踪被包裹变量的引用数，并在所有引用超出作用域后释放。具有可变大小的类型包括 <a href="https://doc.rust-lang.org/alloc/vec/index.html"><strong><code>Vec</code></strong></a>、<a href="https://doc.rust-lang.org/alloc/string/index.html"><strong><code>String</code></strong></a> 等<a href="https://doc.rust-lang.org/alloc/collections/index.html">集合类型</a>，这些类型在用满时分配更大内存，复制所有元素，然后释放旧分配。</p>
+<p>基本规则是，动态内存适用于具有动态生命周期或可变大小的变量。最重要的动态生命周期类型是 <a rel="external" href="https://doc.rust-lang.org/alloc/rc/index.html"><strong><code>Rc</code></strong></a>，它跟踪被包裹变量的引用数，并在所有引用超出作用域后释放。具有可变大小的类型包括 <a rel="external" href="https://doc.rust-lang.org/alloc/vec/index.html"><strong><code>Vec</code></strong></a>、<a rel="external" href="https://doc.rust-lang.org/alloc/string/index.html"><strong><code>String</code></strong></a> 等<a rel="external" href="https://doc.rust-lang.org/alloc/collections/index.html">集合类型</a>，这些类型在用满时分配更大内存，复制所有元素，然后释放旧分配。</p>
 <p>对于我们的内核，未来实现多任务时，我们主要需要集合类型，例如存储活动任务列表。</p>
 <h2 id="fen-pei-qi-jie-kou"><a class="zola-anchor" href="#fen-pei-qi-jie-kou" aria-label="Anchor link for: fen-pei-qi-jie-kou">🔗</a>分配器接口</h2>
-<p>实现堆分配器的第一步是添加对内置 <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> crate 的依赖。与 <a href="https://doc.rust-lang.org/core/"><code>core</code></a> crate 类似，它是标准库的子集，包含分配和集合类型。在 <code>lib.rs</code> 中添加：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span></code></pre>
+<p>实现堆分配器的第一步是添加对内置 <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> crate 的依赖。与 <a rel="external" href="https://doc.rust-lang.org/core/"><code>core</code></a> crate 类似，它是标准库的子集，包含分配和集合类型。在 <code>lib.rs</code> 中添加：</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span></code></pre>
 <p>与普通依赖不同，我们无需修改 <code>Cargo.toml</code>。因为 <code>alloc</code> crate 作为标准库的一部分提供给 Rust 编译器，编译器已经了解了这个 crate。通过 <code>extern crate</code> 语句，我们指定编译器去尝试包含它。（出于历史原因，所有依赖都需要 <code>extern crate</code> 语句，这现在是可选的。）</p>
 <p>由于我们为自定义目标编译，无法使用 Rust 安装中预编译的 <code>alloc</code> 版本。需通过在 <code>.cargo/config.toml</code> 中添加 <code>unstable.build-std</code> 数组，指示 cargo 从源代码重新编译这个 crate：</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in .cargo/config.toml
-</span><span>[</span><span style="color:#808080;">unstable</span><span>]
-</span><span style="color:#569cd6;">build-std </span><span>= [</span><span style="color:#d69d85;">&quot;core&quot;</span><span>, </span><span style="color:#d69d85;">&quot;compiler_builtins&quot;</span><span>, </span><span style="color:#d69d85;">&quot;alloc&quot;</span><span>]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in .cargo/config.toml</span></span>
+<span class="giallo-l"><span>[unstable]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">build-std</span><span> = [</span><span style="color: #CE9178;">&quot;core&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;compiler_builtins&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;alloc&quot;</span><span>]</span></span></code></pre>
 <p>现在编译器将重新编译并包含 <code>alloc</code> crate。</p>
 <p><code>#[no_std]</code> crate 中默认禁用 <code>alloc</code> crate 的原因是 <code>alloc</code> crate 有额外要求。编译项目时，我们会看到错误：</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: no global memory allocator found but one is required; link to std or add
-</span><span>       #[global_allocator] to a static item that implements the GlobalAlloc trait.
-</span></code></pre>
-<p>错误原因是 <code>alloc</code> crate 需要一个堆分配器，并且它需要实现 <code>allocate</code> 和 <code>deallocate</code> 函数。在 Rust 中，堆分配器由 <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> 特性描述，错误信息中提到了这个特性。为了实现堆分配器，
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: no global memory allocator found but one is required; link to std or add</span></span>
+<span class="giallo-l"><span>       #[global_allocator] to a static item that implements the GlobalAlloc trait.</span></span></code></pre>
+<p>错误原因是 <code>alloc</code> crate 需要一个堆分配器，并且它需要实现 <code>allocate</code> 和 <code>deallocate</code> 函数。在 Rust 中，堆分配器由 <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> 特性描述，错误信息中提到了这个特性。为了实现堆分配器，
 我们需将 <code>#[global_allocator]</code> 属性应用到一个实现了 <code>GlobalAlloc</code> 特性的 <code>static</code> 变量。</p>
 <h3 id="globalalloc-te-xing"><a class="zola-anchor" href="#globalalloc-te-xing" aria-label="Anchor link for: globalalloc-te-xing">🔗</a><code>GlobalAlloc</code> 特性</h3>
-<p><a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> 特性定义了堆分配器必须提供的函数。该特性比较特殊，因为程序员几乎从不直接使用它。相反，当使用 <code>alloc</code> crate 的分配和集合类型时，编译器会自动插入对该特性方法的适当调用。</p>
+<p><a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> 特性定义了堆分配器必须提供的函数。该特性比较特殊，因为程序员几乎从不直接使用它。相反，当使用 <code>alloc</code> crate 的分配和集合类型时，编译器会自动插入对该特性方法的适当调用。</p>
 <p>由于我们需要为所有分配器类型实现该特性，仔细查看其声明是值得的：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub unsafe trait </span><span>GlobalAlloc {
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8</span><span>;
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc_zeroed(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>realloc(
-</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self,
-</span><span>        ptr: </span><span style="color:#569cd6;">*mut u8</span><span>,
-</span><span>        layout: Layout,
-</span><span>        new_size: </span><span style="color:#569cd6;">usize
-</span><span>    ) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
-</span><span>}
-</span></code></pre>
-<p>它定义了两个必需的方法 <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> 和 <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>，对应于我们在示例中使用的 <code>allocate</code> 和 <code>deallocate</code> 函数：</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub unsafe trait</span><span style="color: #4EC9B0;"> GlobalAlloc</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> dealloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc_zeroed</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> { ... }</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> realloc</span><span>(</span></span>
+<span class="giallo-l"><span>        &amp;</span><span style="color: #569CD6;">self</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        new_size</span><span>:</span><span style="color: #4EC9B0;"> usize</span></span>
+<span class="giallo-l"><span>    ) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> { ... }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>它定义了两个必需的方法 <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> 和 <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>，对应于我们在示例中使用的 <code>allocate</code> 和 <code>deallocate</code> 函数：</p>
 <ul>
-<li><a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> 方法接受一个 <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> 实例作为参数，该实例描述了分配内存所需的大小和对齐方式。它返回一个指向所分配内存块第一个字节的<a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">裸指针</a>。<code>alloc</code> 方法不返回显式错误值，而是通过返回空指针来表示分配错误。虽然这有点非常规，但优点是易于包装现有系统分配器，因为它们使用相同的约定。</li>
-<li><a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> 方法是其对应物，负责再次释放内存块。它接收两个参数：由 <code>alloc</code> 返回的指针和分配时使用的 <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>。</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> 方法接受一个 <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> 实例作为参数，该实例描述了分配内存所需的大小和对齐方式。它返回一个指向所分配内存块第一个字节的<a rel="external" href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">裸指针</a>。<code>alloc</code> 方法不返回显式错误值，而是通过返回空指针来表示分配错误。虽然这有点非常规，但优点是易于包装现有系统分配器，因为它们使用相同的约定。</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> 方法是其对应物，负责再次释放内存块。它接收两个参数：由 <code>alloc</code> 返回的指针和分配时使用的 <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>。</li>
 </ul>
 <p>该特性还定义了 <code>alloc_zeroed</code> 和 <code>realloc</code> 两个方法，其有默认实现：</p>
 <ul>
@@ -319,54 +310,50 @@
 </ul>
 <h3 id="xu-ni-fen-pei-qi"><a class="zola-anchor" href="#xu-ni-fen-pei-qi" aria-label="Anchor link for: xu-ni-fen-pei-qi">🔗</a>虚拟分配器</h3>
 <p>了解分配器类型应提供的功能后，我们创建一个简单的虚拟分配器，在 <code>allocator</code> 模块中：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span style="color:#569cd6;">pub mod </span><span>allocator;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub mod</span><span> allocator;</span></span></code></pre>
 <p>我们的虚拟分配器只实现特性的最小要求，并且调用 <code>alloc</code> 总是返回错误，它看起来如下：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
-</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
-</span><span style="color:#569cd6;">use </span><span>core::ptr::null_mut;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Dummy;
-</span><span>
-</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Dummy {
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
-</span><span>        null_mut()
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
-</span><span>        panic!(</span><span style="color:#d69d85;">&quot;dealloc should be never called&quot;</span><span>)
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>这个结构体无需任何字段，所以我们定义它为<a href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">零大小类型</a>。如上所述，<code>alloc</code> 始终返回空指针，这表示一个分配错误。由于从不返回内存，<code>dealloc</code> 不应被调用。因此 <code>dealloc</code> 只是简单调用 panic。<code>alloc_zeroed</code> 和 <code>realloc</code> 有默认实现，无需手动提供。</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/allocator.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">alloc</span><span>::{</span><span style="color: #4EC9B0;">GlobalAlloc</span><span>,</span><span style="color: #4EC9B0;"> Layout</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">ptr</span><span>::null_mut;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Dummy</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe impl</span><span style="color: #4EC9B0;"> GlobalAlloc</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Dummy</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> _layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        null_mut</span><span>()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> dealloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> _ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span><span style="color: #9CDCFE;"> _layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        panic!</span><span>(</span><span style="color: #CE9178;">&quot;dealloc should be never called&quot;</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>这个结构体无需任何字段，所以我们定义它为<a rel="external" href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">零大小类型</a>。如上所述，<code>alloc</code> 始终返回空指针，这表示一个分配错误。由于从不返回内存，<code>dealloc</code> 不应被调用。因此 <code>dealloc</code> 只是简单调用 panic。<code>alloc_zeroed</code> 和 <code>realloc</code> 有默认实现，无需手动提供。</p>
 <p>我们现在有了一个虚拟分配器，但我们需要告诉 Rust 编译器应使用此分配器。这时需要使用 <code>#[global_allocator]</code> 属性。</p>
 <h3 id="global-allocator-shu-xing"><a class="zola-anchor" href="#global-allocator-shu-xing" aria-label="Anchor link for: global-allocator-shu-xing">🔗</a><code>#[global_allocator]</code> 属性</h3>
 <p><code>#[global_allocator]</code> 属性告诉 Rust 编译器应使用哪个分配器实例作为全局堆分配器。该属性只能用于实现了 <code>GlobalAlloc</code> 特性的 <code>static</code> 变量。让我们将 <code>Dummy</code> 分配器的一个实例注册为全局分配器：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
-</span><span>#[global_allocator]
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Dummy = Dummy;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/allocator.rs</span></span>
+<span class="giallo-l"><span>#[global_allocator]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> ALLOCATOR:</span><span style="color: #4EC9B0;"> Dummy</span><span> =</span><span style="color: #4EC9B0;"> Dummy</span><span>;</span></span></code></pre>
 <p>由于 <code>Dummy</code> 是零大小类型，初始化无需指定字段。</p>
-<p>此静态变量应该可以修复编译错误。现在可使用 <code>alloc</code> 的分配和集合类型。例如，使用 <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> 在堆上分配值：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::boxed::Box;
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// […] print &quot;Hello World!&quot;, call `init`, create `mapper` and `frame_allocator`
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> x = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] call `test_main` in test mode
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span><span>
-</span></code></pre>
+<p>此静态变量应该可以修复编译错误。现在可使用 <code>alloc</code> 的分配和集合类型。例如，使用 <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> 在堆上分配值：</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] print &quot;Hello World!&quot;, call `init`, create `mapper` and `frame_allocator`</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] call `test_main` in test mode</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>注意，我们需要在 <code>main.rs</code> 中也指定 <code>extern crate alloc</code> 语句。这是必须的，因为 <code>lib.rs</code> 和 <code>main.rs</code> 被视为单独的 crate。但是我们无需创建另一个 <code>#[global_allocator]</code> 静态变量，因为全局分配器适用于项目中的所有 crate。事实上，在另一个 crate 中指定额外的分配器会引发错误。</p>
 <p>当我们运行上述代码时，会看到发生了一个 panic：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/heap-allocation/qemu-dummy-output.png" alt="QEMU 打印 “panicked at `allocation error: Layout { size_: 4, align_: 4 }, src/lib.rs:89:5”" /></p>
@@ -374,270 +361,257 @@
 <h2 id="chuang-jian-nei-he-dui"><a class="zola-anchor" href="#chuang-jian-nei-he-dui" aria-label="Anchor link for: chuang-jian-nei-he-dui">🔗</a>创建内核堆</h2>
 <p>在创建真正的分配器之前，我们首先需要创建一个堆内存区域，分配器可以从中分配内存。为此，我们需要为堆区域定义一个虚拟内存范围，然后将该区域映射到物理内存。有关虚拟内存和页表的概述，请参阅文章<a href="https://os.phil-opp.com/paging-introduction/">“内存分页初探”</a>。</p>
 <p>第一步是为堆定义一个虚拟内存区域。我们可以选择任何喜欢的虚拟地址范围，只要它尚未用于其他内存区域。让我们将其定义为从地址 <code>0x_4444_4444_0000</code> 开始的内存，以便以后轻松识别堆指针：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_START</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">0x_4444_4444_0000</span><span>;
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_SIZE</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">100 </span><span>* </span><span style="color:#b5cea8;">1024</span><span>; </span><span style="color:#608b4e;">// 100 KiB
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/allocator.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> HEAP_START:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 0x_4444_4444_0000</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> HEAP_SIZE:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 100</span><span> *</span><span style="color: #B5CEA8;"> 1024</span><span>;</span><span style="color: #6A9955;"> // 100 KiB</span></span></code></pre>
 <p>堆大小暂定为 100 KiB，未来可根据需要增加。</p>
 <p>如果我们现在尝试使用这个堆区域，会发生页面错误，因为虚拟内存区域尚未映射到物理内存。为解决此问题，我们创建一个 <code>init_heap</code> 函数，使用我们在 <a href="https://os.phil-opp.com/paging-implementation/">“页面实现”</a> 文章中介绍的 <a href="https://os.phil-opp.com/paging-implementation/#using-offsetpagetable"><code>Mapper</code> API</a> 映射堆页面：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
-</span><span style="color:#569cd6;">use </span><span>x86_64::{
-</span><span>    structures::paging::{
-</span><span>        mapper::MapToError, FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB,
-</span><span>    },
-</span><span>    VirtAddr,
-</span><span>};
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init_heap(
-</span><span>    mapper: </span><span style="color:#569cd6;">&amp;mut</span><span> impl Mapper&lt;Size4KiB&gt;,
-</span><span>    frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> impl FrameAllocator&lt;Size4KiB&gt;,
-</span><span>) -&gt; Result&lt;(), MapToError&lt;Size4KiB&gt;&gt; {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> page_range = {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_start = VirtAddr::new(</span><span style="color:#b4cea8;">HEAP_START </span><span style="color:#569cd6;">as u64</span><span>);
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_end = heap_start + </span><span style="color:#b4cea8;">HEAP_SIZE </span><span>- </span><span style="color:#b5cea8;">1</span><span style="color:#569cd6;">u64</span><span>;
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_start_page = Page::containing_address(heap_start);
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_end_page = Page::containing_address(heap_end);
-</span><span>        Page::range_inclusive(heap_start_page, heap_end_page)
-</span><span>    };
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">for</span><span> page </span><span style="color:#569cd6;">in</span><span> page_range {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> frame = frame_allocator
-</span><span>            .allocate_frame()
-</span><span>            .ok_or(MapToError::FrameAllocationFailed)</span><span style="color:#569cd6;">?</span><span>;
-</span><span>        </span><span style="color:#569cd6;">let</span><span> flags = PageTableFlags::</span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span>PageTableFlags::</span><span style="color:#b4cea8;">WRITABLE</span><span>;
-</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>            mapper.map_to(page, frame, flags, frame_allocator)</span><span style="color:#569cd6;">?</span><span>.flush()
-</span><span>        };
-</span><span>    }
-</span><span>
-</span><span>    Ok(())
-</span><span>}
-</span></code></pre>
-<p>该函数接受对 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> 和 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a> 实例的可变引用，两者都通过使用 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a> 作为泛型参数限制为 4 KiB 页面。函数的返回值是一个 <a href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a>，成功返回单元类型 <code>()</code>，失败返回<a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a>，这是 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> 方法返回的错误类型。在这里重用错误类型是有意义的，因为 <code>map_to</code> 方法是此函数的主要错误来源。</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/allocator.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::{</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::{</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        mapper</span><span>::</span><span style="color: #4EC9B0;">MapToError</span><span>,</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>,</span><span style="color: #4EC9B0;"> Mapper</span><span>,</span><span style="color: #4EC9B0;"> Page</span><span>,</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>,</span><span style="color: #4EC9B0;"> Size4KiB</span><span>,</span></span>
+<span class="giallo-l"><span>    },</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    VirtAddr</span><span>,</span></span>
+<span class="giallo-l"><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init_heap</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    mapper</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> Mapper</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    frame_allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span>) -&gt;</span><span style="color: #4EC9B0;"> Result</span><span>&lt;(),</span><span style="color: #4EC9B0;"> MapToError</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page_range</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_start</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(HEAP_START</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end</span><span> =</span><span style="color: #9CDCFE;"> heap_start</span><span> + HEAP_SIZE -</span><span style="color: #B5CEA8;"> 1</span><span style="color: #4EC9B0;">u64</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_start_page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">heap_start</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end_page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">heap_end</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Page</span><span>::</span><span style="color: #DCDCAA;">range_inclusive</span><span>(</span><span style="color: #9CDCFE;">heap_start_page</span><span>,</span><span style="color: #9CDCFE;"> heap_end_page</span><span>)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> page</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> page_range</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> frame_allocator</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">allocate_frame</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">ok_or</span><span>(</span><span style="color: #4EC9B0;">MapToError</span><span>::</span><span style="color: #4EC9B0;">FrameAllocationFailed</span><span>)?;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> flags</span><span> =</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>::PRESENT |</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>::WRITABLE;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            mapper</span><span>.</span><span style="color: #DCDCAA;">map_to</span><span>(</span><span style="color: #9CDCFE;">page</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>,</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)?.</span><span style="color: #DCDCAA;">flush</span><span>()</span></span>
+<span class="giallo-l"><span>        };</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Ok</span><span>(())</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>该函数接受对 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> 和 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a> 实例的可变引用，两者都通过使用 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a> 作为泛型参数限制为 4 KiB 页面。函数的返回值是一个 <a rel="external" href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a>，成功返回单元类型 <code>()</code>，失败返回<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a>，这是 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> 方法返回的错误类型。在这里重用错误类型是有意义的，因为 <code>map_to</code> 方法是此函数的主要错误来源。</p>
 <p>实现可分为两个部分：</p>
 <ul>
 <li>
-<p><strong>创建页面范围</strong>：为了创建我们希望映射的页面范围，我们将 <code>HEAP_START</code> 指针转换为 <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a> 类型。然后通过加上 <code>HEAP_SIZE</code> 计算堆结束地址。因为我们想要包含地址边界（堆最后一个字节的地址），因此减去 1。接下来，使用 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.containing_address"><code>containing_address</code></a> 函数将地址转换为 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html"><code>Page</code></a> 类型。最后，使用 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.range_inclusive"><code>Page::range_inclusive</code></a> 函数从起始和结束页面创建页面范围。</p>
+<p><strong>创建页面范围</strong>：为了创建我们希望映射的页面范围，我们将 <code>HEAP_START</code> 指针转换为 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a> 类型。然后通过加上 <code>HEAP_SIZE</code> 计算堆结束地址。因为我们想要包含地址边界（堆最后一个字节的地址），因此减去 1。接下来，使用 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.containing_address"><code>containing_address</code></a> 函数将地址转换为 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html"><code>Page</code></a> 类型。最后，使用 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.range_inclusive"><code>Page::range_inclusive</code></a> 函数从起始和结束页面创建页面范围。</p>
 </li>
 <li>
 <p><strong>映射页面</strong>：第二步是映射我们刚创建的页面范围中的所有页面。为此，我们使用 <code>for</code> 循环迭代这些页面。对每个页面，我们执行以下操作：</p>
 <ul>
 <li>
-<p>使用 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a> 方法分配页面应映射到的物理内存。当没有更多内存时，该方法返回 <a href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a>。我们通过 <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a> 方法将其映射到 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a> 错误，并使用<a href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">问号操作符</a> 在错误情况下提前返回。</p>
+<p>使用 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a> 方法分配页面应映射到的物理内存。当没有更多内存时，该方法返回 <a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a>。我们通过 <a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a> 方法将其映射到 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a> 错误，并使用<a rel="external" href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">问号操作符</a> 在错误情况下提前返回。</p>
 </li>
 <li>
 <p>为页面设置必需的 <code>PRESENT</code> 标志和 <code>WRITABLE</code> 标志。这些标志允许读写访问，这对堆内存来说是合理的。</p>
 </li>
 <li>
-<p>使用 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> 方法在活动页面表中创建映射。该方法可能失败，因此我们再次使用<a href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">问号操作符</a>将错误转发给调用者。成功时，该方法返回一个 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a> 实例，我们可以使用其 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a> 方法更新<a href="https://os.phil-opp.com/paging-introduction/#the-translation-lookaside-buffer"><em>转换后备缓冲区</em></a>（简称TLB）。</p>
+<p>使用 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> 方法在活动页面表中创建映射。该方法可能失败，因此我们再次使用<a rel="external" href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">问号操作符</a>将错误转发给调用者。成功时，该方法返回一个 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a> 实例，我们可以使用其 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a> 方法更新<a href="https://os.phil-opp.com/paging-introduction/#the-translation-lookaside-buffer"><em>转换后备缓冲区</em></a>（简称TLB）。</p>
 </li>
 </ul>
 </li>
 </ul>
 <p>最后一步是在 <code>kernel_main</code> 中调用此函数：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::allocator; </span><span style="color:#608b4e;">// new import
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::{self, BootInfoFrameAllocator};
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
-</span><span>    blog_os::init();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span>boot_info.memory_map)
-</span><span>    };
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// new
-</span><span>    allocator::init_heap(</span><span style="color:#569cd6;">&amp;mut</span><span> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;heap initialization failed&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> x = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] call `test_main` in test mode
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span></code></pre>
-<p>我们在这里展示了完整的函数以提供上下文。新增的只有导入 <code>blog_os::allocator</code> 和对 <code>allocator::init_heap</code> 函数的调用。如果 <code>init_heap</code> 函数返回错误，我们使用 <a href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>Result::expect</code></a> 方法触发 panic，因为目前我们没有更好的错误处理方式。</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::allocator;</span><span style="color: #6A9955;"> // new import</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::{</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Hello World{}&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> mapper</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        BootInfoFrameAllocator</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(&amp;</span><span style="color: #9CDCFE;">boot_info</span><span>.memory_map)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // new</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    allocator</span><span>::</span><span style="color: #DCDCAA;">init_heap</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> mapper</span><span>, &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;heap initialization failed&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] call `test_main` in test mode</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>我们在这里展示了完整的函数以提供上下文。新增的只有导入 <code>blog_os::allocator</code> 和对 <code>allocator::init_heap</code> 函数的调用。如果 <code>init_heap</code> 函数返回错误，我们使用 <a rel="external" href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>Result::expect</code></a> 方法触发 panic，因为目前我们没有更好的错误处理方式。</p>
 <p>我们现在有了一个已映射的堆内存区域，可以开始使用了。但调用 <code>Box::new</code> 时仍使用旧的 <code>Dummy</code> 分配器，因此运行时仍会看到 “out of memory” 错误。下面我们通过使用真正的分配器来修复这个问题。</p>
 <h2 id="shi-yong-fen-pei-qi-crate"><a class="zola-anchor" href="#shi-yong-fen-pei-qi-crate" aria-label="Anchor link for: shi-yong-fen-pei-qi-crate">🔗</a>使用分配器 Crate</h2>
 <p>由于实现分配器较复杂，我们先使用一个外部分配器 crate。我们将在下一篇文章中学习如何实现自己的分配器。</p>
 <p>适用于 <code>no_std</code> 应用的简单分配器 crate 是 [<code>linked_list_allocator</code>] crate。其名称源于它使用链表数据结构来跟踪已释放的内存区域。有关此方法的详细解释，请参阅下一篇文章。</p>
 <p>要使用该 crate，我们首先需要在 <code>Cargo.toml</code> 中添加对其的依赖：</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">linked_list_allocator </span><span>= </span><span style="color:#d69d85;">&quot;0.9.0&quot;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">linked_list_allocator</span><span> =</span><span style="color: #CE9178;"> &quot;0.9.0&quot;</span></span></code></pre>
 <p>然后用这个 crate 所提供的分配器替换虚拟分配器：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
-</span><span style="color:#569cd6;">use </span><span>linked_list_allocator::LockedHeap;
-</span><span>
-</span><span>#[global_allocator]
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: LockedHeap = LockedHeap::empty();
-</span></code></pre>
-<p>该结构体名为 <code>LockedHeap</code>，因为它使用 <a href="https://docs.rs/spinning_top/0.1.0/spinning_top/type.Spinlock.html"><code>spinning_top::Spinlock</code></a> 类型进行同步。这是必须的，因为多个线程可能同时访问 <code>ALLOCATOR</code> 静态变量。与使用自旋锁或互斥锁时一样，我们需要小心以避免造成死锁。这意味着我们不应在中断处理程序中执行任何分配，因为它们可能在任意时间运行并中断正在进行的分配。</p>
-<p>仅将 <code>LockedHeap</code> 设置为全局分配器还不够。原因是使用了 <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.LockedHeap.html#method.empty"><code>empty</code></a> 构造函数，该函数创建了一个没有可用内存的分配器。与我们的虚拟分配器一样，它在 <code>alloc</code> 时始终返回错误。要解决此问题，我们需要在创建堆后初始化分配器：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/allocator.rs
-</span><span style="color:#569cd6;">pub fn </span><span>init_heap(
-</span><span>    mapper: </span><span style="color:#569cd6;">&amp;mut</span><span> impl Mapper&lt;Size4KiB&gt;,
-</span><span>    frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> impl FrameAllocator&lt;Size4KiB&gt;,
-</span><span>) -&gt; Result&lt;(), MapToError&lt;Size4KiB&gt;&gt; {
-</span><span>    </span><span style="color:#608b4e;">// […] map all heap pages to physical frames
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// new
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">ALLOCATOR</span><span>.lock().init(</span><span style="color:#b4cea8;">HEAP_START</span><span>, </span><span style="color:#b4cea8;">HEAP_SIZE</span><span>);
-</span><span>    }
-</span><span>    Ok(())
-</span><span>}
-</span></code></pre>
-<p>我们使用 <code>LockedHeap</code> 类型内部自旋锁的 <a href="https://docs.rs/lock_api/0.3.3/lock_api/struct.Mutex.html#method.lock"><code>lock</code></a> 方法获取封装后 <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a> 实例的独立引用，然后传入堆边界作为参数，在其上调用 <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> 方法。由于 <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> 函数已经尝试写入堆内存，我们必须在映射堆页面之后再进行初始化堆。</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/allocator.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> linked_list_allocator</span><span>::</span><span style="color: #4EC9B0;">LockedHeap</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[global_allocator]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> ALLOCATOR:</span><span style="color: #4EC9B0;"> LockedHeap</span><span> =</span><span style="color: #4EC9B0;"> LockedHeap</span><span>::</span><span style="color: #DCDCAA;">empty</span><span>();</span></span></code></pre>
+<p>该结构体名为 <code>LockedHeap</code>，因为它使用 <a rel="external" href="https://docs.rs/spinning_top/0.1.0/spinning_top/type.Spinlock.html"><code>spinning_top::Spinlock</code></a> 类型进行同步。这是必须的，因为多个线程可能同时访问 <code>ALLOCATOR</code> 静态变量。与使用自旋锁或互斥锁时一样，我们需要小心以避免造成死锁。这意味着我们不应在中断处理程序中执行任何分配，因为它们可能在任意时间运行并中断正在进行的分配。</p>
+<p>仅将 <code>LockedHeap</code> 设置为全局分配器还不够。原因是使用了 <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.LockedHeap.html#method.empty"><code>empty</code></a> 构造函数，该函数创建了一个没有可用内存的分配器。与我们的虚拟分配器一样，它在 <code>alloc</code> 时始终返回错误。要解决此问题，我们需要在创建堆后初始化分配器：</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/allocator.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init_heap</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    mapper</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> Mapper</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    frame_allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span>) -&gt;</span><span style="color: #4EC9B0;"> Result</span><span>&lt;(),</span><span style="color: #4EC9B0;"> MapToError</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;&gt; {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] map all heap pages to physical frames</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // new</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        ALLOCATOR.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">init</span><span>(HEAP_START, HEAP_SIZE);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Ok</span><span>(())</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>我们使用 <code>LockedHeap</code> 类型内部自旋锁的 <a rel="external" href="https://docs.rs/lock_api/0.3.3/lock_api/struct.Mutex.html#method.lock"><code>lock</code></a> 方法获取封装后 <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a> 实例的独立引用，然后传入堆边界作为参数，在其上调用 <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> 方法。由于 <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> 函数已经尝试写入堆内存，我们必须在映射堆页面之后再进行初始化堆。</p>
 <p>初始化堆后，我们现在可以正确地使用内置 [alloc] crate 的所有分配和集合类型：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span style="color:#569cd6;">use </span><span>alloc::{boxed::Box, vec, vec::Vec, rc::Rc};
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// […] initialize interrupts, mapper, frame_allocator, heap
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// 在堆上分配数字
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;heap_value at </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, heap_value);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// 创建动态大小向量
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> vec = Vec::new();
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">500 </span><span>{
-</span><span>        vec.push(i);
-</span><span>    }
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;vec at </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, vec.as_slice());
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// 创建引用计数向量，计数为 0 时释放
-</span><span>    </span><span style="color:#569cd6;">let</span><span> reference_counted = Rc::new(vec![</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">2</span><span>, </span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> cloned_reference = reference_counted.clone();
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;current reference count is </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>,Rc::strong_count(</span><span style="color:#569cd6;">&amp;</span><span>cloned_reference));
-</span><span>    core::mem::drop(reference_counted);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;reference count is </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> now&quot;</span><span>, Rc::strong_count(</span><span style="color:#569cd6;">&amp;</span><span>cloned_reference));
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] call `test_main` in test context
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span></code></pre>
-<p>此代码示例展示了 <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>、<a href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a> 和 <a href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a> 类型的一些用法。对于 <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> 和 <a href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a> 类型，我们使用 <a href="https://doc.rust-lang.org/core/fmt/trait.Pointer.html"><code>{:p}</code> 格式说明符</a> 打印底层的堆指针。为了展示 <a href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a>，我们创建了一个引用计数的堆值，并使用 <a href="https://doc.rust-lang.org/alloc/rc/struct.Rc.html#method.strong_count"><code>Rc::strong_count</code></a> 函数打印丢弃一个引用实例（使用 <a href="https://doc.rust-lang.org/core/mem/fn.drop.html"><code>core::mem::drop</code></a>）前后的当前引用计数。</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::{</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>, vec,</span><span style="color: #4EC9B0;"> vec</span><span>::</span><span style="color: #4EC9B0;">Vec</span><span>,</span><span style="color: #4EC9B0;"> rc</span><span>::</span><span style="color: #4EC9B0;">Rc</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] initialize interrupts, mapper, frame_allocator, heap</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // 在堆上分配数字</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;heap_value at {:p}&quot;</span><span>,</span><span style="color: #9CDCFE;"> heap_value</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // 创建动态大小向量</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> vec</span><span> =</span><span style="color: #4EC9B0;"> Vec</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..</span><span style="color: #B5CEA8;">500</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        vec</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;vec at {:p}&quot;</span><span>,</span><span style="color: #9CDCFE;"> vec</span><span>.</span><span style="color: #DCDCAA;">as_slice</span><span>());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // 创建引用计数向量，计数为 0 时释放</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> reference_counted</span><span> =</span><span style="color: #4EC9B0;"> Rc</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #DCDCAA;">vec!</span><span>[</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 2</span><span>,</span><span style="color: #B5CEA8;"> 3</span><span>]);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> cloned_reference</span><span> =</span><span style="color: #9CDCFE;"> reference_counted</span><span>.</span><span style="color: #DCDCAA;">clone</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;current reference count is {}&quot;</span><span>,</span><span style="color: #4EC9B0;">Rc</span><span>::</span><span style="color: #DCDCAA;">strong_count</span><span>(&amp;</span><span style="color: #9CDCFE;">cloned_reference</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    core</span><span>::</span><span style="color: #4EC9B0;">mem</span><span>::</span><span style="color: #DCDCAA;">drop</span><span>(</span><span style="color: #9CDCFE;">reference_counted</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;reference count is {} now&quot;</span><span>,</span><span style="color: #4EC9B0;"> Rc</span><span>::</span><span style="color: #DCDCAA;">strong_count</span><span>(&amp;</span><span style="color: #9CDCFE;">cloned_reference</span><span>));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] call `test_main` in test context</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>此代码示例展示了 <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>、<a rel="external" href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a> 和 <a rel="external" href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a> 类型的一些用法。对于 <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> 和 <a rel="external" href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a> 类型，我们使用 <a rel="external" href="https://doc.rust-lang.org/core/fmt/trait.Pointer.html"><code>{:p}</code> 格式说明符</a> 打印底层的堆指针。为了展示 <a rel="external" href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a>，我们创建了一个引用计数的堆值，并使用 <a rel="external" href="https://doc.rust-lang.org/alloc/rc/struct.Rc.html#method.strong_count"><code>Rc::strong_count</code></a> 函数打印丢弃一个引用实例（使用 <a rel="external" href="https://doc.rust-lang.org/core/mem/fn.drop.html"><code>core::mem::drop</code></a>）前后的当前引用计数。</p>
 <p>当我们运行的时候，可以看到如下结果：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/heap-allocation/qemu-alloc-showcase.png" alt="QEMU 打印： heap_value at 0x444444440000 vec at 0x444444440800 current reference count is 2 reference count is 1 now" /></p>
 <p>正如预期的那样，我们看到 <code>Box</code> 和 <code>Vec</code> 的值都位于堆上，从其以 <code>0x_4444_4444_*</code> 为前缀的指针可以看出。引用计数的值也符合预期，在调用 <code>clone</code> 后引用计数为 2，其中一个引用实例被丢弃后又变为 1。</p>
 <p>向量从偏移量 <code>0x800</code> 处开始的原因并不是因为 <code>Box</code> 分配了 <code>0x800</code> 字节大小的内存，而是由于向量需要增加容量时发生的[重新分配]。例如，当向量的容量是 32 且我们尝试添加下一个元素时，向量会在幕后分配一个容量为 64 的新数组，并复制所有元素。然后它会释放旧的分配。</p>
 <p>当然，<code>alloc</code> crate 中还有许多其他的分配和集合类型，我们现在都可以在内核中使用，包括：</p>
 <ul>
-<li>线程安全的引用计数指针 <a href="https://doc.rust-lang.org/alloc/sync/struct.Arc.html"><code>Arc</code></a></li>
-<li>字符串类型 <a href="https://doc.rust-lang.org/alloc/string/struct.String.html"><code>String</code></a>] 和 <a href="https://doc.rust-lang.org/alloc/macro.format.html"><code>format!</code></a> 宏</li>
-<li><a href="https://doc.rust-lang.org/alloc/collections/linked_list/struct.LinkedList.html"><code>LinkedList</code></a></li>
-<li>可增长的环形缓冲区 <a href="https://doc.rust-lang.org/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a></li>
-<li><a href="https://doc.rust-lang.org/alloc/collections/binary_heap/struct.BinaryHeap.html"><code>BinaryHeap</code></a> 优先队列</li>
-<li><a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a> 和 <a href="https://doc.rust-lang.org/alloc/collections/btree_set/struct.BTreeSet.html"><code>BTreeSet</code></a></li>
+<li>线程安全的引用计数指针 <a rel="external" href="https://doc.rust-lang.org/alloc/sync/struct.Arc.html"><code>Arc</code></a></li>
+<li>字符串类型 <a rel="external" href="https://doc.rust-lang.org/alloc/string/struct.String.html"><code>String</code></a>] 和 <a rel="external" href="https://doc.rust-lang.org/alloc/macro.format.html"><code>format!</code></a> 宏</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/collections/linked_list/struct.LinkedList.html"><code>LinkedList</code></a></li>
+<li>可增长的环形缓冲区 <a rel="external" href="https://doc.rust-lang.org/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a></li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/collections/binary_heap/struct.BinaryHeap.html"><code>BinaryHeap</code></a> 优先队列</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a> 和 <a rel="external" href="https://doc.rust-lang.org/alloc/collections/btree_set/struct.BTreeSet.html"><code>BTreeSet</code></a></li>
 </ul>
 <p>当我们想要实现线程列表、调度队列或支持 async/await 时，这些类型将变得非常有用。</p>
 <h2 id="tian-jia-ce-shi"><a class="zola-anchor" href="#tian-jia-ce-shi" aria-label="Anchor link for: tian-jia-ce-shi">🔗</a>添加测试</h2>
 <p>为了确保我们不会意外地破坏新的内存分配代码，我们应该为其添加一个集成测试。我们首先创建一个新的 <code>tests/heap_allocation.rs</code> 文件，内容如下：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/heap_allocation.rs
-</span><span>
-</span><span>#![no_std]
-</span><span>#![no_main]
-</span><span>#![feature(custom_test_frameworks)]
-</span><span>#![test_runner(blog_os::test_runner)]
-</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
-</span><span>
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>bootloader::{entry_point, BootInfo};
-</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
-</span><span>
-</span><span>entry_point!(main);
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    unimplemented!();
-</span><span>}
-</span><span>
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    blog_os::test_panic_handler(info)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in tests/heap_allocation.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![no_std]</span></span>
+<span class="giallo-l"><span>#![no_main]</span></span>
+<span class="giallo-l"><span>#![feature(custom_test_frameworks)]</span></span>
+<span class="giallo-l"><span>#![test_runner(blog_os::test_runner)]</span></span>
+<span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bootloader</span><span>::{entry_point,</span><span style="color: #4EC9B0;"> BootInfo</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">entry_point!</span><span>(</span><span style="color: #9CDCFE;">main</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    unimplemented!</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>我们复用了 <code>lib.rs</code> 中的 <code>test_runner</code> 和 <code>test_panic_handler</code> 函数。因为我们想测试内存分配，所以通过 <code>extern crate alloc</code> 语句导入了 <code>alloc</code> crate。关于测试样板代码的更多信息，请查看 <a href="https://os.phil-opp.com/testing/"><em>Testing</em></a> 这篇文章。</p>
 <p><code>main</code> 函数的实现如下：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/heap_allocation.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::allocator;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::{self, BootInfoFrameAllocator};
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::VirtAddr;
-</span><span>
-</span><span>    blog_os::init();
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span>boot_info.memory_map)
-</span><span>    };
-</span><span>    allocator::init_heap(</span><span style="color:#569cd6;">&amp;mut</span><span> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;heap initialization failed&quot;</span><span>);
-</span><span>
-</span><span>    test_main();
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in tests/heap_allocation.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::allocator;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::{</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">VirtAddr</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> mapper</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        BootInfoFrameAllocator</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(&amp;</span><span style="color: #9CDCFE;">boot_info</span><span>.memory_map)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    allocator</span><span>::</span><span style="color: #DCDCAA;">init_heap</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> mapper</span><span>, &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;heap initialization failed&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>它与我们 <code>main.rs</code> 中的 <code>kernel_main</code> 函数非常相似，不同之处在于我们没有调用 <code>println</code>，没有包含任何分配示例，并且无条件地调用了<code>test_main</code>。</p>
-<p>现在我们已经准备好添加一些测试用例。首先，我们添加一个使用 <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> 执行简单分配的测试，并检查分配的值以确保基本的分配功能正常工作：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/heap_allocation.rs
-</span><span style="color:#569cd6;">use </span><span>alloc::boxed::Box;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>simple_allocation() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value_1 = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value_2 = Box::new(</span><span style="color:#b5cea8;">13</span><span>);
-</span><span>    assert_eq!(*heap_value_1, </span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    assert_eq!(*heap_value_2, </span><span style="color:#b5cea8;">13</span><span>);
-</span><span>}
-</span></code></pre>
+<p>现在我们已经准备好添加一些测试用例。首先，我们添加一个使用 <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> 执行简单分配的测试，并检查分配的值以确保基本的分配功能正常工作：</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in tests/heap_allocation.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> simple_allocation</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value_1</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value_2</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">13</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">heap_value_1</span><span>,</span><span style="color: #B5CEA8;"> 41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">heap_value_2</span><span>,</span><span style="color: #B5CEA8;"> 13</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>正如预期，测试验证了没有发生分配错误。</p>
 <p>接下来，我们迭代地构建一个大型向量，以测试大内存分配和多次内存分配（多次内存分配是由重新分配造成的）：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/heap_allocation.rs
-</span><span style="color:#569cd6;">use </span><span>alloc::vec::Vec;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>large_vec() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> n = </span><span style="color:#b5cea8;">1000</span><span>;
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> vec = Vec::new();
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span>n {
-</span><span>        vec.push(i);
-</span><span>    }
-</span><span>    assert_eq!(vec.iter().sum::&lt;</span><span style="color:#569cd6;">u64</span><span>&gt;(), (n - </span><span style="color:#b5cea8;">1</span><span>) * n / </span><span style="color:#b5cea8;">2</span><span>);
-</span><span>}
-</span></code></pre>
-<p>我们通过将其与 <a href="https://en.wikipedia.org/wiki/1_%2B_2_%2B_3_%2B_4_%2B_%E2%8B%AF#Partial_sums">n-th partial sum</a> 的公式进行比较来验证总和。这使我们确保分配的值都时正确的。</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in tests/heap_allocation.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">vec</span><span>::</span><span style="color: #4EC9B0;">Vec</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> large_vec</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> n</span><span> =</span><span style="color: #B5CEA8;"> 1000</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> vec</span><span> =</span><span style="color: #4EC9B0;"> Vec</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..</span><span style="color: #9CDCFE;">n</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        vec</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #9CDCFE;">vec</span><span>.</span><span style="color: #DCDCAA;">iter</span><span>().</span><span style="color: #DCDCAA;">sum</span><span>::&lt;</span><span style="color: #4EC9B0;">u64</span><span>&gt;(), (</span><span style="color: #9CDCFE;">n</span><span> -</span><span style="color: #B5CEA8;"> 1</span><span>) *</span><span style="color: #9CDCFE;"> n</span><span> /</span><span style="color: #B5CEA8;"> 2</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>我们通过将其与 <a rel="external" href="https://en.wikipedia.org/wiki/1_%2B_2_%2B_3_%2B_4_%2B_%E2%8B%AF#Partial_sums">n-th partial sum</a> 的公式进行比较来验证总和。这使我们确保分配的值都时正确的。</p>
 <p>作为第三个测试，我们连续创建一万个分配</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in tests/heap_allocation.rs
-</span><span style="color:#569cd6;">use </span><span>blog_os::allocator::</span><span style="color:#b4cea8;">HEAP_SIZE</span><span>;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>many_boxes() {
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">HEAP_SIZE </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let</span><span> x = Box::new(i);
-</span><span>        assert_eq!(*x, i);
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in tests/heap_allocation.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">allocator</span><span>::</span><span style="color: #4EC9B0;">HEAP_SIZE</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> many_boxes</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..HEAP_SIZE {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">x</span><span>,</span><span style="color: #9CDCFE;"> i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>该测试确保分配器会重用已释放的内存进行后续分配，否则内存会耗尽。这看起来对于一个分配器来说可能是一个显而易见的要求，但有些分配器并不会这样做。一个例子就是将在下一篇文章中解释的 bump 分配器。</p>
 <p>运行集成测试：</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
-</span><span>Running 3 tests
-</span><span>simple_allocation... [ok]
-</span><span>large_vec... [ok]
-</span><span>many_boxes... [ok]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test --test heap_allocation</span></span>
+<span class="giallo-l"><span>Running 3 tests</span></span>
+<span class="giallo-l"><span>simple_allocation... [ok]</span></span>
+<span class="giallo-l"><span>large_vec... [ok]</span></span>
+<span class="giallo-l"><span>many_boxes... [ok]</span></span></code></pre>
 <p>所有三项测试都已成功！你也可以调用 <code>cargo test</code>（不带 <code>--test</code> 参数）来运行所有的单元测试和集成测试。</p>
 <h2 id="zong-jie"><a class="zola-anchor" href="#zong-jie" aria-label="Anchor link for: zong-jie">🔗</a>总结</h2>
 <p>本文介绍了动态内存，并解释了它的必要性及应用场景。我们了解了 Rust 的借用检查器如何防止常见的漏洞，以及 Rust 的内存分配 API 的工作原理。</p>

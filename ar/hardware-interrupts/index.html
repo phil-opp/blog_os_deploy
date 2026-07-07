@@ -137,7 +137,7 @@
     <div class="right-to-left">
     <p>في هذا المقال، نُعدّ متحكم المقاطعات القابل للبرمجة لإعادة توجيه المقاطعات العتادية إلى وحدة المعالجة المركزية بشكل صحيح. لمعالجة هذه المقاطعات، نضيف entries جديدة إلى interrupt descriptor table، تمامًا كما فعلنا لمعالجي exceptions. سنتعلم كيفية الحصول على timer interrupts دورية وكيفية الحصول على إدخال من لوحة المفاتيح.</p>
 <span id="continue-reading"></span>
-<p>هذا المدونة مطوّرة بشكل مفتوح على <a href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/hardware-interrupts/#comments">في الأسفل</a>.  يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a href="https://github.com/phil-opp/blog_os/tree/post-07"><code>post-07</code></a>.</p>
+<p>هذا المدونة مطوّرة بشكل مفتوح على <a rel="external" href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/hardware-interrupts/#comments">في الأسفل</a>.  يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a rel="external" href="https://github.com/phil-opp/blog_os/tree/post-07"><code>post-07</code></a>.</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -203,162 +203,152 @@
     </details>
 
 <h2 id="nzr-m"><a class="zola-anchor" href="#nzr-m" aria-label="Anchor link for: nzr-m">🔗</a>نظرة عامة</h2>
-<p>توفر المقاطعات طريقة لإخطار وحدة المعالجة المركزية من الأجهزة المتصلة. لذلك بدلاً من ترك النواة تتفقد لوحة المفاتيح دورياً بحثاً عن أحرف جديدة (عملية تسمى <a href="https://en.wikipedia.org/wiki/Polling_(computer_science)"><em>polling</em></a>)، يمكن للوحة المفاتيح إخطار النواة بكل ضغطة مفتاح. هذا أكثر كفاءة بكثير لأن النواة تحتاج فقط للتحرك عندما يحدث شيء ما. يسمح أيضًا بأوقات رد فعل أسرع لأن النواة يمكنها التفاعل فورًا وليس فقط عند التفتيش التالي.</p>
+<p>توفر المقاطعات طريقة لإخطار وحدة المعالجة المركزية من الأجهزة المتصلة. لذلك بدلاً من ترك النواة تتفقد لوحة المفاتيح دورياً بحثاً عن أحرف جديدة (عملية تسمى <a rel="external" href="https://en.wikipedia.org/wiki/Polling_(computer_science)"><em>polling</em></a>)، يمكن للوحة المفاتيح إخطار النواة بكل ضغطة مفتاح. هذا أكثر كفاءة بكثير لأن النواة تحتاج فقط للتحرك عندما يحدث شيء ما. يسمح أيضًا بأوقات رد فعل أسرع لأن النواة يمكنها التفاعل فورًا وليس فقط عند التفتيش التالي.</p>
 <p>توصيل جميع أجهزة الأجهزة مباشرة بـ وحدة المعالجة المركزية غير ممكن. بدلاً من ذلك، <em>interrupt controller</em> منفصل يجمع المقاطعات من جميع الأجهزة ثم يُخطِر وحدة المعالجة المركزية:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>                                    ____________             _____
-</span><span>               Timer ------------&gt; |            |           |     |
-</span><span>               Keyboard ---------&gt; | Interrupt  |---------&gt; | CPU |
-</span><span>               Other Hardware ---&gt; | Controller |           |_____|
-</span><span>               Etc. -------------&gt; |____________|
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>                                    ____________             _____</span></span>
+<span class="giallo-l"><span>               Timer ------------&gt; |            |           |     |</span></span>
+<span class="giallo-l"><span>               Keyboard ---------&gt; | Interrupt  |---------&gt; | CPU |</span></span>
+<span class="giallo-l"><span>               Other Hardware ---&gt; | Controller |           |_____|</span></span>
+<span class="giallo-l"><span>               Etc. -------------&gt; |____________|</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>معظم interrupt controllers قابلة للبرمجة، مما يعني أنها تدعم مستويات أولويات مختلفة للمقاطعات. على سبيل المثال، هذا يسمح بمنح timer interrupts أولوية أعلى من keyboard interrupts لضمان إبقاء الوقت بدقة.</p>
 <p>على عكس exceptions، تحدث hardware interrupts <em>بشكل غير متزامن</em>. هذا يعني أنها completely مستقلة عن الكود المُنفّذ ويمكن أن تحدث في أي وقت. لذلك، نحصل فجأة على شكل من التزامن في نواتنا مع جميع الـ bugs المحتملة المرتبطة بالتزامن. نموذج الملكية الصارم في Rust يساعدنا هنا لأنه يمنع حالة العالم القابلة للتغيير. ومع ذلك، لا تزال الـ deadlocks ممكنة، كما سنرى لاحقًا في هذا المقال.</p>
 <h2 id="the-8259-pic"><a class="zola-anchor" href="#the-8259-pic" aria-label="Anchor link for: the-8259-pic">🔗</a>متحكم المقاطعات 8259 PIC</h2>
-<p><a href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> هو programmable interrupt controller (PIC) طُرح عام 1976. تم استبداله منذ فترة بالـ <a href="https://en.wikipedia.org/wiki/Intel_APIC_Architecture">APIC</a> الأحدث، لكن واجهته لا تزال مدعومة على الأنظمة الحالية لأسباب توافقية. 8259 PIC أسهل بكثير في الإعداد من APIC، لذلك سنستخدمه للتعرف على المقاطعات قبل التبديل إلى APIC في مقال لاحق.</p>
+<p><a rel="external" href="https://en.wikipedia.org/wiki/Intel_8259">Intel 8259</a> هو programmable interrupt controller (PIC) طُرح عام 1976. تم استبداله منذ فترة بالـ <a rel="external" href="https://en.wikipedia.org/wiki/Intel_APIC_Architecture">APIC</a> الأحدث، لكن واجهته لا تزال مدعومة على الأنظمة الحالية لأسباب توافقية. 8259 PIC أسهل بكثير في الإعداد من APIC، لذلك سنستخدمه للتعرف على المقاطعات قبل التبديل إلى APIC في مقال لاحق.</p>
 <p>لدى 8259 ثماني خطوط interrupts وعدة خطوط للتواصل مع وحدة المعالجة المركزية. كانت الأنظمة النموذجية آنذاك مزودة بنسخة واحدة من 8259 PIC، واحد أساسي وواحد ثانوي PIC، متصل بواحدة من خطوط interrupt للرئيسي:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>                     ____________                          ____________
-</span><span>Real Time Clock --&gt; |            |   Timer -------------&gt; |            |
-</span><span>ACPI -------------&gt; |            |   Keyboard-----------&gt; |            |      _____
-</span><span>Available --------&gt; | Secondary  |----------------------&gt; | Primary    |     |     |
-</span><span>Available --------&gt; | Interrupt  |   Serial Port 2 -----&gt; | Interrupt  |---&gt; | CPU |
-</span><span>Mouse ------------&gt; | Controller |   Serial Port 1 -----&gt; | Controller |     |_____|
-</span><span>Co-Processor -----&gt; |            |   Parallel Port 2/3 -&gt; |            |
-</span><span>Primary ATA ------&gt; |            |   Floppy disk -------&gt; |            |
-</span><span>Secondary ATA ----&gt; |____________|   Parallel Port 1----&gt; |____________|
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>                     ____________                          ____________</span></span>
+<span class="giallo-l"><span>Real Time Clock --&gt; |            |   Timer -------------&gt; |            |</span></span>
+<span class="giallo-l"><span>ACPI -------------&gt; |            |   Keyboard-----------&gt; |            |      _____</span></span>
+<span class="giallo-l"><span>Available --------&gt; | Secondary  |----------------------&gt; | Primary    |     |     |</span></span>
+<span class="giallo-l"><span>Available --------&gt; | Interrupt  |   Serial Port 2 -----&gt; | Interrupt  |---&gt; | CPU |</span></span>
+<span class="giallo-l"><span>Mouse ------------&gt; | Controller |   Serial Port 1 -----&gt; | Controller |     |_____|</span></span>
+<span class="giallo-l"><span>Co-Processor -----&gt; |            |   Parallel Port 2/3 -&gt; |            |</span></span>
+<span class="giallo-l"><span>Primary ATA ------&gt; |            |   Floppy disk -------&gt; |            |</span></span>
+<span class="giallo-l"><span>Secondary ATA ----&gt; |____________|   Parallel Port 1----&gt; |____________|</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>يُظهر هذا الرسم التعيين النموذجي لخطوط interrupts. نرى أن معظم الـ 15 سطرًا لها تعيين ثابت، مثلاً، السطر 4 من PIC الثانوي مخصص للماوس.</p>
 <p>يمكن تكوين كل controller عبر <a href="https://os.phil-opp.com/testing/#i-o-ports">I/O ports</a> واحد، واحد “command” port وواحد “data” port. بالنسبة للرئيسي، هذه الـ ports هي <code>0x20</code> (command) و <code>0x21</code> (data). بالنسبة للثانوي، هي <code>0xa0</code> (command) و <code>0xa1</code> (data). لمزيد من المعلومات حول كيفية تكوين PICs، راجع [المقال على osdev.org].</p>
 <h3 id="ltnfydh"><a class="zola-anchor" href="#ltnfydh" aria-label="Anchor link for: ltnfydh">🔗</a>التنفيذ</h3>
 <p>التكوين الافتراضي لـ PICs غير قابل للاستخدام لأنه يرسل interrupt vector numbers في النطاق 0–15 إلى وحدة المعالجة المركزية. هذه الأرقام مشغولة بالفعل من قبل CPU exceptions. على سبيل المثال، الرقم 8 يتوافق مع double fault. لإصلاح مشكلة التداخل هذه، نحتاج إلى إعادة تعيين PIC interrupts إلى أرقام مختلفة. النطاق الفعلي لا يهم طالما لا يتداخل مع exceptions، لكن عادةً يُختار النطاق 32–47، لأن هذه هي الأرقام الحرة الأولى بعد 32 exception slots.</p>
-<p>يحدث التكوين بكتابة قيم خاصة إلى command و data ports لـ PICs. لحسن الحظ، هناك بالفعل مكتبة تسمى <a href="https://docs.rs/pic8259/0.10.1/pic8259/"><code>pic8259</code></a>، لذلك لا نحتاج إلى كتابة sequence التهيئة بأنفسنا. ومع ذلك، إذا كنت مهتمًا بكيفية عملها، راجع <a href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">source code</a>. إنها صغيرة نسبيًا وموثقة جيدًا.</p>
+<p>يحدث التكوين بكتابة قيم خاصة إلى command و data ports لـ PICs. لحسن الحظ، هناك بالفعل مكتبة تسمى <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/"><code>pic8259</code></a>، لذلك لا نحتاج إلى كتابة sequence التهيئة بأنفسنا. ومع ذلك، إذا كنت مهتمًا بكيفية عملها، راجع <a rel="external" href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">source code</a>. إنها صغيرة نسبيًا وموثقة جيدًا.</p>
 <p>لإضافة المكتبة كـ dependency، نضيف ما يلي إلى مشروعنا:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">pic8259 </span><span>= </span><span style="color:#d69d85;">&quot;0.10.1&quot;
-</span></code></pre>
-<p>التجريد الرئيسي الذي توفره المكتبة هو struct <a href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a> الذي يمثل تخطيط primary/secondary PIC الذي رأيناه أعلاه. مصمم للاستخدام بالطريقة التالية:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>pic8259::ChainedPics;
-</span><span style="color:#569cd6;">use</span><span> spin;
-</span><span>
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#b5cea8;">32</span><span>;
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span>: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#b4cea8;">PIC_1_OFFSET </span><span>+ </span><span style="color:#b5cea8;">8</span><span>;
-</span><span>
-</span><span style="color:#569cd6;">pub static </span><span style="color:#b4cea8;">PICS</span><span>: spin::Mutex&lt;ChainedPics&gt; =
-</span><span>    spin::Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{ ChainedPics::new(</span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>, </span><span style="color:#b4cea8;">PIC_2_OFFSET</span><span>) });
-</span></code></pre>
-<p>كما لوحظ أعلاه، نعيّن offsets لـ PICs إلى النطاق 32–47. بوضع <code>ChainedPics</code> struct في <code>Mutex</code>، نحصل على وصول آمن قابل للتغيير (عبر <a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html#method.lock">دالة <code>lock</code></a>)، الذي نحتاجه في الخطوة التالية. دالة <code>ChainedPics::new</code> غير آمنة لأن offsets خاطئة قد تسبب undefined behavior.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">pic8259</span><span> =</span><span style="color: #CE9178;"> &quot;0.10.1&quot;</span></span></code></pre>
+<p>التجريد الرئيسي الذي توفره المكتبة هو struct <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a> الذي يمثل تخطيط primary/secondary PIC الذي رأيناه أعلاه. مصمم للاستخدام بالطريقة التالية:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> pic8259</span><span>::</span><span style="color: #4EC9B0;">ChainedPics</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span> spin;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> PIC_1_OFFSET:</span><span style="color: #4EC9B0;"> u8</span><span> =</span><span style="color: #B5CEA8;"> 32</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> PIC_2_OFFSET:</span><span style="color: #4EC9B0;"> u8</span><span> = PIC_1_OFFSET +</span><span style="color: #B5CEA8;"> 8</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub static</span><span> PICS:</span><span style="color: #4EC9B0;"> spin</span><span>::</span><span style="color: #4EC9B0;">Mutex</span><span>&lt;</span><span style="color: #4EC9B0;">ChainedPics</span><span>&gt; =</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    spin</span><span>::</span><span style="color: #4EC9B0;">Mutex</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #569CD6;">unsafe</span><span> {</span><span style="color: #4EC9B0;"> ChainedPics</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(PIC_1_OFFSET, PIC_2_OFFSET) });</span></span></code></pre>
+<p>كما لوحظ أعلاه، نعيّن offsets لـ PICs إلى النطاق 32–47. بوضع <code>ChainedPics</code> struct في <code>Mutex</code>، نحصل على وصول آمن قابل للتغيير (عبر <a rel="external" href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html#method.lock">دالة <code>lock</code></a>)، الذي نحتاجه في الخطوة التالية. دالة <code>ChainedPics::new</code> غير آمنة لأن offsets خاطئة قد تسبب undefined behavior.</p>
 <p>يمكننا الآن تهيئة 8259 PIC في دالة <code>init</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init() {
-</span><span>    gdt::init();
-</span><span>    interrupts::init_idt();
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span>.lock().initialize() }; </span><span style="color:#608b4e;">// new
-</span><span>}
-</span></code></pre>
-<p>نستخدم دالة <a href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> لتنفيذ تهيئة PIC. مثل دالة <code>ChainedPics::new</code>، هذه الدالة أيضًا غير آمنة لأنها قد تسبب undefined behavior إذا كان PIC مُكوّنًا بشكل خاطئ.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    gdt</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init_idt</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #4EC9B0;"> interrupts</span><span>::PICS.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">initialize</span><span>() };</span><span style="color: #6A9955;"> // new</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>نستخدم دالة <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> لتنفيذ تهيئة PIC. مثل دالة <code>ChainedPics::new</code>، هذه الدالة أيضًا غير آمنة لأنها قد تسبب undefined behavior إذا كان PIC مُكوّنًا بشكل خاطئ.</p>
 <p>إذا سار كل شيء على ما يرام، يجب أن نستمر في رؤية رسالة “It did not crash” عند تنفيذ <code>cargo run</code>.</p>
 <h2 id="tf-yl-lmqt-t"><a class="zola-anchor" href="#tf-yl-lmqt-t" aria-label="Anchor link for: tf-yl-lmqt-t">🔗</a>تفعيل المقاطعات</h2>
 <p>حتى الآن، لم يحدث شيء لأن المقاطعات لا تزال معطلة في تكوين وحدة المعالجة المركزية. هذا يعني أن وحدة المعالجة المركزية لا تستمع إلى interrupt controller على الإطلاق، لذلك لا يمكن لأي interrupts الوصول إلى وحدة المعالجة المركزية. لنغيّر ذلك:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init() {
-</span><span>    gdt::init();
-</span><span>    interrupts::init_idt();
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ interrupts::</span><span style="color:#b4cea8;">PICS</span><span>.lock().initialize() };
-</span><span>    x86_64::instructions::interrupts::enable();     </span><span style="color:#608b4e;">// new
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    gdt</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init_idt</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #4EC9B0;"> interrupts</span><span>::PICS.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">initialize</span><span>() };</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">interrupts</span><span>::</span><span style="color: #DCDCAA;">enable</span><span>();</span><span style="color: #6A9955;">     // new</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>دالة <code>interrupts::enable</code> من مكتبة <code>x86_64</code> تنفذ تعليمة <code>sti</code> الخاصة (“set interrupts”) لتفعيل external interrupts. عندما نجرب <code>cargo run</code> الآن، نرى أن double fault تحدث:</p>
 <p><img src="https://os.phil-opp.com/ar/hardware-interrupts/qemu-hardware-timer-double-fault.png" alt="QEMU printing EXCEPTION: DOUBLE FAULT because of hardware timer" /></p>
-<p>سبب هذه double fault هو أن hardware timer (<a href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a> بالضبط) مُفعّل افتراضيًا، لذلك نبدأ في تلقي timer interrupts بمجرد تفعيل المقاطعات. بما أننا لم نحدد لها دالة معالجة بعد، يُستدعى double fault handler.</p>
+<p>سبب هذه double fault هو أن hardware timer (<a rel="external" href="https://en.wikipedia.org/wiki/Intel_8253">Intel 8253</a> بالضبط) مُفعّل افتراضيًا، لذلك نبدأ في تلقي timer interrupts بمجرد تفعيل المقاطعات. بما أننا لم نحدد لها دالة معالجة بعد، يُستدعى double fault handler.</p>
 <h2 id="m-lj-mqt-t-lmw-qt"><a class="zola-anchor" href="#m-lj-mqt-t-lmw-qt" aria-label="Anchor link for: m-lj-mqt-t-lmw-qt">🔗</a>معالجة مقاطعات المؤقت</h2>
 <p>كما نرى من الرسم <a href="https://os.phil-opp.com/ar/hardware-interrupts/#the-8259-pic">أعلاه</a>، يستخدم timer السطر 0 من primary PIC. هذا يعني أنه يصل إلى وحدة المعالجة المركزية كـ interrupt 32 (0 + offset 32). بدلاً من hardcoding فهرس 32، نخزّنه في enum <code>InterruptIndex</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span>#[derive(Debug, Clone, Copy)]
-</span><span>#[repr(u8)]
-</span><span style="color:#569cd6;">pub enum </span><span>InterruptIndex {
-</span><span>    Timer = </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>InterruptIndex {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>as_u8(self) -&gt; </span><span style="color:#569cd6;">u8 </span><span>{
-</span><span>        self </span><span style="color:#569cd6;">as u8
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>as_usize(self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>        </span><span style="color:#569cd6;">usize</span><span>::from(self.as_u8())
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>الـ enum هو <a href="https://doc.rust-lang.org/reference/items/enumerations.html#custom-discriminant-values-for-fieldless-enumerations">C-like enum</a> حتى نتمكن من تحديد الفهرس مباشرة لكل variant. السمة <code>repr(u8)</code> تحدد أن كل variant ممثل كـ <code>u8</code>. سنضيف variants أخرى لـ interrupts أخرى في المستقبل.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>)]</span></span>
+<span class="giallo-l"><span>#[repr(</span><span style="color: #4EC9B0;">u8</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> InterruptIndex</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Timer</span><span> = PIC_1_OFFSET,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> InterruptIndex</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> as_u8</span><span>(</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> u8</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self as</span><span style="color: #4EC9B0;"> u8</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> as_usize</span><span>(</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        usize</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>())</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>الـ enum هو <a rel="external" href="https://doc.rust-lang.org/reference/items/enumerations.html#custom-discriminant-values-for-fieldless-enumerations">C-like enum</a> حتى نتمكن من تحديد الفهرس مباشرة لكل variant. السمة <code>repr(u8)</code> تحدد أن كل variant ممثل كـ <code>u8</code>. سنضيف variants أخرى لـ interrupts أخرى في المستقبل.</p>
 <p>الآن يمكننا إضافة دالة معالجة لـ timer interrupt:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">use crate</span><span>::print;
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
-</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
-</span><span>        […]
-</span><span>        idt[InterruptIndex::Timer.as_usize()]
-</span><span>            .set_handler_fn(timer_interrupt_handler); </span><span style="color:#608b4e;">// new
-</span><span>
-</span><span>        idt
-</span><span>    };
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>timer_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;.&quot;</span><span>);
-</span><span>}
-</span></code></pre>
-<p>دالة <code>timer_interrupt_handler</code> لها نفس التوقيع كـ exception handlers، لأن وحدة المعالجة المركزية تتفاعل بشكل متطابق مع exceptions و external interrupts (الفرق الوحيد هو أن بعض exceptions تدفع error code). struct <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> ينفذ trait <a href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a>، لذلك يمكننا الوصول إلى entries فردية عبر array indexing syntax.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use crate</span><span>::print;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> IDT:</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
+<span class="giallo-l"><span>        […]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Timer</span><span>.</span><span style="color: #DCDCAA;">as_usize</span><span>()]</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">timer_interrupt_handler</span><span>);</span><span style="color: #6A9955;"> // new</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> timer_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;.&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>دالة <code>timer_interrupt_handler</code> لها نفس التوقيع كـ exception handlers، لأن وحدة المعالجة المركزية تتفاعل بشكل متطابق مع exceptions و external interrupts (الفرق الوحيد هو أن بعض exceptions تدفع error code). struct <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> ينفذ trait <a rel="external" href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a>، لذلك يمكننا الوصول إلى entries فردية عبر array indexing syntax.</p>
 <p>في timer interrupt handler، نطبع نقطة على الشاشة. بما أن timer interrupt يحدث بشكل دوري، نتوقع رؤية نقطة تظهر عند كل tick timer. ومع ذلك، عندما نشغّله، نرى أن نقطة واحدة فقط تُطبع:</p>
 <p><img src="https://os.phil-opp.com/ar/hardware-interrupts/qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
 <h3 id="nhy-lmqt"><a class="zola-anchor" href="#nhy-lmqt" aria-label="Anchor link for: nhy-lmqt">🔗</a>نهاية المقاطعة</h3>
 <p>السبب هو أن PIC يتوقع إشارة “end of interrupt” (EOI) صريحة من interrupt handler. هذه الإشارة تُخبر controller أن interrupt تمت معالجته و أن النظام جاهز لاستقبال interrupt التالي. لذلك PIC يعتقد أننا لا نزال مشغولين بمعالجة أول timer interrupt وينتظر بصبر إشارة EOI قبل إرسال التالي.</p>
 <p>لإرسال EOI، نستخدم static <code>PICS</code> مرة أخرى:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>timer_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;.&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> timer_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;.&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Timer</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>دالة <code>notify_end_of_interrupt</code> تكتشف ما إذا كان primary أو secondary PIC أرسل interrupt ثم تستخدم command و data ports لإرسال إشارة EOI إلى controllers المقابلة. إذا أرسل secondary PIC interrupt، يجب إخطار كلا PICs لأن secondary PIC متصل بـ input line لـ primary PIC.</p>
 <p>يجب أن نكون حذرين في استخدام interrupt vector number الصحيح، وإلا قد نتجاهل عن طريق الخطأ مقاطعة مهمة أو نُدخل النظام في حالة غير مستقرة أو نتسبب في تجمد النظام. هذا السبب أن الدالة غير آمنة.</p>
 <p>عندما ننفّذ <code>cargo run</code> الآن نرى نقاط تظهر بشكل دوري على الشاشة:</p>
 <p><img src="https://os.phil-opp.com/ar/hardware-interrupts/qemu-hardware-timer-dots.gif" alt="QEMU printing consecutive dots showing the hardware timer" /></p>
 <h3 id="thyy-lmw-qt"><a class="zola-anchor" href="#thyy-lmw-qt" aria-label="Anchor link for: thyy-lmw-qt">🔗</a>تهيئة المؤقت</h3>
-<p>hardware timer الذي نستخدمه يسمى <em>Programmable Interval Timer</em> أو PIT باختصار. كما يوحي الاسم، يمكن تكوين الفاصل الزمني بين interruptين. لن نتعمق في التفاصيل هنا لأننا سننتقل إلى <a href="https://wiki.osdev.org/APIC_timer">APIC timer</a> قريبًا، لكن OSDev wiki لديه مقال شامل حول [تكوين PIT].</p>
+<p>hardware timer الذي نستخدمه يسمى <em>Programmable Interval Timer</em> أو PIT باختصار. كما يوحي الاسم، يمكن تكوين الفاصل الزمني بين interruptين. لن نتعمق في التفاصيل هنا لأننا سننتقل إلى <a rel="external" href="https://wiki.osdev.org/APIC_timer">APIC timer</a> قريبًا، لكن OSDev wiki لديه مقال شامل حول [تكوين PIT].</p>
 <h2 id="ljmwd-lmtbdl-deadlocks"><a class="zola-anchor" href="#ljmwd-lmtbdl-deadlocks" aria-label="Anchor link for: ljmwd-lmtbdl-deadlocks">🔗</a>الجمود المتبادل (Deadlocks)</h2>
 <p>الآن لدينا شكل من التزامن في نواتنا: timer interrupts تحدث بشكل غير متزامن، لذلك يمكنها مقاطعة دالة <code>_start</code> في أي وقت. لحسن الحظ، يمنع نظام ملكية Rust العديد من أنواع الـ bugs المرتبطة بالتزامن وقت التجميع. استثناء ملحوظ هو deadlocks. تحدث deadlocks إذا حاول thread اقتناء lock لن يصبح حرًا أبدًا. لذلك، يعلق thread إلى أجل غير مسمى.</p>
 <p>يمكننا بالفعل إثارة deadlock في نواتنا. تذكر، macro <code>println</code> تستدعي دالة <code>vga_buffer::_print</code>، التي <a href="https://os.phil-opp.com/vga-text-mode/#spinlocks">تقفل <code>WRITER</code></a> باستخدام spinlock:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
-</span><span>
-</span><span>[…]
-</span><span>
-</span><span>#[doc(hidden)]
-</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[…]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[doc(hidden)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> _print</span><span>(</span><span style="color: #9CDCFE;">args</span><span>:</span><span style="color: #4EC9B0;"> fmt</span><span>::</span><span style="color: #4EC9B0;">Arguments</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span>    WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>تقفل <code>WRITER</code>، تستدعي <code>write_hat</code> عليها، وتفتحها ضمنيًا في نهاية الدالة. تخيل الآن أن interrupt يحدث بينما <code>WRITER</code> مقفل و interrupt handler يحاول طباعة شيء أيضًا:</p>
 <table><thead><tr><th>Timestep</th><th>_start</th><th>interrupt_handler</th></tr></thead><tbody>
 <tr><td>0</td><td>calls <code>println!</code></td><td> </td></tr>
@@ -373,105 +363,99 @@
 <p><code>WRITER</code> مقفل، لذلك ينتظر interrupt handler حتى تصبح حرة. لكن هذا لا يحدث أبدًا، لأن دالة <code>_start</code> تستأنف فقط بعد عودة interrupt handler. لذلك، يعلق النظام بالكامل.</p>
 <h3 id="thr-deadlock"><a class="zola-anchor" href="#thr-deadlock" aria-label="Anchor link for: thr-deadlock">🔗</a>إثارة deadlock</h3>
 <p>يمكننا بسهولة إثارة مثل هذا deadlock في نواتنا بطباعة شيء في loop في نهاية دالة <code>_start</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    […]
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{
-</span><span>        </span><span style="color:#569cd6;">use </span><span>blog_os::print;
-</span><span>        print!(</span><span style="color:#d69d85;">&quot;-&quot;</span><span>);        </span><span style="color:#608b4e;">// new
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        use</span><span style="color: #4EC9B0;"> blog_os</span><span>::print;</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        print!</span><span>(</span><span style="color: #CE9178;">&quot;-&quot;</span><span>);</span><span style="color: #6A9955;">        // new</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>عندما نشغّله في QEMU، نحصل على إخراج من الشكل:</p>
 <p><img src="https://os.phil-opp.com/ar/hardware-interrupts/./qemu-deadlock.png" alt="QEMU output with many rows of hyphens and no dots" /></p>
 <p>نرى أن عددًا محدودًا منشرطات يُطبع حتى يحدث أول timer interrupt. ثم يعلق النظام لأن timer interrupt handler يُ deadlock عندما يحاول طباعة نقطة. هذا السبب أننا لا نرى نقاط في الإخراج أعلاه.</p>
 <p>عدد شرطات الفعلي يختلف بين التشغيلات لأن timer interrupt يحدث بشكل غير متزامن. هذا non-determinism هو ما يجعل الـ bugs المرتبطة بالتزامن صعبة جدًا في التصحيح.</p>
 <h3 id="slh-l-deadlock"><a class="zola-anchor" href="#slh-l-deadlock" aria-label="Anchor link for: slh-l-deadlock">🔗</a>إصلاح الـ deadlock</h3>
 <p>لتجنب هذا deadlock، يمكننا تعطيل المقاطعات طالما <code>Mutex</code> مقفل:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
-</span><span>
-</span><span style="color:#608b4e;">/// Prints the given formatted string to the VGA text buffer
-</span><span style="color:#608b4e;">/// through the global `WRITER` instance.
-</span><span>#[doc(hidden)]
-</span><span style="color:#569cd6;">pub fn </span><span>_print(args: fmt::Arguments) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;   </span><span style="color:#608b4e;">// new
-</span><span>
-</span><span>    interrupts::without_interrupts(|| {     </span><span style="color:#608b4e;">// new
-</span><span>        </span><span style="color:#b4cea8;">WRITER</span><span>.lock().write_fmt(args).unwrap();
-</span><span>    });
-</span><span>}
-</span></code></pre>
-<p>دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> تأخذ <a href="https://doc.rust-lang.org/book/ch13-01-closures.html">closure</a> وتنفذه في بيئة خالية من المقاطعات. نستخدمها لضمان عدم حدوث interrupt طالما <code>Mutex</code> مقفل. عندما نشغّل نواتنا الآن، نرى أنها تستمر في العمل دون توقف. (لا نزال لا نلاحظ أي نقاط، لكن هذا لأنها تمر بسرعة كبيرة جدًا. حاول إبطاء الطباعة، مثلاً بوضع <code>for _ in 0..10000 {}</code> داخل loop.)</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Prints the given formatted string to the VGA text buffer</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// through the global `WRITER` instance.</span></span>
+<span class="giallo-l"><span>#[doc(hidden)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> _print</span><span>(</span><span style="color: #9CDCFE;">args</span><span>:</span><span style="color: #4EC9B0;"> fmt</span><span>::</span><span style="color: #4EC9B0;">Arguments</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::interrupts;</span><span style="color: #6A9955;">   // new</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">without_interrupts</span><span>(|| {</span><span style="color: #6A9955;">     // new</span></span>
+<span class="giallo-l"><span>        WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>دالة <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> تأخذ <a rel="external" href="https://doc.rust-lang.org/book/ch13-01-closures.html">closure</a> وتنفذه في بيئة خالية من المقاطعات. نستخدمها لضمان عدم حدوث interrupt طالما <code>Mutex</code> مقفل. عندما نشغّل نواتنا الآن، نرى أنها تستمر في العمل دون توقف. (لا نزال لا نلاحظ أي نقاط، لكن هذا لأنها تمر بسرعة كبيرة جدًا. حاول إبطاء الطباعة، مثلاً بوضع <code>for _ in 0..10000 {}</code> داخل loop.)</p>
 <p>يمكننا تطبيق نفس التغيير على دالة serial printing لضمان عدم حدوث deadlocks معها أيضًا:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/serial.rs
-</span><span>
-</span><span>#[doc(hidden)]
-</span><span style="color:#569cd6;">pub fn </span><span>_print(args: ::core::fmt::Arguments) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;       </span><span style="color:#608b4e;">// new
-</span><span>
-</span><span>    interrupts::without_interrupts(|| {         </span><span style="color:#608b4e;">// new
-</span><span>        </span><span style="color:#b4cea8;">SERIAL1
-</span><span>            .lock()
-</span><span>            .write_fmt(args)
-</span><span>            .expect(</span><span style="color:#d69d85;">&quot;Printing to serial failed&quot;</span><span>);
-</span><span>    });
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/serial.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[doc(hidden)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> _print</span><span>(</span><span style="color: #9CDCFE;">args</span><span>: ::</span><span style="color: #4EC9B0;">core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Arguments</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::interrupts;</span><span style="color: #6A9955;">       // new</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">without_interrupts</span><span>(|| {</span><span style="color: #6A9955;">         // new</span></span>
+<span class="giallo-l"><span>        SERIAL1</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>)</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;Printing to serial failed&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>لاحظ أن تعطيل المقاطعات يجب ألا يكون حلًا عامًا. المشكلة هي أنه يزيد من worst-case interrupt latency، أي الوقت حتى يتفاعل النظام مع interrupt. لذلك، يجب تعطيل المقاطعات لفترة قصيرة جدًا فقط.</p>
 <h2 id="slh-hl-lsbq"><a class="zola-anchor" href="#slh-hl-lsbq" aria-label="Anchor link for: slh-hl-lsbq">🔗</a>إصلاح حالة السباق</h2>
 <p>إذا شغّلت <code>cargo test</code>، قد ترى اختبار <code>test_println_output</code> يفشل:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --lib
-</span><span>[…]
-</span><span>Running 4 tests
-</span><span>test_breakpoint_exception...[ok]
-</span><span>test_println... [ok]
-</span><span>test_println_many... [ok]
-</span><span>test_println_output... [failed]
-</span><span>
-</span><span>Error: panicked at &#39;assertion failed: `(left == right)`
-</span><span>  left: `&#39;.&#39;`,
-</span><span> right: `&#39;S&#39;`&#39;, src/vga_buffer.rs:205:9
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test --lib</span></span>
+<span class="giallo-l"><span>[…]</span></span>
+<span class="giallo-l"><span>Running 4 tests</span></span>
+<span class="giallo-l"><span>test_breakpoint_exception...[ok]</span></span>
+<span class="giallo-l"><span>test_println... [ok]</span></span>
+<span class="giallo-l"><span>test_println_many... [ok]</span></span>
+<span class="giallo-l"><span>test_println_output... [failed]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Error: panicked at &#39;assertion failed: `(left == right)`</span></span>
+<span class="giallo-l"><span>  left: `&#39;.&#39;`,</span></span>
+<span class="giallo-l"><span> right: `&#39;S&#39;`&#39;, src/vga_buffer.rs:205:9</span></span></code></pre>
 <p>السبب هو <em>race condition</em> بين الاختبار ومعالج timer. تذكر، يبدو الاختبار كالتالي:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span>;
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s);
-</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> screen_char = </span><span style="color:#b4cea8;">WRITER</span><span>.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
-</span><span>        assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>الاختبار يطبع سلسلة نصية إلى VGA buffer ثم يتحقق من الإخراج بالمرور يدويًا على مصفوفة <code>buffer_chars</code>. تحدث race condition لأن timer interrupt handler قد يعمل بين <code>println</code> وقراءة أحرف الشاشة. لاحظ أن هذا ليس <em>data race</em> خطيرًا، الذي يمنعه Rust completely وقت التجميع. راجع <a href="https://doc.rust-lang.org/nomicon/races.html"><em>Rustonomicon</em></a> للتفاصيل.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_println_output</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> s</span><span> =</span><span style="color: #CE9178;"> &quot;Some test string that fits on a single line&quot;</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> s</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span> (</span><span style="color: #9CDCFE;">i</span><span>,</span><span style="color: #9CDCFE;"> c</span><span>)</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> s</span><span>.</span><span style="color: #DCDCAA;">chars</span><span>().</span><span style="color: #DCDCAA;">enumerate</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> screen_char</span><span> = WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().buffer.chars[BUFFER_HEIGHT -</span><span style="color: #B5CEA8;"> 2</span><span>][</span><span style="color: #9CDCFE;">i</span><span>].</span><span style="color: #DCDCAA;">read</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        assert_eq!</span><span>(</span><span style="color: #4EC9B0;">char</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #9CDCFE;">screen_char</span><span>.ascii_character),</span><span style="color: #9CDCFE;"> c</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>الاختبار يطبع سلسلة نصية إلى VGA buffer ثم يتحقق من الإخراج بالمرور يدويًا على مصفوفة <code>buffer_chars</code>. تحدث race condition لأن timer interrupt handler قد يعمل بين <code>println</code> وقراءة أحرف الشاشة. لاحظ أن هذا ليس <em>data race</em> خطيرًا، الذي يمنعه Rust completely وقت التجميع. راجع <a rel="external" href="https://doc.rust-lang.org/nomicon/races.html"><em>Rustonomicon</em></a> للتفاصيل.</p>
 <p>لحل هذا، نحتاج إلى إبقاء <code>WRITER</code> مقفلة طوال مدة الاختبار، حتى لا يتمكن timer handler من كتابة <code>.</code> إلى الشاشة بينهما. يبدو الاختبار المُصلح كالتالي:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/vga_buffer.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::interrupts;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Some test string that fits on a single line&quot;</span><span>;
-</span><span>    interrupts::without_interrupts(|| {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> writer = </span><span style="color:#b4cea8;">WRITER</span><span>.lock();
-</span><span>        writeln!(writer, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s).expect(</span><span style="color:#d69d85;">&quot;writeln failed&quot;</span><span>);
-</span><span>        </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
-</span><span>            </span><span style="color:#569cd6;">let</span><span> screen_char = writer.buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
-</span><span>            assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
-</span><span>        }
-</span><span>    });
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_println_output</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::interrupts;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> s</span><span> =</span><span style="color: #CE9178;"> &quot;Some test string that fits on a single line&quot;</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">without_interrupts</span><span>(|| {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> writer</span><span> = WRITER.</span><span style="color: #DCDCAA;">lock</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        writeln!</span><span>(</span><span style="color: #9CDCFE;">writer</span><span>,</span><span style="color: #CE9178;"> &quot;</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> s</span><span>).</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;writeln failed&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">        for</span><span> (</span><span style="color: #9CDCFE;">i</span><span>,</span><span style="color: #9CDCFE;"> c</span><span>)</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> s</span><span>.</span><span style="color: #DCDCAA;">chars</span><span>().</span><span style="color: #DCDCAA;">enumerate</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> screen_char</span><span> =</span><span style="color: #9CDCFE;"> writer</span><span>.buffer.chars[BUFFER_HEIGHT -</span><span style="color: #B5CEA8;"> 2</span><span>][</span><span style="color: #9CDCFE;">i</span><span>].</span><span style="color: #DCDCAA;">read</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">            assert_eq!</span><span>(</span><span style="color: #4EC9B0;">char</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #9CDCFE;">screen_char</span><span>.ascii_character),</span><span style="color: #9CDCFE;"> c</span><span>);</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>قمنا بالتغييرات التالية:</p>
 <ul>
-<li>نبقي writer مقفلة طوال الاختبار باستخدام دالة <code>lock()</code> صراحة. بدلاً من <code>println</code>، نستخدم macro <a href="https://doc.rust-lang.org/core/macro.writeln.html"><code>writeln</code></a> الذي يسمح بالطباعة إلى writer مقفل بالفعل.</li>
+<li>نبقي writer مقفلة طوال الاختبار باستخدام دالة <code>lock()</code> صراحة. بدلاً من <code>println</code>، نستخدم macro <a rel="external" href="https://doc.rust-lang.org/core/macro.writeln.html"><code>writeln</code></a> الذي يسمح بالطباعة إلى writer مقفل بالفعل.</li>
 <li>لتجنب deadlock آخر، نعطل المقاطعات طوال مدة الاختبار. وإلا، قد يُقاطع الاختبار بينما writer لا تزال مقفلة.</li>
 <li>بما أن timer interrupt handler قد يعمل قبل الاختبار، نطبع سطرًا جديدًا إضافيًا <code>\n</code> قبل طباعة السلسلة <code>s</code>. بهذه الطريقة، نتجنب فشل الاختبار عندما يكون timer handler قد طبع بالفعل بعض أحرف <code>.</code> إلى السطر الحالي.</li>
 </ul>
@@ -480,205 +464,197 @@
 <h2 id="the-hlt-instruction"><a class="zola-anchor" href="#the-hlt-instruction" aria-label="Anchor link for: the-hlt-instruction">🔗</a>The <code>hlt</code> Instruction</h2>
 <p>حتى الآن، استخدمنا عبارة loop فارغة بسيطة في نهاية دوال <code>_start</code> و <code>panic</code>. هذا يجعل وحدة المعالجة المركزية تدور بلا نهاية، وبالتالي يعمل كما هو متوقع. لكنه أيضًا غير فعال جدًا، لأن وحدة المعالجة المركزية تستمر في العمل بأقصى سرعة حتى لو لم يكن هناك عمل للقيام به. يمكنك رؤية هذه المشكلة في task manager عندما تشغّل نواتك: تحتاج عملية QEMU إلى ما يقارب 100% CPU طوال الوقت.</p>
 <p>ما نريد فعله حقًا هو إيقاف وحدة المعالجة المركزية حتى يصل interrupt التالي. هذا يسمح لوحدة المعالجة المركزية بدخول حالة نوم تستهلك طاقة أقل بكثير. تعليمة [<code>hlt</code>] تفعل بالضبط ذلك. لنستخدم هذه التعليمة لإنشاء loop غير محدود موفر للطاقة:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>hlt_loop() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{
-</span><span>        x86_64::instructions::hlt();
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>دالة <code>instructions::hlt</code> هي فقط <a href="https://github.com/rust-osdev/x86_64/blob/5e8e218381c5205f5777cb50da3ecac5d7e3b1ab/src/instructions/mod.rs#L16-L22">thin wrapper</a> حول تعليمة assembly. إنها آمنة لأنه لا توجد طريقة يمكنها المساس بأمان الذاكرة.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> hlt_loop</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #DCDCAA;">hlt</span><span>();</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>دالة <code>instructions::hlt</code> هي فقط <a rel="external" href="https://github.com/rust-osdev/x86_64/blob/5e8e218381c5205f5777cb50da3ecac5d7e3b1ab/src/instructions/mod.rs#L16-L22">thin wrapper</a> حول تعليمة assembly. إنها آمنة لأنه لا توجد طريقة يمكنها المساس بأمان الذاكرة.</p>
 <p>يمكننا الآن استخدام <code>hlt_loop</code> بدلاً من loops غير المحدودة في دوال <code>_start</code> و <code>panic</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    […]
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();            </span><span style="color:#608b4e;">// new
-</span><span>}
-</span><span>
-</span><span>
-</span><span>#[cfg(not(test))]
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
-</span><span>    blog_os::hlt_loop();            </span><span style="color:#608b4e;">// new
-</span><span>}
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span><span style="color: #6A9955;">            // new</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(not(test))]</span></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> info</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span><span style="color: #6A9955;">            // new</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>لنحدّث <code>lib.rs</code> أيضًا:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#608b4e;">/// Entry point for `cargo test`
-</span><span>#[cfg(test)]
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    init();
-</span><span>    test_main();
-</span><span>    hlt_loop();         </span><span style="color:#608b4e;">// new
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>test_panic_handler(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[failed]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
-</span><span>    exit_qemu(QemuExitCode::Failed);
-</span><span>    hlt_loop();         </span><span style="color:#608b4e;">// new
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Entry point for `cargo test`</span></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    hlt_loop</span><span>();</span><span style="color: #6A9955;">         // new</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[failed]</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Error: {}</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>,</span><span style="color: #9CDCFE;"> info</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Failed</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    hlt_loop</span><span>();</span><span style="color: #6A9955;">         // new</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>عندما نشغّل نواتنا الآن في QEMU، نرى استخدام CPU أقل بكثير.</p>
 <h2 id="keyboard-input"><a class="zola-anchor" href="#keyboard-input" aria-label="Anchor link for: keyboard-input">🔗</a>Keyboard Input</h2>
 <p>الآن بعد أن أصبحنا قادرين على معالجة interrupts من الأجهزة الخارجية، أخيرًا يمكننا إضافة دعم keyboard input. سيسمح لنا هذا بالتفاعل مع نواتنا لأول مرة.</p>
 <aside class="post_aside">
-<p>لاحظ أننا نصف فقط كيفية معالجة <a href="https://en.wikipedia.org/wiki/PS/2_port">PS/2</a> keyboards هنا، وليس USB keyboards. ومع ذلك، يحاكي mainboard USB keyboards كأجهزة PS/2 لدعم البرامج القديمة، لذلك يمكننا تجاهل USB keyboards بأمان حتى يكون لدينا دعم USB في نواتنا.</p>
+<p>لاحظ أننا نصف فقط كيفية معالجة <a rel="external" href="https://en.wikipedia.org/wiki/PS/2_port">PS/2</a> keyboards هنا، وليس USB keyboards. ومع ذلك، يحاكي mainboard USB keyboards كأجهزة PS/2 لدعم البرامج القديمة، لذلك يمكننا تجاهل USB keyboards بأمان حتى يكون لدينا دعم USB في نواتنا.</p>
 </aside>
 <p>مثل hardware timer، keyboard controller مُفعّل افتراضيًا بالفعل. لذلك عندما تضغط على مفتاح، يرسل keyboard controller interrupt إلى PIC، الذي يحوله إلى وحدة المعالجة المركزية. يبحث وحدة المعالجة مركزية عن دالة معالجة في IDT لكن entry المقابل فارغ. لذلك، تحدث double fault.</p>
 <p>لنضيف دالة معالجة لـ keyboard interrupt. إنها مشابهة جدًا لتعريف معالج timer interrupt؛ تستخدم فقط رقم interrupt مختلف:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span>#[derive(Debug, Clone, Copy)]
-</span><span>#[repr(u8)]
-</span><span style="color:#569cd6;">pub enum </span><span>InterruptIndex {
-</span><span>    Timer = </span><span style="color:#b4cea8;">PIC_1_OFFSET</span><span>,
-</span><span>    Keyboard, </span><span style="color:#608b4e;">// new
-</span><span>}
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
-</span><span>        idt.breakpoint.set_handler_fn(breakpoint_handler);
-</span><span>        […]
-</span><span>        </span><span style="color:#608b4e;">// new
-</span><span>        idt[InterruptIndex::Keyboard.as_usize()]
-</span><span>            .set_handler_fn(keyboard_interrupt_handler);
-</span><span>
-</span><span>        idt
-</span><span>    };
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;k&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>)]</span></span>
+<span class="giallo-l"><span>#[repr(</span><span style="color: #4EC9B0;">u8</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> InterruptIndex</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Timer</span><span> = PIC_1_OFFSET,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Keyboard</span><span>,</span><span style="color: #6A9955;"> // new</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> IDT:</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
+<span class="giallo-l"><span>        […]</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // new</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_usize</span><span>()]</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">keyboard_interrupt_handler</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> keyboard_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;k&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>كما نرى من الرسم <a href="https://os.phil-opp.com/ar/hardware-interrupts/#the-8259-pic">أعلاه</a>، يستخدم keyboard السطر 1 من primary PIC. هذا يعني أنه يصل إلى وحدة المعالجة المركزية كـ interrupt 33 (1 + offset 32). نضيف هذا الفهرس كـ variant <code>Keyboard</code> جديدة إلى enum <code>InterruptIndex</code>. لا نحتاج إلى تحديد القيمة صراحة، لأنها تفتراضيًا القيمة السابقة زائد واحد، وهو أيضًا 33. في interrupt handler، نطبع <code>k</code> ونرسل end of interrupt signal إلى interrupt controller.</p>
 <p>الآن نرى أن <code>k</code> تظهر على الشاشة عندما نضغط مفتاحًا. ومع ذلك، هذا يعمل فقط لأول مفتاح نضغطه. حتى لو استمررنا في الضغط على المفاتيح، لا تظهر المزيد من <code>k</code>s على الشاشة. هذا لأن keyboard controller لن يرسل interrupt آخر حتى نقرأ ما يسمى <em>scancode</em> للمفتاح المضغوط.</p>
 <h3 id="reading-the-scancodes"><a class="zola-anchor" href="#reading-the-scancodes" aria-label="Anchor link for: reading-the-scancodes">🔗</a>Reading the Scancodes</h3>
 <p>لاكتشاف <em>أي</em> مفتاح ضُغط، نحتاج إلى الاستعلام من keyboard controller. نفعل ذلك بقراءة data port لـ PS/2 controller، الذي هو <a href="https://os.phil-opp.com/testing/#i-o-ports">I/O port</a> برقم <code>0x60</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, scancode);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>نستخدم نوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> من مكتبة <code>x86_64</code> لقراءة بايت من data port للوحة المفاتيح. هذا البايت يسمى <a href="https://en.wikipedia.org/wiki/Scancode"><em>scancode</em></a> ويمثل ضغط/إطلاق المفتاح. لا نفعل أي شيء بالـ scancode بعد، سوى طباعته على الشاشة:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> keyboard_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">port</span><span>::</span><span style="color: #4EC9B0;">Port</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> port</span><span> =</span><span style="color: #4EC9B0;"> Port</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0x60</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> scancode</span><span>:</span><span style="color: #4EC9B0;"> u8</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #9CDCFE;"> port</span><span>.</span><span style="color: #DCDCAA;">read</span><span>() };</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> scancode</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>نستخدم نوع <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> من مكتبة <code>x86_64</code> لقراءة بايت من data port للوحة المفاتيح. هذا البايت يسمى <a rel="external" href="https://en.wikipedia.org/wiki/Scancode"><em>scancode</em></a> ويمثل ضغط/إطلاق المفتاح. لا نفعل أي شيء بالـ scancode بعد، سوى طباعته على الشاشة:</p>
 <p><img src="https://os.phil-opp.com/ar/hardware-interrupts/qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
 <p>يُظهر الصورة أعلاني أكتب “123” ببطء. نرى أن المفاتيح المجاورة لها scancodes متجاورة وأن الضغط على مفتاح يسبب scancode مختلف عن إطلاقه. لكن كيف نترجم scancodes إلى أفعال المفاتيح الفعلية بالضبط؟</p>
 <h3 id="interpreting-the-scancodes"><a class="zola-anchor" href="#interpreting-the-scancodes" aria-label="Anchor link for: interpreting-the-scancodes">🔗</a>Interpreting the Scancodes</h3>
-<p>هناك ثلاثة معايير مختلفة لتعيين scancodes إلى المفاتيح، ما يسمى <em>scancode sets</em>. الثلاثة جميعها تعود إلى keyboards أجهزة IBM المبكرة: <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a> و <a href="https://en.wikipedia.org/wiki/IBM_3270_PC">IBM 3270 PC</a> و <a href="https://en.wikipedia.org/wiki/IBM_Personal_Computer/AT">IBM AT</a>. لحسن الحظ، لم تستمر أجهزة الكمبيوتر اللاحقة في اتجاه تحديد scancode sets جديدة، بل حاكت المجموعات الموجودة ووسعتها. اليوم، يمكن تكوين معظم keyboards لمحاكاة أي من المجموعات الثلاث.</p>
-<p>افتراضيًا، تحاكي PS/2 keyboards scancode set 1 (“XT”). في هذه المجموعة، البتات السبعة الدنيا من بايت scancode تحدد المفتاح، والبت الأكثر أهمية يحدد ما إذا كان ضغطًا (“0”) أو إطلاقًا (“1”). المفاتيح التي لم تكن موجودة على keyboard IBM XT الأصلي، مثل مفتاح Enter على لوحة الأرقام، تُولّد scancodeين متتاليين: بايت escape <code>0xe0</code> ثم بايت يمثل المفتاح. لقائمة جميع scancodes set 1 ومفاتيحها المقابلة، راجع <a href="https://wiki.osdev.org/Keyboard#Scan_Code_Set_1">OSDev Wiki</a>.</p>
+<p>هناك ثلاثة معايير مختلفة لتعيين scancodes إلى المفاتيح، ما يسمى <em>scancode sets</em>. الثلاثة جميعها تعود إلى keyboards أجهزة IBM المبكرة: <a rel="external" href="https://en.wikipedia.org/wiki/IBM_Personal_Computer_XT">IBM XT</a> و <a rel="external" href="https://en.wikipedia.org/wiki/IBM_3270_PC">IBM 3270 PC</a> و <a rel="external" href="https://en.wikipedia.org/wiki/IBM_Personal_Computer/AT">IBM AT</a>. لحسن الحظ، لم تستمر أجهزة الكمبيوتر اللاحقة في اتجاه تحديد scancode sets جديدة، بل حاكت المجموعات الموجودة ووسعتها. اليوم، يمكن تكوين معظم keyboards لمحاكاة أي من المجموعات الثلاث.</p>
+<p>افتراضيًا، تحاكي PS/2 keyboards scancode set 1 (“XT”). في هذه المجموعة، البتات السبعة الدنيا من بايت scancode تحدد المفتاح، والبت الأكثر أهمية يحدد ما إذا كان ضغطًا (“0”) أو إطلاقًا (“1”). المفاتيح التي لم تكن موجودة على keyboard IBM XT الأصلي، مثل مفتاح Enter على لوحة الأرقام، تُولّد scancodeين متتاليين: بايت escape <code>0xe0</code> ثم بايت يمثل المفتاح. لقائمة جميع scancodes set 1 ومفاتيحها المقابلة، راجع <a rel="external" href="https://wiki.osdev.org/Keyboard#Scan_Code_Set_1">OSDev Wiki</a>.</p>
 <p>لترجمة scancodes إلى المفاتيح، يمكننا استخدام عبارة <code>match</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// new
-</span><span>    </span><span style="color:#569cd6;">let</span><span> key = </span><span style="color:#569cd6;">match</span><span> scancode {
-</span><span>        </span><span style="color:#b5cea8;">0x02 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;1&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x03 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;2&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x04 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;3&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x05 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;4&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x06 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;5&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x07 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;6&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x08 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;7&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x09 </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;8&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x0a </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;9&#39;</span><span>),
-</span><span>        </span><span style="color:#b5cea8;">0x0b </span><span style="color:#569cd6;">=&gt; </span><span>Some(</span><span style="color:#d69d85;">&#39;0&#39;</span><span>),
-</span><span>        </span><span style="color:#569cd6;">_ =&gt; </span><span>None,
-</span><span>    };
-</span><span>    </span><span style="color:#569cd6;">if let </span><span>Some(key) = key {
-</span><span>        print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, key);
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>الكود أعلاه يترجم ضغطات مفاتيح الأرقام 0–9 ويتجاهل جميع المفاتيح الأخرى. يستخدم عبارة <a href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a> لتعيين حرف أو <code>None</code> لكل scancode. ثم يستخدم <a href="https://doc.rust-lang.org/book/ch19-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a> لفتح الـ <code>key</code> الاختياري. باستخدام نفس اسم المتغير <code>key</code> في النمط، نقوم بـ <a href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">shadow</a> للإعلان السابق، وهو نمط شائع لفتح أنواع <code>Option</code> في Rust.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> keyboard_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">port</span><span>::</span><span style="color: #4EC9B0;">Port</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> port</span><span> =</span><span style="color: #4EC9B0;"> Port</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0x60</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> scancode</span><span>:</span><span style="color: #4EC9B0;"> u8</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #9CDCFE;"> port</span><span>.</span><span style="color: #DCDCAA;">read</span><span>() };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // new</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> key</span><span> =</span><span style="color: #C586C0;"> match</span><span style="color: #9CDCFE;"> scancode</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x02</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;1&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x03</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;2&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x04</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;3&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x05</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;4&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x06</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;5&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x07</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;6&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x08</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;7&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x09</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;8&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x0a</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;9&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x0b</span><span> =&gt;</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #CE9178;">&#39;0&#39;</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        _</span><span> =&gt;</span><span style="color: #4EC9B0;"> None</span><span>,</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">key</span><span>) =</span><span style="color: #9CDCFE;"> key</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        print!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> key</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>الكود أعلاه يترجم ضغطات مفاتيح الأرقام 0–9 ويتجاهل جميع المفاتيح الأخرى. يستخدم عبارة <a rel="external" href="https://doc.rust-lang.org/book/ch06-02-match.html">match</a> لتعيين حرف أو <code>None</code> لكل scancode. ثم يستخدم <a rel="external" href="https://doc.rust-lang.org/book/ch19-01-all-the-places-for-patterns.html#conditional-if-let-expressions"><code>if let</code></a> لفتح الـ <code>key</code> الاختياري. باستخدام نفس اسم المتغير <code>key</code> في النمط، نقوم بـ <a rel="external" href="https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html#shadowing">shadow</a> للإعلان السابق، وهو نمط شائع لفتح أنواع <code>Option</code> في Rust.</p>
 <p>الآن يمكننا كتابة أرقام:</p>
 <p><img src="https://os.phil-opp.com/ar/hardware-interrupts/qemu-printing-numbers.gif" alt="QEMU printing numbers to the screen" /></p>
-<p>ترجمة المفاتيح الأخرى تعمل بنفس الطريقة. لحسن الحظ، هناك مكتبة تسمى <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/"><code>pc-keyboard</code></a> لترجمة scancodes من scancode sets 1 و 2، لذلك لا نحتاج إلى تنفيذ هذا بأنفسنا. لاستخدام المكتبة، نضيفها إلى <code>Cargo.toml</code> ونستوردها في <code>lib.rs</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">pc-keyboard </span><span>= </span><span style="color:#d69d85;">&quot;0.7.0&quot;
-</span></code></pre>
+<p>ترجمة المفاتيح الأخرى تعمل بنفس الطريقة. لحسن الحظ، هناك مكتبة تسمى <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/"><code>pc-keyboard</code></a> لترجمة scancodes من scancode sets 1 و 2، لذلك لا نحتاج إلى تنفيذ هذا بأنفسنا. لاستخدام المكتبة، نضيفها إلى <code>Cargo.toml</code> ونستوردها في <code>lib.rs</code>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">pc-keyboard</span><span> =</span><span style="color: #CE9178;"> &quot;0.7.0&quot;</span></span></code></pre>
 <p>الآن يمكننا استخدام هذه المكتبة لإعادة كتابة <code>keyboard_interrupt_handler</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in/src/interrupts.rs
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>keyboard_interrupt_handler(
-</span><span>    _stack_frame: InterruptStackFrame)
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
-</span><span>    </span><span style="color:#569cd6;">use </span><span>spin::Mutex;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">KEYBOARD</span><span>: Mutex&lt;Keyboard&lt;layouts::Us104Key, ScancodeSet1&gt;&gt; =
-</span><span>        Mutex::new(Keyboard::new(
-</span><span>            ScancodeSet1::new(),
-</span><span>            layouts::Us104Key,
-</span><span>            HandleControl::Ignore,
-</span><span>        ));
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> keyboard = </span><span style="color:#b4cea8;">KEYBOARD</span><span>.lock();
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0x60</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> scancode: </span><span style="color:#569cd6;">u8 </span><span>= </span><span style="color:#569cd6;">unsafe </span><span>{ port.read() };
-</span><span>    </span><span style="color:#569cd6;">if let </span><span>Ok(Some(key_event)) = keyboard.add_byte(scancode) {
-</span><span>        </span><span style="color:#569cd6;">if let </span><span>Some(key) = keyboard.process_keyevent(key_event) {
-</span><span>            </span><span style="color:#569cd6;">match</span><span> key {
-</span><span>                DecodedKey::Unicode(character) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, character),
-</span><span>                DecodedKey::RawKey(key) </span><span style="color:#569cd6;">=&gt; </span><span>print!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, key),
-</span><span>            }
-</span><span>        }
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">PICS</span><span>.lock()
-</span><span>            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>نُنشئ object <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> ثابت محمي بـ Mutex. وبما أن الدالتين <code>Keyboard::new</code> و <code>ScancodeSet1::new</code> هما <code>const fn</code>، يمكن تهيئة الـ static المسمى <code>KEYBOARD</code> في وقت الترجمة (compile time)، لذلك لا نحتاج إلى macro <code>lazy_static</code> هنا. نُهيئة <code>Keyboard</code> بـ US keyboard layout و scancode set 1. parameter <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> يسمح بتعيين <code>ctrl+[a-z]</code> إلى Unicode characters <code>U+0001</code> إلى <code>U+001A</code>. لا نريد فعل ذلك، لذلك نستخدم خيار <code>Ignore</code> للتعامل مع <code>ctrl</code> كمفاتيح عادية.</p>
-<p>في كل interrupt، نقفل Mutex، نقرأ scancode من keyboard controller، ونمرره إلى دالة <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a>، التي تترجم scancode إلى <code>Option&lt;KeyEvent&gt;</code>. يحتوي <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> على المفتاح الذي تسبب في الحدث وما إذا كان حدث ضغط أو إطلاق.</p>
-<p>لتفسير هذا key event، نمرره إلى دالة <a href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a>، التي تترجم key event إلى حرف، إذا كان ممكنًا. على سبيل المثال، تترجم حدث ضغط مفتاح <code>A</code> إلى حرف <code>a</code> صغير أو حرف <code>A</code> كبير، بناءً على ما إذا كان مفتاح shift مضغوطًا.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in/src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> keyboard_interrupt_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    _stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>)</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> pc_keyboard</span><span>::{layouts,</span><span style="color: #4EC9B0;"> DecodedKey</span><span>,</span><span style="color: #4EC9B0;"> HandleControl</span><span>,</span><span style="color: #4EC9B0;"> Keyboard</span><span>,</span><span style="color: #4EC9B0;"> ScancodeSet1</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> spin</span><span>::</span><span style="color: #4EC9B0;">Mutex</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">port</span><span>::</span><span style="color: #4EC9B0;">Port</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static</span><span> KEYBOARD:</span><span style="color: #4EC9B0;"> Mutex</span><span>&lt;</span><span style="color: #4EC9B0;">Keyboard</span><span>&lt;</span><span style="color: #9CDCFE;">layouts</span><span>::</span><span style="color: #4EC9B0;">Us104Key</span><span>,</span><span style="color: #4EC9B0;"> ScancodeSet1</span><span>&gt;&gt; =</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Mutex</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #4EC9B0;">Keyboard</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            ScancodeSet1</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(),</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            layouts</span><span>::</span><span style="color: #4EC9B0;">Us104Key</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            HandleControl</span><span>::</span><span style="color: #4EC9B0;">Ignore</span><span>,</span></span>
+<span class="giallo-l"><span>        ));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> keyboard</span><span> = KEYBOARD.</span><span style="color: #DCDCAA;">lock</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> port</span><span> =</span><span style="color: #4EC9B0;"> Port</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0x60</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> scancode</span><span>:</span><span style="color: #4EC9B0;"> u8</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #9CDCFE;"> port</span><span>.</span><span style="color: #DCDCAA;">read</span><span>() };</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Ok</span><span>(</span><span style="color: #4EC9B0;">Some</span><span>(</span><span style="color: #9CDCFE;">key_event</span><span>)) =</span><span style="color: #9CDCFE;"> keyboard</span><span>.</span><span style="color: #DCDCAA;">add_byte</span><span>(</span><span style="color: #9CDCFE;">scancode</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">        if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">key</span><span>) =</span><span style="color: #9CDCFE;"> keyboard</span><span>.</span><span style="color: #DCDCAA;">process_keyevent</span><span>(</span><span style="color: #9CDCFE;">key_event</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">            match</span><span style="color: #9CDCFE;"> key</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">                DecodedKey</span><span>::</span><span style="color: #DCDCAA;">Unicode</span><span>(</span><span style="color: #9CDCFE;">character</span><span>) =&gt;</span><span style="color: #DCDCAA;"> print!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> character</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">                DecodedKey</span><span>::</span><span style="color: #DCDCAA;">RawKey</span><span>(</span><span style="color: #9CDCFE;">key</span><span>) =&gt;</span><span style="color: #DCDCAA;"> print!</span><span>(</span><span style="color: #CE9178;">&quot;{:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> key</span><span>),</span></span>
+<span class="giallo-l"><span>            }</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        PICS.</span><span style="color: #DCDCAA;">lock</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>نُنشئ object <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html"><code>Keyboard</code></a> ثابت محمي بـ Mutex. وبما أن الدالتين <code>Keyboard::new</code> و <code>ScancodeSet1::new</code> هما <code>const fn</code>، يمكن تهيئة الـ static المسمى <code>KEYBOARD</code> في وقت الترجمة (compile time)، لذلك لا نحتاج إلى macro <code>lazy_static</code> هنا. نُهيئة <code>Keyboard</code> بـ US keyboard layout و scancode set 1. parameter <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/enum.HandleControl.html"><code>HandleControl</code></a> يسمح بتعيين <code>ctrl+[a-z]</code> إلى Unicode characters <code>U+0001</code> إلى <code>U+001A</code>. لا نريد فعل ذلك، لذلك نستخدم خيار <code>Ignore</code> للتعامل مع <code>ctrl</code> كمفاتيح عادية.</p>
+<p>في كل interrupt، نقفل Mutex، نقرأ scancode من keyboard controller، ونمرره إلى دالة <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.add_byte"><code>add_byte</code></a>، التي تترجم scancode إلى <code>Option&lt;KeyEvent&gt;</code>. يحتوي <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.KeyEvent.html"><code>KeyEvent</code></a> على المفتاح الذي تسبب في الحدث وما إذا كان حدث ضغط أو إطلاق.</p>
+<p>لتفسير هذا key event، نمرره إلى دالة <a rel="external" href="https://docs.rs/pc-keyboard/0.7.0/pc_keyboard/struct.Keyboard.html#method.process_keyevent"><code>process_keyevent</code></a>، التي تترجم key event إلى حرف، إذا كان ممكنًا. على سبيل المثال، تترجم حدث ضغط مفتاح <code>A</code> إلى حرف <code>a</code> صغير أو حرف <code>A</code> كبير، بناءً على ما إذا كان مفتاح shift مضغوطًا.</p>
 <p>مع interrupt handler المعدّل، يمكننا الآن كتابة نص:</p>
 <p><img src="https://os.phil-opp.com/ar/hardware-interrupts/qemu-typing.gif" alt="Typing “Hello World” in QEMU" /></p>
 <h3 id="configuring-the-keyboard"><a class="zola-anchor" href="#configuring-the-keyboard" aria-label="Anchor link for: configuring-the-keyboard">🔗</a>Configuring the Keyboard</h3>

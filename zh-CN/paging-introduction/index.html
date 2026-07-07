@@ -7,8 +7,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <meta name="description" content="本文主要讲解 内存分页 机制，一种我们将会应用到操作系统里的十分常见的内存模型。同时，也会展开说明为何需要进行内存隔离、分段机制 是如何运作的、虚拟内存 是什么，以及内存分页是如何解决内存碎片问题的，同时也会对x86_64的多级页表布局进行探索。
-">
+    <meta name="description" content="本文主要讲解 内存分页 机制，一种我们将会应用到操作系统里的十分常见的内存模型。同时，也会展开说明为何需要进行内存隔离、分段机制 是如何运作的、虚拟内存 是什么，以及内存分页是如何解决内存碎片问题的，同时也会对x86_64的多级页表布局进行探索。">
     <meta name="author" content="Philipp Oppermann">
 
     
@@ -137,7 +136,7 @@
     <div class="">
     <p>本文主要讲解 <em>内存分页</em> 机制，一种我们将会应用到操作系统里的十分常见的内存模型。同时，也会展开说明为何需要进行内存隔离、<em>分段机制</em> 是如何运作的、<em>虚拟内存</em> 是什么，以及内存分页是如何解决内存碎片问题的，同时也会对x86_64的多级页表布局进行探索。</p>
 <span id="continue-reading"></span>
-<p>这个系列的 blog 在<a href="https://github.com/phil-opp/blog_os">GitHub</a>上开放开发，如果你有任何问题，请在这里开一个 issue 来讨论。当然你也可以在<a href="https://os.phil-opp.com/zh-CN/paging-introduction/#comments">底部</a>留言。你可以在<a href="https://github.com/phil-opp/blog_os/tree/post-08"><code>post-08</code></a>找到这篇文章的完整源码。</p>
+<p>这个系列的 blog 在<a rel="external" href="https://github.com/phil-opp/blog_os">GitHub</a>上开放开发，如果你有任何问题，请在这里开一个 issue 来讨论。当然你也可以在<a href="https://os.phil-opp.com/zh-CN/paging-introduction/#comments">底部</a>留言。你可以在<a rel="external" href="https://github.com/phil-opp/blog_os/tree/post-08"><code>post-08</code></a>找到这篇文章的完整源码。</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -199,12 +198,12 @@
 
 <h2 id="nei-cun-bao-hu"><a class="zola-anchor" href="#nei-cun-bao-hu" aria-label="Anchor link for: nei-cun-bao-hu">🔗</a>内存保护</h2>
 <p>操作系统的主要任务之一就是隔离各个应用程序的执行环境，比如你的浏览器不应对你的文本编辑器造成影响，因此，操作系统会利用硬件级别的功能确保一个进程无法访问另一个进程的内存区域，但具体实现方式因硬件和操作系统实现而异。</p>
-<p>比如一些 ARM Cortex-M 处理器（用于嵌入式系统）搭载了 <a href="https://developer.arm.com/docs/ddi0337/e/memory-protection-unit/about-the-mpu"><em>内存保护单元</em></a> (MPU)，该单元允许你定义少量具有不同读写权限的内存区域。MPU可以确保每一次对内存的访问都需要具备对应的权限，否则就会抛出异常。而操作系统则会在进程切换时，确保当前进程仅能访问自己所持有的内存区域，由此实现内存隔离。</p>
-<p>在x86架构下，硬件层次为内存保护提供了两种不同的途径：<a href="https://en.wikipedia.org/wiki/X86_memory_segmentation">段</a> 和 <a href="https://en.wikipedia.org/wiki/Virtual_memory#Paged_virtual_memory">页</a>。</p>
+<p>比如一些 ARM Cortex-M 处理器（用于嵌入式系统）搭载了 <a rel="external" href="https://developer.arm.com/docs/ddi0337/e/memory-protection-unit/about-the-mpu"><em>内存保护单元</em></a> (MPU)，该单元允许你定义少量具有不同读写权限的内存区域。MPU可以确保每一次对内存的访问都需要具备对应的权限，否则就会抛出异常。而操作系统则会在进程切换时，确保当前进程仅能访问自己所持有的内存区域，由此实现内存隔离。</p>
+<p>在x86架构下，硬件层次为内存保护提供了两种不同的途径：<a rel="external" href="https://en.wikipedia.org/wiki/X86_memory_segmentation">段</a> 和 <a rel="external" href="https://en.wikipedia.org/wiki/Virtual_memory#Paged_virtual_memory">页</a>。</p>
 <h2 id="nei-cun-fen-duan"><a class="zola-anchor" href="#nei-cun-fen-duan" aria-label="Anchor link for: nei-cun-fen-duan">🔗</a>内存分段</h2>
 <p>内存分段技术出现于1978年，初衷是用于扩展可用内存，该技术的最初背景是当时的CPU仅使用16位地址，而可使用的内存也只有64KiB。为了扩展可用内存，用于存储偏移量的段寄存器这个概念应运而生，CPU可以据此访问更多的内存，因此可用内存被成功扩展到了1MiB。</p>
 <p>CPU可根据内存访问方式自动确定段寄存器的定义：对于指令获取操作，使用代码段寄存器 <code>CS</code>；对于栈操作（入栈/出栈），使用栈段寄存器 <code>SS</code>；对于其他指令，则使用数据段寄存器 <code>DS</code> 或额外段寄存器 <code>ES</code>。另外还有两个后来添加的扩展段寄存器 <code>FS</code> 和 <code>GS</code>，可以随意使用。</p>
-<p>在最初版本的内存分段中，段寄存器仅仅是直接包含了偏移量，并不包含任何权限控制，直到 <a href="https://en.wikipedia.org/wiki/X86_memory_segmentation#Protected_mode"><em>保护模式</em></a> 这个概念的出现。当CPU进入此模式后，段描述符会包含一个本地或全局的 <a href="https://en.wikipedia.org/wiki/Global_Descriptor_Table"><em>描述符表</em></a> 索引，它对应的数据包含了偏移量、段的大小和访问权限。通过加载各个进程所属的全局/本地描述符表，可以实现进程仅能访问属于自己的内存区域的效果，操作系统也由此实现了进程隔离。</p>
+<p>在最初版本的内存分段中，段寄存器仅仅是直接包含了偏移量，并不包含任何权限控制，直到 <a rel="external" href="https://en.wikipedia.org/wiki/X86_memory_segmentation#Protected_mode"><em>保护模式</em></a> 这个概念的出现。当CPU进入此模式后，段描述符会包含一个本地或全局的 <a rel="external" href="https://en.wikipedia.org/wiki/Global_Descriptor_Table"><em>描述符表</em></a> 索引，它对应的数据包含了偏移量、段的大小和访问权限。通过加载各个进程所属的全局/本地描述符表，可以实现进程仅能访问属于自己的内存区域的效果，操作系统也由此实现了进程隔离。</p>
 <p>针对在判断权限前如何更正内存地址这个问题，内存分段使用了一个如今已经高度普及的技术：<em>虚拟内存</em>。</p>
 <h3 id="xu-ni-nei-cun"><a class="zola-anchor" href="#xu-ni-nei-cun" aria-label="Anchor link for: xu-ni-nei-cun">🔗</a>虚拟内存</h3>
 <p>所谓虚拟内存，就是将物理存储器地址抽象为一段完全独立的内存区域，在直接访问物理存储器之前，加入了一个地址转换的步骤。对于内存分页机制而言，地址转换就是在虚拟地址的基础上加入偏移量，如在偏移量为 <code>0x1111000</code> 的段中，虚拟地址 <code>0x1234000</code> 的对应的物理内存地址是 <code>0x2345000</code>。</p>
@@ -255,8 +254,8 @@
 <p>每一级的页表索引号都可以通过虚拟地址推导出来：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/paging-introduction/x86_64-table-indices-from-address.svg" alt="Bits 0–12 are the page offset, bits 12–21 the level 1 index, bits 21–30 the level 2 index, bits 30–39 the level 3 index, and bits 39–48 the level 4 index" /></p>
 <p>我们可以看到，每个表索引号占据 9 个比特，这当然是有道理的，每个表都有 2^9 = 512 个条目，低12位用来表示内存页的偏移量（2^12 bytes = 4KiB，而上文提到页大小为4KiB）。第 48-64 位毫无用处，这也就意味着 x86_64 并非真正的 64 位，因为它实际上支持 48 位地址。</p>
-<p>尽管48-64位毫无用处，但依然不被允许随意赋值，而是必须将其设置为与47位相同的值以保证地址唯一性，由此留出未来对此进行扩展的可能性，如实现5级页表。该技术被称为 <em>符号扩展</em>，理由是它与 <a href="https://en.wikipedia.org/wiki/Two&#x27;s_complement#Sign_extension">二进制补码</a> 机制真的太相似了。当地址不符合该机制定义的规则时，CPU会抛出异常。</p>
-<p>值得注意的是，英特尔最近发布了一款代号是冰湖的CPU，它的新功能之一就是可选支持能够将虚拟地址从48位扩展到57位的 <a href="https://en.wikipedia.org/wiki/Intel_5-level_paging">5级页表</a>。但是针对一款特定的CPU做优化在现阶段并没有多少意义，所以本文仅会涉及标准的4级页表。</p>
+<p>尽管48-64位毫无用处，但依然不被允许随意赋值，而是必须将其设置为与47位相同的值以保证地址唯一性，由此留出未来对此进行扩展的可能性，如实现5级页表。该技术被称为 <em>符号扩展</em>，理由是它与 <a rel="external" href="https://en.wikipedia.org/wiki/Two&#x27;s_complement#Sign_extension">二进制补码</a> 机制真的太相似了。当地址不符合该机制定义的规则时，CPU会抛出异常。</p>
+<p>值得注意的是，英特尔最近发布了一款代号是冰湖的CPU，它的新功能之一就是可选支持能够将虚拟地址从48位扩展到57位的 <a rel="external" href="https://en.wikipedia.org/wiki/Intel_5-level_paging">5级页表</a>。但是针对一款特定的CPU做优化在现阶段并没有多少意义，所以本文仅会涉及标准的4级页表。</p>
 <h3 id="di-zhi-zhuan-huan-fan-li"><a class="zola-anchor" href="#di-zhi-zhuan-huan-fan-li" aria-label="Anchor link for: di-zhi-zhuan-huan-fan-li">🔗</a>地址转换范例</h3>
 <p>请看下图，这就是一个典型的地址转换过程的范例：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/paging-introduction/x86_64-page-table-translation.svg" alt="An example 4-level page hierarchy with each page table shown in physical memory" /></p>
@@ -283,11 +282,10 @@
 </ul>
 <h3 id="ye-biao-ge-shi"><a class="zola-anchor" href="#ye-biao-ge-shi" aria-label="Anchor link for: ye-biao-ge-shi">🔗</a>页表格式</h3>
 <p>在 x86_64 平台下，页表是一个具有512个条目的数组，于Rust而言就是这样：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[repr(align(4096))]
-</span><span style="color:#569cd6;">pub struct </span><span>PageTable {
-</span><span>    entries: [PageTableEntry; 512],
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#[repr(align(4096))]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> PageTable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    entries</span><span>: [</span><span style="color: #4EC9B0;">PageTableEntry</span><span>;</span><span style="color: #B5CEA8;"> 512</span><span>],</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p><code>repr</code> 属性定义了内存页的大小，这里将其设定为了4KiB，该设置确保了页表总是能填满一整个内存页，并允许编译器进行一些优化，使其存储方式更加紧凑。</p>
 <p>每个页表条目长度都是8字节（64比特），其内部结构如下：</p>
 <table><thead><tr><th>Bit(s)</th><th>名字</th><th>含义</th></tr></thead><tbody>
@@ -314,14 +312,14 @@
 <li><code>writable</code> 和 <code>no execute</code> 标志位分别控制该页是否可写，以及是否包含可执行指令。</li>
 <li><code>accessed</code> 和 <code>dirty</code> 标志位由CPU在读写该页时自动设置，该状态信息可用于辅助操作系统的内存控制，如判断哪些页可以换出，以及换出到硬盘后页里的内容是否已被修改。</li>
 <li><code>write through caching</code> 和 <code>disable cache</code> 标志位可以单独控制每一个页对应的缓存。</li>
-<li><code>user accessible</code> 标志位决定了页中是否包含用户态的代码，否则它仅当CPU处于核心态时可访问。该特性可用于在用户态程序运行时保持内核代码映射以加速<a href="https://en.wikipedia.org/wiki/System_call">系统调用</a>。然而，<a href="https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)">Spectre</a> 漏洞会允许用户态程序读取到此类页的数据。</li>
+<li><code>user accessible</code> 标志位决定了页中是否包含用户态的代码，否则它仅当CPU处于核心态时可访问。该特性可用于在用户态程序运行时保持内核代码映射以加速<a rel="external" href="https://en.wikipedia.org/wiki/System_call">系统调用</a>。然而，<a rel="external" href="https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)">Spectre</a> 漏洞会允许用户态程序读取到此类页的数据。</li>
 <li><code>global</code> 标志位决定了该页是否会在所有地址空间都存在，即使切换地址空间，也不会从地址转换缓存（参见下文中关于TLB的章节）中被移除。一般和 <code>user accessible</code> 标志位共同使用，在所有地址空间映射内核代码。</li>
 <li><code>huge page</code> 标志位允许2级页表或3级页表直接指向页帧来分配一块更大的内存空间，该标志位被启用后，页大小会增加512倍。就结果而言，对于2级页表的条目，其会直接指向一个 2MiB = 512 * 4KiB 大小的大型页帧，而对于3级页表的条目，就会直接指向一个 1GiB = 512 * 2MiB 大小的巨型页帧。通常而言，这个功能会用于节省地址转换缓存的空间，以及降低逐层查找页表的耗时。</li>
 </ul>
-<p><code>x86_64</code> crate 为我们提供了 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTable.html">page tables</a> 的结构封装，以及其内部条目 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html">entries</a>，所以我们无需自己实现具体的结构。</p>
+<p><code>x86_64</code> crate 为我们提供了 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTable.html">page tables</a> 的结构封装，以及其内部条目 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html">entries</a>，所以我们无需自己实现具体的结构。</p>
 <h3 id="di-zhi-zhuan-huan-hou-bei-huan-chong-qu-tlb"><a class="zola-anchor" href="#di-zhi-zhuan-huan-hou-bei-huan-chong-qu-tlb" aria-label="Anchor link for: di-zhi-zhuan-huan-hou-bei-huan-chong-qu-tlb">🔗</a>地址转换后备缓冲区（TLB）</h3>
 <p>显而易见，4级页表使地址转换过程变得有点慢，每次转换都需要进行4次内存访问。为了改善这个问题，x86_64平台将最后几次转换结果放在所谓的 <em>地址转换后备缓冲区</em>（TLB）中，这样对同样地址的连续重复转换就可以直接返回缓存中存储的结果。</p>
-<p>不同于CPU缓存，TLB并非是完全对外透明的，它在页表变化时并不会自动更新或删除被缓存的结果。这也就是说，内核需要在页表发生变化时，自己来处理TLB的更新。针对这个需要，CPU也提供了一个用于从TLB删除特定页的缓存的指令 <a href="https://www.felixcloutier.com/x86/INVLPG.html"><code>invlpg</code></a> （“invalidate page”），调用该指令之后，下次访问该页就会重新生成缓存。不过还有一个更彻底的办法，通过手动写入 <code>CR3</code> 寄存器可以制造出模拟地址空间切换的效果，TLB也会被完全刷新。<code>x86_64</code> crate 中的 <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/tlb/index.html"><code>tlb</code> module</a> 提供了上面的两种手段，并封装了对应的函数。</p>
+<p>不同于CPU缓存，TLB并非是完全对外透明的，它在页表变化时并不会自动更新或删除被缓存的结果。这也就是说，内核需要在页表发生变化时，自己来处理TLB的更新。针对这个需要，CPU也提供了一个用于从TLB删除特定页的缓存的指令 <a rel="external" href="https://www.felixcloutier.com/x86/INVLPG.html"><code>invlpg</code></a> （“invalidate page”），调用该指令之后，下次访问该页就会重新生成缓存。不过还有一个更彻底的办法，通过手动写入 <code>CR3</code> 寄存器可以制造出模拟地址空间切换的效果，TLB也会被完全刷新。<code>x86_64</code> crate 中的 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/tlb/index.html"><code>tlb</code> module</a> 提供了上面的两种手段，并封装了对应的函数。</p>
 <p>请注意，在修改页表之后，同步修改TLB是十分十分重要的事情，不然CPU可能会返回一个错误的物理地址，因为这种原因造成的bug是非常难以追踪和调试的。</p>
 <h2 id="ju-ti-shi-xian"><a class="zola-anchor" href="#ju-ti-shi-xian" aria-label="Anchor link for: ju-ti-shi-xian">🔗</a>具体实现</h2>
 <p>有件事我们还没有提过：<strong>我们的内核已经是在页上运行的</strong>。在前文 <a href="https://os.phil-opp.com/minimal-rust-kernel/#creating-a-bootimage">“最小内核”</a> 中，我们添加的bootloader已经搭建了一个4级页表结构，并将内核中使用的每个页都映射到了物理页帧上，其原因就是，在64位的 x86_64 平台下分页是被强制使用的。</p>
@@ -329,100 +327,95 @@
 <p>使用分页技术后，我们的内核在某种意义上已经十分安全了，因为越界的内存访问会导致 page fault 异常而不是访问到一个随机物理地址。bootloader已经为每一个页都设置了正确的权限，比如仅代码页具有执行权限、仅数据页具有写权限。</p>
 <h3 id="page-faults"><a class="zola-anchor" href="#page-faults" aria-label="Anchor link for: page-faults">🔗</a>Page Faults</h3>
 <p>那么我们来通过内存越界访问手动触发一次 page fault，首先我们先写一个错误处理函数并注册到IDT中，这样我们就可以正常接收到这个异常，而非 <a href="https://os.phil-opp.com/double-fault-exceptions/">double fault</a> 了：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts.rs
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: InterruptDescriptorTable = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = InterruptDescriptorTable::new();
-</span><span>
-</span><span>        […]
-</span><span>
-</span><span>        idt.page_fault.set_handler_fn(page_fault_handler); </span><span style="color:#608b4e;">// new
-</span><span>
-</span><span>        idt
-</span><span>    };
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::structures::idt::PageFaultErrorCode;
-</span><span style="color:#569cd6;">use crate</span><span>::hlt_loop;
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;x86-interrupt&quot; </span><span style="color:#569cd6;">fn </span><span>page_fault_handler(
-</span><span>    stack_frame: InterruptStackFrame,
-</span><span>    error_code: PageFaultErrorCode,
-</span><span>) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr2;
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: PAGE FAULT&quot;</span><span>);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Accessed Address: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, Cr2::read());
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Error Code: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, error_code);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:#?}</span><span style="color:#d69d85;">&quot;</span><span>, stack_frame);
-</span><span>    hlt_loop();
-</span><span>}
-</span></code></pre>
-<p><a href="https://en.wikipedia.org/wiki/Control_register#CR2"><code>CR2</code></a> 寄存器会在 page fault 发生时，被CPU自动写入导致异常的虚拟地址，我们可以用 <code>x86_64</code> crate 提供的 <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr2.html#method.read"><code>Cr2::read</code></a> 函数来读取并打印该寄存器。<a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html"><code>PageFaultErrorCode</code></a> 类型为我们提供了内存访问型异常的具体信息，比如究竟是因为读取还是写入操作，我们同样将其打印出来。并且不要忘记，在显式结束异常处理前，程序是不会恢复运行的，所以要在最后调用 <a href="https://os.phil-opp.com/hardware-interrupts/#the-hlt-instruction"><code>hlt_loop</code></a> 函数。</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> IDT:</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>        […]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.page_fault.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">page_fault_handler</span><span>);</span><span style="color: #6A9955;"> // new</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">idt</span><span>::</span><span style="color: #4EC9B0;">PageFaultErrorCode</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use crate</span><span>::hlt_loop;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> page_fault_handler</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    stack_frame</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    error_code</span><span>:</span><span style="color: #4EC9B0;"> PageFaultErrorCode</span><span>,</span></span>
+<span class="giallo-l"><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">registers</span><span>::</span><span style="color: #4EC9B0;">control</span><span>::</span><span style="color: #4EC9B0;">Cr2</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;EXCEPTION: PAGE FAULT&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Accessed Address: {:?}&quot;</span><span>,</span><span style="color: #4EC9B0;"> Cr2</span><span>::</span><span style="color: #DCDCAA;">read</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Error Code: {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> error_code</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;{:#?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> stack_frame</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><a rel="external" href="https://en.wikipedia.org/wiki/Control_register#CR2"><code>CR2</code></a> 寄存器会在 page fault 发生时，被CPU自动写入导致异常的虚拟地址，我们可以用 <code>x86_64</code> crate 提供的 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr2.html#method.read"><code>Cr2::read</code></a> 函数来读取并打印该寄存器。<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html"><code>PageFaultErrorCode</code></a> 类型为我们提供了内存访问型异常的具体信息，比如究竟是因为读取还是写入操作，我们同样将其打印出来。并且不要忘记，在显式结束异常处理前，程序是不会恢复运行的，所以要在最后调用 <a href="https://os.phil-opp.com/hardware-interrupts/#the-hlt-instruction"><code>hlt_loop</code></a> 函数。</p>
 <p>那么可以开始触发内存越界访问了：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
-</span><span>
-</span><span>    blog_os::init();
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// new
-</span><span>    </span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u8</span><span>;
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ *ptr = </span><span style="color:#b5cea8;">42</span><span>; }
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// as before
-</span><span>    #[cfg(test)]
-</span><span>    test_main();
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Hello World{}&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // new</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> ptr</span><span> =</span><span style="color: #B5CEA8;"> 0xdeadbeaf</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> { *</span><span style="color: #9CDCFE;">ptr</span><span> =</span><span style="color: #B5CEA8;"> 42</span><span>; }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // as before</span></span>
+<span class="giallo-l"><span>    #[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>启动执行后，我们可以看到，page fault 的处理函数被触发了：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/paging-introduction/qemu-page-fault.png" alt="EXCEPTION: Page Fault, Accessed Address: VirtAddr(0xdeadbeaf), Error Code: CAUSED_BY_WRITE, InterruptStackFrame: {…}" /></p>
-<p><code>CR2</code> 确实保存了导致异常的虚拟地址 <code>0xdeadbeaf</code>，而错误码 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> 也说明了导致异常的操作是写入。甚至于可以通过 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html">未设置的比特位</a> 看出更多的信息，例如 <code>PROTECTION_VIOLATION</code> 未被设置说明目标页根本就不存在。</p>
+<p><code>CR2</code> 确实保存了导致异常的虚拟地址 <code>0xdeadbeaf</code>，而错误码 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> 也说明了导致异常的操作是写入。甚至于可以通过 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html">未设置的比特位</a> 看出更多的信息，例如 <code>PROTECTION_VIOLATION</code> 未被设置说明目标页根本就不存在。</p>
 <p>并且我们可以看到当前指令指针是 <code>0x2031b2</code>，根据上文的知识，我们知道它应该属于一个代码页。而代码页被bootloader设定为只读权限，所以读取是正常的，但写入就会触发 page fault 异常。比如你可以试着将上面代码中的 <code>0xdeadbeaf</code> 换成 <code>0x2031b2</code>：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// Note: The actual address might be different for you. Use the address that
-</span><span style="color:#608b4e;">// your page fault handler reports.
-</span><span style="color:#569cd6;">let</span><span> ptr = </span><span style="color:#b5cea8;">0x2031b2 </span><span style="color:#569cd6;">as *mut u8</span><span>;
-</span><span>
-</span><span style="color:#608b4e;">// read from a code page
-</span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">let</span><span> x = *ptr; }
-</span><span>println!(</span><span style="color:#d69d85;">&quot;read worked&quot;</span><span>);
-</span><span>
-</span><span style="color:#608b4e;">// write to a code page
-</span><span style="color:#569cd6;">unsafe </span><span>{ *ptr = </span><span style="color:#b5cea8;">42</span><span>; }
-</span><span>println!(</span><span style="color:#d69d85;">&quot;write worked&quot;</span><span>);
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// Note: The actual address might be different for you. Use the address that</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">// your page fault handler reports.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> ptr</span><span> =</span><span style="color: #B5CEA8;"> 0x2031b2</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// read from a code page</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe</span><span> {</span><span style="color: #569CD6;"> let</span><span style="color: #9CDCFE;"> x</span><span> = *</span><span style="color: #9CDCFE;">ptr</span><span>; }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;read worked&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// write to a code page</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe</span><span> { *</span><span style="color: #9CDCFE;">ptr</span><span> =</span><span style="color: #B5CEA8;"> 42</span><span>; }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;write worked&quot;</span><span>);</span></span></code></pre>
 <p>执行后，我们可以看到读取操作成功了，但写入操作抛出了 page fault 异常：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/paging-introduction/qemu-page-fault-protection.png" alt="QEMU with output: “read worked, EXCEPTION: Page Fault, Accessed Address: VirtAddr(0x2031b2), Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE, InterruptStackFrame: {…}”" /></p>
-<p>我们可以看到 <em>“read worked”</em> 这条日志，说明读操作没有出问题，而 <em>“write worked”</em> 这条日志则没有被打印，起而代之的是一个异常日志。这一次 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.PROTECTION_VIOLATION"><code>PROTECTION_VIOLATION</code></a> 标志位的 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> 比特位被设置，说明异常正是被非法写入操作引发的，因为我们之前为该页设置了只读权限。</p>
+<p>我们可以看到 <em>“read worked”</em> 这条日志，说明读操作没有出问题，而 <em>“write worked”</em> 这条日志则没有被打印，起而代之的是一个异常日志。这一次 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.PROTECTION_VIOLATION"><code>PROTECTION_VIOLATION</code></a> 标志位的 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.PageFaultErrorCode.html#associatedconstant.CAUSED_BY_WRITE"><code>CAUSED_BY_WRITE</code></a> 比特位被设置，说明异常正是被非法写入操作引发的，因为我们之前为该页设置了只读权限。</p>
 <h3 id="fang-wen-ye-biao"><a class="zola-anchor" href="#fang-wen-ye-biao" aria-label="Anchor link for: fang-wen-ye-biao">🔗</a>访问页表</h3>
 <p>那么我们来看看内核中页表的存储方式：</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
-</span><span>
-</span><span>    blog_os::init();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr3;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let </span><span>(level_4_page_table, </span><span style="color:#569cd6;">_</span><span>) = Cr3::read();
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Level 4 page table at: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, level_4_page_table.start_address());
-</span><span>
-</span><span>    […] </span><span style="color:#608b4e;">// test_main(), println(…), and hlt_loop()
-</span><span>}
-</span></code></pre>
-<p><code>x86_64</code> crate 中的 <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3.html#method.read"><code>Cr3::read</code></a> 函数可以返回 <code>CR3</code> 寄存器中的当前使用的4级页表，它返回的是 <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/frame/struct.PhysFrame.html"><code>PhysFrame</code></a> 和 <a href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3Flags.html"><code>Cr3Flags</code></a> 两个类型组成的元组结构。不过此时我们只关心页帧信息，所以第二个元素暂且不管。</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Hello World{}&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">registers</span><span>::</span><span style="color: #4EC9B0;">control</span><span>::</span><span style="color: #4EC9B0;">Cr3</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span> (</span><span style="color: #9CDCFE;">level_4_page_table</span><span>,</span><span style="color: #9CDCFE;"> _</span><span>) =</span><span style="color: #4EC9B0;"> Cr3</span><span>::</span><span style="color: #DCDCAA;">read</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Level 4 page table at: {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> level_4_page_table</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    […]</span><span style="color: #6A9955;"> // test_main(), println(…), and hlt_loop()</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><code>x86_64</code> crate 中的 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3.html#method.read"><code>Cr3::read</code></a> 函数可以返回 <code>CR3</code> 寄存器中的当前使用的4级页表，它返回的是 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/frame/struct.PhysFrame.html"><code>PhysFrame</code></a> 和 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/registers/control/struct.Cr3Flags.html"><code>Cr3Flags</code></a> 两个类型组成的元组结构。不过此时我们只关心页帧信息，所以第二个元素暂且不管。</p>
 <p>然后我们会看到如下输出：</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>Level 4 page table at: PhysAddr(0x1000)
-</span></code></pre>
-<p>所以当前的4级页表存储在 <em>物理地址</em> <code>0x1000</code> 处，而且地址的外层数据结构是 <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.PhysAddr.html"><code>PhysAddr</code></a>，那么问题来了：我们如何在内核中直接访问这个页表？</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>Level 4 page table at: PhysAddr(0x1000)</span></span></code></pre>
+<p>所以当前的4级页表存储在 <em>物理地址</em> <code>0x1000</code> 处，而且地址的外层数据结构是 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.PhysAddr.html"><code>PhysAddr</code></a>，那么问题来了：我们如何在内核中直接访问这个页表？</p>
 <p>当分页功能启用时，直接访问物理内存是被禁止的，否则程序就可以很轻易的侵入其他程序的内存，所以唯一的途径就是通过某些手段构建一个指向 <code>0x1000</code> 的虚拟页。那么问题就变成了如何手动创建页映射，但其实该功能在很多地方都会用到，例如内核在创建新的线程时需要额外创建栈，同样需要用到该功能。</p>
 <p>我们将在下一篇文章中对此问题进行展开。</p>
 <h2 id="xiao-jie"><a class="zola-anchor" href="#xiao-jie" aria-label="Anchor link for: xiao-jie">🔗</a>小结</h2>

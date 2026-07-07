@@ -145,7 +145,7 @@
     <div class="">
     <p>Esta publicación explora las pruebas unitarias e integración en ejecutables <code>no_std</code>. Utilizaremos el soporte de Rust para marcos de prueba personalizados para ejecutar funciones de prueba dentro de nuestro núcleo. Para reportar los resultados fuera de QEMU, utilizaremos diferentes características de QEMU y la herramienta <code>bootimage</code>.</p>
 <span id="continue-reading"></span>
-<p>Este blog se desarrolla de manera abierta en <a href="https://github.com/phil-opp/blog_os">GitHub</a>. Si tienes algún problema o pregunta, por favor abre un problema allí. También puedes dejar comentarios <a href="https://os.phil-opp.com/es/testing/#comments">en la parte inferior</a>. El código fuente completo de esta publicación se puede encontrar en la rama <a href="https://github.com/phil-opp/blog_os/tree/post-04"><code>post-04</code></a>.</p>
+<p>Este blog se desarrolla de manera abierta en <a rel="external" href="https://github.com/phil-opp/blog_os">GitHub</a>. Si tienes algún problema o pregunta, por favor abre un problema allí. También puedes dejar comentarios <a href="https://os.phil-opp.com/es/testing/#comments">en la parte inferior</a>. El código fuente completo de esta publicación se puede encontrar en la rama <a rel="external" href="https://github.com/phil-opp/blog_os/tree/post-04"><code>post-04</code></a>.</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -221,295 +221,274 @@
 <h2 id="requisitos"><a class="zola-anchor" href="#requisitos" aria-label="Anchor link for: requisitos">🔗</a>Requisitos</h2>
 <p>Esta publicación reemplaza las publicaciones (<em>Pruebas Unitarias</em>) y (<em>Pruebas de Integración</em>) (ahora obsoletas). Se asume que has seguido la publicación (<em>Un Núcleo Rust Mínimo</em>) después del 2019-04-27. Principalmente, requiere que tengas un archivo <code>.cargo/config.toml</code> que <a href="https://os.phil-opp.com/minimal-rust-kernel/#set-a-default-target">establezca un objetivo predeterminado</a> y <a href="https://os.phil-opp.com/minimal-rust-kernel/#using-cargo-run">defina un ejecutable de runner</a>.</p>
 <h2 id="pruebas-en-rust"><a class="zola-anchor" href="#pruebas-en-rust" aria-label="Anchor link for: pruebas-en-rust">🔗</a>Pruebas en Rust</h2>
-<p>Rust tiene un <a href="https://doc.rust-lang.org/book/ch11-00-testing.html">marco de prueba incorporado</a> que es capaz de ejecutar pruebas unitarias sin la necesidad de configurar nada. Solo crea una función que verifique algunos resultados mediante afirmaciones y añade el atributo <code>#[test]</code> al encabezado de la función. Luego, <code>cargo test</code> encontrará y ejecutará automáticamente todas las funciones de prueba de tu crate.</p>
-<p>Desafortunadamente, es un poco más complicado para aplicaciones <code>no_std</code> como nuestro núcleo. El problema es que el marco de prueba de Rust utiliza implícitamente la biblioteca incorporada <a href="https://doc.rust-lang.org/test/index.html"><code>test</code></a>, que depende de la biblioteca estándar. Esto significa que no podemos usar el marco de prueba predeterminado para nuestro núcleo <code>#[no_std]</code>.</p>
+<p>Rust tiene un <a rel="external" href="https://doc.rust-lang.org/book/ch11-00-testing.html">marco de prueba incorporado</a> que es capaz de ejecutar pruebas unitarias sin la necesidad de configurar nada. Solo crea una función que verifique algunos resultados mediante afirmaciones y añade el atributo <code>#[test]</code> al encabezado de la función. Luego, <code>cargo test</code> encontrará y ejecutará automáticamente todas las funciones de prueba de tu crate.</p>
+<p>Desafortunadamente, es un poco más complicado para aplicaciones <code>no_std</code> como nuestro núcleo. El problema es que el marco de prueba de Rust utiliza implícitamente la biblioteca incorporada <a rel="external" href="https://doc.rust-lang.org/test/index.html"><code>test</code></a>, que depende de la biblioteca estándar. Esto significa que no podemos usar el marco de prueba predeterminado para nuestro núcleo <code>#[no_std]</code>.</p>
 <p>Podemos ver esto cuando intentamos ejecutar <code>cargo test</code> en nuestro proyecto:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
-</span><span>   Compiling blog_os v0.1.0 (/…/blog_os)
-</span><span>error[E0463]: can&#39;t find crate for `test`
-</span></code></pre>
-<p>Dado que el crate <code>test</code> depende de la biblioteca estándar, no está disponible para nuestro objetivo de metal desnudo. Si bien portar el crate <code>test</code> a un contexto <code>#[no_std]</code> <a href="https://github.com/japaric/utest">es posible</a>, es altamente inestable y requiere algunos hacks, como redefinir el macro <code>panic</code>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test</span></span>
+<span class="giallo-l"><span>   Compiling blog_os v0.1.0 (/…/blog_os)</span></span>
+<span class="giallo-l"><span>error[E0463]: can&#39;t find crate for `test`</span></span></code></pre>
+<p>Dado que el crate <code>test</code> depende de la biblioteca estándar, no está disponible para nuestro objetivo de metal desnudo. Si bien portar el crate <code>test</code> a un contexto <code>#[no_std]</code> <a rel="external" href="https://github.com/japaric/utest">es posible</a>, es altamente inestable y requiere algunos hacks, como redefinir el macro <code>panic</code>.</p>
 <h3 id="marcos-de-prueba-personalizados"><a class="zola-anchor" href="#marcos-de-prueba-personalizados" aria-label="Anchor link for: marcos-de-prueba-personalizados">🔗</a>Marcos de Prueba Personalizados</h3>
-<p>Afortunadamente, Rust soporta reemplazar el marco de prueba predeterminado a través de la característica inestable <a href="https://doc.rust-lang.org/unstable-book/language-features/custom-test-frameworks.html"><code>custom_test_frameworks</code></a>. Esta característica no requiere bibliotecas externas y, por lo tanto, también funciona en entornos <code>#[no_std]</code>. Funciona recopilando todas las funciones anotadas con un atributo <code>#[test_case]</code> y luego invocando una función runner especificada por el usuario con la lista de pruebas como argumento. Así, proporciona a la implementación un control máximo sobre el proceso de prueba.</p>
-<p>La desventaja en comparación con el marco de prueba predeterminado es que muchas características avanzadas, como las pruebas <a href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html#checking-for-panics-with-should_panic"><code>should_panic</code></a>, no están disponibles. En su lugar, depende de la implementación proporcionar tales características sí es necesario. Esto es ideal para nosotros ya que tenemos un entorno de ejecución muy especial en el que las implementaciones predeterminadas de tales características avanzadas probablemente no funcionarían de todos modos. Por ejemplo, el atributo <code>#[should_panic]</code> depende de desenrollar la pila para capturar los pánicos, lo cual hemos deshabilitado para nuestro núcleo.</p>
+<p>Afortunadamente, Rust soporta reemplazar el marco de prueba predeterminado a través de la característica inestable <a rel="external" href="https://doc.rust-lang.org/unstable-book/language-features/custom-test-frameworks.html"><code>custom_test_frameworks</code></a>. Esta característica no requiere bibliotecas externas y, por lo tanto, también funciona en entornos <code>#[no_std]</code>. Funciona recopilando todas las funciones anotadas con un atributo <code>#[test_case]</code> y luego invocando una función runner especificada por el usuario con la lista de pruebas como argumento. Así, proporciona a la implementación un control máximo sobre el proceso de prueba.</p>
+<p>La desventaja en comparación con el marco de prueba predeterminado es que muchas características avanzadas, como las pruebas <a rel="external" href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html#checking-for-panics-with-should_panic"><code>should_panic</code></a>, no están disponibles. En su lugar, depende de la implementación proporcionar tales características sí es necesario. Esto es ideal para nosotros ya que tenemos un entorno de ejecución muy especial en el que las implementaciones predeterminadas de tales características avanzadas probablemente no funcionarían de todos modos. Por ejemplo, el atributo <code>#[should_panic]</code> depende de desenrollar la pila para capturar los pánicos, lo cual hemos deshabilitado para nuestro núcleo.</p>
 <p>Para implementar un marco de prueba personalizado para nuestro núcleo, añadimos lo siguiente a nuestro <code>main.rs</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span>#![feature(custom_test_frameworks)]
-</span><span>#![test_runner(crate::test_runner)]
-</span><span>
-</span><span>#[cfg(test)]
-</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Ejecutando </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> pruebas&quot;</span><span>, tests.len());
-</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
-</span><span>        test();
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>Nuestro runner solo imprime un breve mensaje de depuración y luego llama a cada función de prueba en la lista. El tipo de argumento <code>&amp;[&amp;dyn Fn()]</code> es un <a href="https://doc.rust-lang.org/std/primitive.slice.html"><em>slice</em></a> de referencias de <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/trait-objects.html"><em>trait object</em></a> del trait <a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a>. Es básicamente una lista de referencias a tipos que pueden ser llamados como una función. Dado que la función es inútil para ejecuciones que no son de prueba, usamos el atributo <code>#[cfg(test)]</code> para incluirlo solo para pruebas.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![feature(custom_test_frameworks)]</span></span>
+<span class="giallo-l"><span>#![test_runner(</span><span style="color: #569CD6;">crate</span><span>::test_runner)]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #DCDCAA;"> Fn</span><span>()]) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Ejecutando {} pruebas&quot;</span><span>,</span><span style="color: #9CDCFE;"> tests</span><span>.</span><span style="color: #DCDCAA;">len</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> test</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> tests</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        test</span><span>();</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Nuestro runner solo imprime un breve mensaje de depuración y luego llama a cada función de prueba en la lista. El tipo de argumento <code>&amp;[&amp;dyn Fn()]</code> es un <a rel="external" href="https://doc.rust-lang.org/std/primitive.slice.html"><em>slice</em></a> de referencias de <a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/trait-objects.html"><em>trait object</em></a> del trait <a rel="external" href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a>. Es básicamente una lista de referencias a tipos que pueden ser llamados como una función. Dado que la función es inútil para ejecuciones que no son de prueba, usamos el atributo <code>#[cfg(test)]</code> para incluirlo solo para pruebas.</p>
 <p>Cuando ejecutamos <code>cargo test</code> ahora, vemos que ahora tiene éxito (si no lo tiene, consulta la nota a continuación). Sin embargo, todavía vemos nuestro “¡Hola Mundo!” en lugar del mensaje de nuestro <code>test_runner</code>. La razón es que nuestra función <code>_start</code> todavía se utiliza como punto de entrada. La característica de marcos de prueba personalizados genera una función <code>main</code> que llama a <code>test_runner</code>, pero esta función se ignora porque usamos el atributo <code>#[no_main]</code> y proporcionamos nuestra propia entrada.</p>
 <div class = "warning">
-<p><strong>Nota:</strong> Actualmente hay un error en cargo que conduce a errores de “elemento lang duplicado” en <code>cargo test</code> en algunos casos. Ocurre cuando has establecido <code>panic = "abort"</code> para un perfil en tu <code>Cargo.toml</code>. Intenta eliminarlo, luego <code>cargo test</code> debería funcionar. Alternativamente, si eso no funciona, añade <code>panic-abort-tests = true</code> a la sección <code>[unstable]</code> de tu archivo <code>.cargo/config.toml</code>. Consulta el <a href="https://github.com/rust-lang/cargo/issues/7359">problema de cargo</a> para más información sobre esto.</p>
+<p><strong>Nota:</strong> Actualmente hay un error en cargo que conduce a errores de “elemento lang duplicado” en <code>cargo test</code> en algunos casos. Ocurre cuando has establecido <code>panic = "abort"</code> para un perfil en tu <code>Cargo.toml</code>. Intenta eliminarlo, luego <code>cargo test</code> debería funcionar. Alternativamente, si eso no funciona, añade <code>panic-abort-tests = true</code> a la sección <code>[unstable]</code> de tu archivo <code>.cargo/config.toml</code>. Consulta el <a rel="external" href="https://github.com/rust-lang/cargo/issues/7359">problema de cargo</a> para más información sobre esto.</p>
 </div>
 <p>Para solucionarlo, primero necesitamos cambiar el nombre de la función generada a algo diferente de <code>main</code> mediante el atributo <code>reexport_test_harness_main</code>. Luego podemos llamar a la función renombrada desde nuestra función <code>_start</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
-</span><span>
-</span><span>#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;¡Hola Mundo</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">!&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
-</span><span>
-</span><span>    #[cfg(test)]
-</span><span>    test_main();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
-<p>Establecemos el nombre de la función de entrada del marco de prueba en <code>test_main</code> y la llamamos desde nuestro punto de entrada <code>_start</code>. Usamos <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">compilación condicional</a> para añadir la llamada a <code>test_main</code> solo en contextos de prueba porque la función no se genera en una ejecución normal.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;¡Hola Mundo{}!&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    #[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Establecemos el nombre de la función de entrada del marco de prueba en <code>test_main</code> y la llamamos desde nuestro punto de entrada <code>_start</code>. Usamos <a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">compilación condicional</a> para añadir la llamada a <code>test_main</code> solo en contextos de prueba porque la función no se genera en una ejecución normal.</p>
 <p>Cuando ejecutamos <code>cargo test</code> ahora, vemos el mensaje “Ejecutando 0 pruebas” en la pantalla. Ahora estamos listos para crear nuestra primera función de prueba:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
-</span><span>    print!(</span><span style="color:#d69d85;">&quot;aserción trivial... &quot;</span><span>);
-</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> trivial_assertion</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;aserción trivial... &quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 1</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;[ok]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Cuando ejecutamos <code>cargo test</code> ahora, vemos la siguiente salida:</p>
 <p><img src="https://os.phil-opp.com/es/testing/qemu-test-runner-output.png" alt="QEMU imprimiendo “¡Hola Mundo!”, “Ejecutando 1 pruebas” y “aserción trivial… [ok]”" /></p>
 <p>El slice <code>tests</code> pasado a nuestra función <code>test_runner</code> ahora contiene una referencia a la función <code>trivial_assertion</code>. A partir de la salida <code>aserción trivial... [ok]</code> en la pantalla, vemos que la prueba fue llamada y que tuvo éxito.</p>
 <p>Después de ejecutar las pruebas, nuestro <code>test_runner</code> regresa a la función <code>test_main</code>, que a su vez regresa a nuestra función de entrada <code>_start</code>. Al final de <code>_start</code>, entramos en un bucle infinito porque la función de entrada no puede retornar. Este es un problema, porque queremos que <code>cargo test</code> salga después de ejecutar todas las pruebas.</p>
 <h2 id="salida-de-qemu"><a class="zola-anchor" href="#salida-de-qemu" aria-label="Anchor link for: salida-de-qemu">🔗</a>Salida de QEMU</h2>
-<p>En este momento, tenemos un bucle infinito al final de nuestra función <code>_start</code> y necesitamos cerrar QEMU manualmente en cada ejecución de <code>cargo test</code>. Esto es desafortunado porque también queremos ejecutar <code>cargo test</code> en scripts sin interacción del usuario. La solución limpia a esto sería implementar una forma adecuada de apagar nuestro OS. Desafortunadamente, esto es relativamente complejo porque requiere implementar soporte para el estándar de gestión de energía <a href="https://wiki.osdev.org/APM">APM</a> o <a href="https://wiki.osdev.org/ACPI">ACPI</a>.</p>
+<p>En este momento, tenemos un bucle infinito al final de nuestra función <code>_start</code> y necesitamos cerrar QEMU manualmente en cada ejecución de <code>cargo test</code>. Esto es desafortunado porque también queremos ejecutar <code>cargo test</code> en scripts sin interacción del usuario. La solución limpia a esto sería implementar una forma adecuada de apagar nuestro OS. Desafortunadamente, esto es relativamente complejo porque requiere implementar soporte para el estándar de gestión de energía <a rel="external" href="https://wiki.osdev.org/APM">APM</a> o <a rel="external" href="https://wiki.osdev.org/ACPI">ACPI</a>.</p>
 <p>Afortunadamente, hay una salida: QEMU soporta un dispositivo especial <code>isa-debug-exit</code>, que proporciona una forma fácil de salir de QEMU desde el sistema invitado. Para habilitarlo, necesitamos pasar un argumento <code>-device</code> a QEMU. Podemos hacerlo añadiendo una clave de configuración <code>package.metadata.bootimage.test-args</code> en nuestro <code>Cargo.toml</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
-</span><span style="color:#569cd6;">test-args </span><span>= [</span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[package.metadata.bootimage]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">test-args</span><span> = [</span><span style="color: #CE9178;">&quot;-device&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>]</span></span></code></pre>
 <p>La aplicación <code>bootimage runner</code> agrega los <code>test-args</code> al comando predeterminado de QEMU para todos los ejecutables de prueba. Para un <code>cargo run</code> normal, los argumentos se ignoran.</p>
 <p>Junto con el nombre del dispositivo (<code>isa-debug-exit</code>), pasamos los dos parámetros <code>iobase</code> y <code>iosize</code> que especifican el <em>puerto de E/S</em> a través del cual se puede alcanzar el dispositivo desde nuestro núcleo.</p>
 <h3 id="puertos-de-e-s"><a class="zola-anchor" href="#puertos-de-e-s" aria-label="Anchor link for: puertos-de-e-s">🔗</a>Puertos de E/S</h3>
 <p>Hay dos enfoques diferentes para comunicar entre la CPU y el hardware periférico en x86, <strong>E/S mapeada en memoria</strong> y <strong>E/S mapeada en puerto</strong>. Ya hemos utilizado E/S mapeada en memoria para acceder al <a href="https://os.phil-opp.com/vga-text-mode/">buffer de texto VGA</a> a través de la dirección de memoria <code>0xb8000</code>. Esta dirección no está mapeada a RAM, sino a alguna memoria en el dispositivo VGA.</p>
 <p>En contraste, la E/S mapeada en puerto utiliza un bus de E/S separado para la comunicación. Cada periférico conectado tiene uno o más números de puerto. Para comunicarse con dicho puerto de E/S, existen instrucciones especiales de la CPU llamadas <code>in</code> y <code>out</code>, que toman un número de puerto y un byte de datos (también hay variaciones de estos comandos que permiten enviar un <code>u16</code> o <code>u32</code>).</p>
-<p>El dispositivo <code>isa-debug-exit</code> utiliza E/S mapeada en puerto. El parámetro <code>iobase</code> especifica en qué dirección de puerto debe residir el dispositivo (<code>0xf4</code> es un puerto <a href="https://wiki.osdev.org/I/O_Ports#The_list">generalmente no utilizado</a> en el bus de E/S de x86) y el <code>iosize</code> especifica el tamaño de puerto (<code>0x04</code> significa cuatro bytes).</p>
+<p>El dispositivo <code>isa-debug-exit</code> utiliza E/S mapeada en puerto. El parámetro <code>iobase</code> especifica en qué dirección de puerto debe residir el dispositivo (<code>0xf4</code> es un puerto <a rel="external" href="https://wiki.osdev.org/I/O_Ports#The_list">generalmente no utilizado</a> en el bus de E/S de x86) y el <code>iosize</code> especifica el tamaño de puerto (<code>0x04</code> significa cuatro bytes).</p>
 <h3 id="usando-el-dispositivo-de-salida"><a class="zola-anchor" href="#usando-el-dispositivo-de-salida" aria-label="Anchor link for: usando-el-dispositivo-de-salida">🔗</a>Usando el Dispositivo de Salida</h3>
-<p>La funcionalidad del dispositivo <code>isa-debug-exit</code> es muy simple. Cuando se escribe un <code>valor</code> en el puerto de E/S especificado por <code>iobase</code>, provoca que QEMU salga con un <a href="https://en.wikipedia.org/wiki/Exit_status">código de salida</a> <code>(valor &lt;&lt; 1) | 1</code>. Por lo tanto, cuando escribimos <code>0</code> en el puerto, QEMU saldrá con un código de salida <code>(0 &lt;&lt; 1) | 1 = 1</code>, y cuando escribimos <code>1</code> en el puerto, saldrá con un código de salida <code>(1 &lt;&lt; 1) | 1 = 3</code>.</p>
-<p>En lugar de invocar manualmente las instrucciones de ensamblaje <code>in</code> y <code>out</code>, utilizamos las abstracciones provistas por la crate <a href="https://docs.rs/x86_64/0.14.2/x86_64/"><code>x86_64</code></a>. Para añadir una dependencia en esa crate, la añadimos a la sección de <code>dependencies</code> en nuestro <code>Cargo.toml</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">x86_64 </span><span>= </span><span style="color:#d69d85;">&quot;0.14.2&quot;
-</span></code></pre>
-<p>Ahora podemos usar el tipo <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> proporcionado por la crate para crear una función <code>exit_qemu</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-</span><span>#[repr(u32)]
-</span><span style="color:#569cd6;">pub enum </span><span>QemuExitCode {
-</span><span>    Success = </span><span style="color:#b5cea8;">0x10</span><span>,
-</span><span>    Failed = </span><span style="color:#b5cea8;">0x11</span><span>,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>exit_qemu(exit_code: QemuExitCode) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0xf4</span><span>);
-</span><span>        port.write(exit_code </span><span style="color:#569cd6;">as u32</span><span>);
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>La función crea un nuevo <a href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> en <code>0xf4</code>, que es el <code>iobase</code> del dispositivo <code>isa-debug-exit</code>. Luego escribe el código de salida pasado al puerto. Usamos <code>u32</code> porque especificamos el <code>iosize</code> del dispositivo <code>isa-debug-exit</code> como 4 bytes. Ambas operaciones son inseguras porque escribir en un puerto de E/S puede resultar en un comportamiento arbitrario.</p>
+<p>La funcionalidad del dispositivo <code>isa-debug-exit</code> es muy simple. Cuando se escribe un <code>valor</code> en el puerto de E/S especificado por <code>iobase</code>, provoca que QEMU salga con un <a rel="external" href="https://en.wikipedia.org/wiki/Exit_status">código de salida</a> <code>(valor &lt;&lt; 1) | 1</code>. Por lo tanto, cuando escribimos <code>0</code> en el puerto, QEMU saldrá con un código de salida <code>(0 &lt;&lt; 1) | 1 = 1</code>, y cuando escribimos <code>1</code> en el puerto, saldrá con un código de salida <code>(1 &lt;&lt; 1) | 1 = 3</code>.</p>
+<p>En lugar de invocar manualmente las instrucciones de ensamblaje <code>in</code> y <code>out</code>, utilizamos las abstracciones provistas por la crate <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/"><code>x86_64</code></a>. Para añadir una dependencia en esa crate, la añadimos a la sección de <code>dependencies</code> en nuestro <code>Cargo.toml</code>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">x86_64</span><span> =</span><span style="color: #CE9178;"> &quot;0.14.2&quot;</span></span></code></pre>
+<p>Ahora podemos usar el tipo <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> proporcionado por la crate para crear una función <code>exit_qemu</code>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>,</span><span style="color: #4EC9B0;"> PartialEq</span><span>,</span><span style="color: #4EC9B0;"> Eq</span><span>)]</span></span>
+<span class="giallo-l"><span>#[repr(</span><span style="color: #4EC9B0;">u32</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> QemuExitCode</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Success</span><span> =</span><span style="color: #B5CEA8;"> 0x10</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Failed</span><span> =</span><span style="color: #B5CEA8;"> 0x11</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> exit_qemu</span><span>(</span><span style="color: #9CDCFE;">exit_code</span><span>:</span><span style="color: #4EC9B0;"> QemuExitCode</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">port</span><span>::</span><span style="color: #4EC9B0;">Port</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> port</span><span> =</span><span style="color: #4EC9B0;"> Port</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0xf4</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        port</span><span>.</span><span style="color: #DCDCAA;">write</span><span>(</span><span style="color: #9CDCFE;">exit_code</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u32</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>La función crea un nuevo <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> en <code>0xf4</code>, que es el <code>iobase</code> del dispositivo <code>isa-debug-exit</code>. Luego escribe el código de salida pasado al puerto. Usamos <code>u32</code> porque especificamos el <code>iosize</code> del dispositivo <code>isa-debug-exit</code> como 4 bytes. Ambas operaciones son inseguras porque escribir en un puerto de E/S puede resultar en un comportamiento arbitrario.</p>
 <p>Para especificar el código de salida, creamos un enum <code>QemuExitCode</code>. La idea es salir con el código de salida de éxito si todas las pruebas tuvieron éxito y con el código de salida de fallo de otro modo. El enum está marcado como <code>#[repr(u32)]</code> para representar cada variante como un entero <code>u32</code>. Usamos el código de salida <code>0x10</code> para éxito y <code>0x11</code> para fallo. Los códigos de salida reales no importan mucho, siempre y cuando no choquen con los códigos de salida predeterminados de QEMU. Por ejemplo, usar el código de salida <code>0</code> para éxito no es una buena idea porque se convierte en <code>(0 &lt;&lt; 1) | 1 = 1</code> después de la transformación, que es el código de salida predeterminado cuando QEMU falla al ejecutarse. Así que no podríamos diferenciar un error de QEMU de una ejecución de prueba exitosa.</p>
 <p>Ahora podemos actualizar nuestro <code>test_runner</code> para salir de QEMU después de que se hayan ejecutado todas las pruebas:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Ejecutando </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> pruebas&quot;</span><span>, tests.len());
-</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
-</span><span>        test();
-</span><span>    }
-</span><span>    </span><span style="color:#608b4e;">/// nuevo
-</span><span>    exit_qemu(QemuExitCode::Success);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #DCDCAA;"> Fn</span><span>()]) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Ejecutando {} pruebas&quot;</span><span>,</span><span style="color: #9CDCFE;"> tests</span><span>.</span><span style="color: #DCDCAA;">len</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> test</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> tests</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        test</span><span>();</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    /// nuevo</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Success</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Cuando ejecutamos <code>cargo test</code> ahora, vemos que QEMU se cierra inmediatamente después de ejecutar las pruebas. El problema es que <code>cargo test</code> interpreta la prueba como fallida aunque pasamos nuestro código de salida de éxito:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
-</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.03s
-</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-5804fc7d2dd4c9be
-</span><span>Building bootloader
-</span><span>   Compiling bootloader v0.5.3 (/home/philipp/Documents/bootloader)
-</span><span>    Finished release [optimized + debuginfo] target(s) in 1.07s
-</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
-</span><span>    deps/bootimage-blog_os-5804fc7d2dd4c9be.bin -device isa-debug-exit,iobase=0xf4,
-</span><span>    iosize=0x04`
-</span><span>error: test failed, to rerun pass &#39;--bin blog_os&#39;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test</span></span>
+<span class="giallo-l"><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.03s</span></span>
+<span class="giallo-l"><span>     Running target/x86_64-blog_os/debug/deps/blog_os-5804fc7d2dd4c9be</span></span>
+<span class="giallo-l"><span>Building bootloader</span></span>
+<span class="giallo-l"><span>   Compiling bootloader v0.5.3 (/home/philipp/Documents/bootloader)</span></span>
+<span class="giallo-l"><span>    Finished release [optimized + debuginfo] target(s) in 1.07s</span></span>
+<span class="giallo-l"><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/</span></span>
+<span class="giallo-l"><span>    deps/bootimage-blog_os-5804fc7d2dd4c9be.bin -device isa-debug-exit,iobase=0xf4,</span></span>
+<span class="giallo-l"><span>    iosize=0x04`</span></span>
+<span class="giallo-l"><span>error: test failed, to rerun pass &#39;--bin blog_os&#39;</span></span></code></pre>
 <p>El problema es que <code>cargo test</code> considera todos los códigos de error que no sean <code>0</code> como fallidos.</p>
 <h3 id="codigo-de-salida-de-exito"><a class="zola-anchor" href="#codigo-de-salida-de-exito" aria-label="Anchor link for: codigo-de-salida-de-exito">🔗</a>Código de salida de éxito</h3>
 <p>Para solucionar esto, <code>bootimage</code> proporciona una clave de configuración <code>test-success-exit-code</code> que mapea un código de salida especificado al código de salida <code>0</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
-</span><span style="color:#569cd6;">test-args </span><span>= [</span><span style="color:#ff3333;">…</span><span>]
-</span><span style="color:#569cd6;">test-success-exit-code </span><span>= </span><span style="color:#b5cea8;">33         </span><span style="color:#608b4e;"># (0x10 &lt;&lt; 1) | 1
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[package.metadata.bootimage]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">test-args</span><span> = [</span><span style="color: #F44747;">…]</span></span>
+<span class="giallo-l"><span style="color: #F44747;">test-success-exit-code = </span><span style="color: #B5CEA8;">33</span><span style="color: #6A9955;">         # (0x10 &lt;&lt; 1) | 1</span></span></code></pre>
 <p>Con esta configuración, <code>bootimage</code> mapea nuestro código de salida de éxito al código de salida 0, de modo que <code>cargo test</code> reconozca correctamente el caso de éxito y no cuente la prueba como fallida.</p>
 <p>Nuestro runner de pruebas ahora cierra automáticamente QEMU y reporta correctamente los resultados de las pruebas. Aún vemos que la ventana de QEMU permanece abierta por un breve período de tiempo, pero no es suficiente para leer los resultados. Sería agradable si pudiéramos imprimir los resultados de las pruebas en la consola en su lugar, para que podamos seguir viéndolos después de que QEMU salga.</p>
 <h2 id="imprimiendo-en-la-consola"><a class="zola-anchor" href="#imprimiendo-en-la-consola" aria-label="Anchor link for: imprimiendo-en-la-consola">🔗</a>Imprimiendo en la Consola</h2>
 <p>Para ver la salida de las pruebas en la consola, necesitamos enviar los datos desde nuestro núcleo al sistema host de alguna manera. Hay varias formas de lograr esto, por ejemplo, enviando los datos a través de una interfaz de red TCP. Sin embargo, configurar una pila de red es una tarea bastante compleja, por lo que elegiremos una solución más simple.</p>
 <h3 id="puerto-serial"><a class="zola-anchor" href="#puerto-serial" aria-label="Anchor link for: puerto-serial">🔗</a>Puerto Serial</h3>
-<p>Una forma simple de enviar los datos es usar el <a href="https://en.wikipedia.org/wiki/Serial_port">puerto serial</a>, un estándar de interfaz antiguo que ya no se encuentra en computadoras modernas. Es fácil de programar y QEMU puede redirigir los bytes enviados a través del serial a la salida estándar del host o a un archivo.</p>
-<p>Los chips que implementan una interfaz serial se llaman <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter">UARTs</a>. Hay <a href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter#Models">muchos modelos de UART</a> en x86, pero afortunadamente las únicas diferencias entre ellos son algunas características avanzadas que no necesitamos. Los UART comunes hoy en día son todos compatibles con el <a href="https://en.wikipedia.org/wiki/16550_UART">UART 16550</a>, así que utilizaremos ese modelo para nuestro framework de pruebas.</p>
-<p>Usaremos la crate <a href="https://docs.rs/uart_16550"><code>uart_16550</code></a> para inicializar el UART y enviar datos a través del puerto serial. Para añadirlo como dependencia, actualizamos nuestro <code>Cargo.toml</code> y <code>main.rs</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">uart_16550 </span><span>= </span><span style="color:#d69d85;">&quot;0.6.0&quot;
-</span></code></pre>
-<p>La crate <code>uart_16550</code> contiene un tipo <a href="https://docs.rs/uart_16550/latest/uart_16550/struct.Uart16550Tty.html"><code>Uart16550Tty</code></a> que inicializa el UART en modo <a href="https://en.wikipedia.org/wiki/Teleprinter">TTY</a>, lo que nos permite enviar texto fácilmente.</p>
+<p>Una forma simple de enviar los datos es usar el <a rel="external" href="https://en.wikipedia.org/wiki/Serial_port">puerto serial</a>, un estándar de interfaz antiguo que ya no se encuentra en computadoras modernas. Es fácil de programar y QEMU puede redirigir los bytes enviados a través del serial a la salida estándar del host o a un archivo.</p>
+<p>Los chips que implementan una interfaz serial se llaman <a rel="external" href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter">UARTs</a>. Hay <a rel="external" href="https://en.wikipedia.org/wiki/Universal_asynchronous_receiver-transmitter#Models">muchos modelos de UART</a> en x86, pero afortunadamente las únicas diferencias entre ellos son algunas características avanzadas que no necesitamos. Los UART comunes hoy en día son todos compatibles con el <a rel="external" href="https://en.wikipedia.org/wiki/16550_UART">UART 16550</a>, así que utilizaremos ese modelo para nuestro framework de pruebas.</p>
+<p>Usaremos la crate <a rel="external" href="https://docs.rs/uart_16550"><code>uart_16550</code></a> para inicializar el UART y enviar datos a través del puerto serial. Para añadirlo como dependencia, actualizamos nuestro <code>Cargo.toml</code> y <code>main.rs</code>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">uart_16550</span><span> =</span><span style="color: #CE9178;"> &quot;0.6.0&quot;</span></span></code></pre>
+<p>La crate <code>uart_16550</code> contiene un tipo <a rel="external" href="https://docs.rs/uart_16550/latest/uart_16550/struct.Uart16550Tty.html"><code>Uart16550Tty</code></a> que inicializa el UART en modo <a rel="external" href="https://en.wikipedia.org/wiki/Teleprinter">TTY</a>, lo que nos permite enviar texto fácilmente.</p>
 <p>Usemos el tipo en un nuevo módulo <code>serial</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">mod </span><span>serial;
-</span></code></pre>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/serial.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>uart_16550::{Config, Uart16550Tty, backend::PioBackend};
-</span><span style="color:#569cd6;">use </span><span>spin::Mutex;
-</span><span style="color:#569cd6;">use </span><span>lazy_static::lazy_static;
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">pub static ref </span><span style="color:#b4cea8;">SERIAL1</span><span>: Mutex&lt;Uart16550Tty&lt;PioBackend&gt;&gt; = Mutex::new(</span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        Uart16550Tty::new_port(</span><span style="color:#b5cea8;">0x3F8</span><span>, Config::default())
-</span><span>            .expect(</span><span style="color:#d69d85;">&quot;failed to initialize UART&quot;</span><span>)
-</span><span>    });
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">mod</span><span> serial;</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/serial.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> uart_16550</span><span>::{</span><span style="color: #4EC9B0;">Config</span><span>,</span><span style="color: #4EC9B0;"> Uart16550Tty</span><span>,</span><span style="color: #4EC9B0;"> backend</span><span>::</span><span style="color: #4EC9B0;">PioBackend</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> spin</span><span>::</span><span style="color: #4EC9B0;">Mutex</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> lazy_static</span><span>::lazy_static;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub static ref</span><span> SERIAL1:</span><span style="color: #4EC9B0;"> Mutex</span><span>&lt;</span><span style="color: #4EC9B0;">Uart16550Tty</span><span>&lt;</span><span style="color: #4EC9B0;">PioBackend</span><span>&gt;&gt; =</span><span style="color: #4EC9B0;"> Mutex</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #569CD6;">unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Uart16550Tty</span><span>::</span><span style="color: #DCDCAA;">new_port</span><span>(</span><span style="color: #B5CEA8;">0x3F8</span><span>,</span><span style="color: #4EC9B0;"> Config</span><span>::</span><span style="color: #DCDCAA;">default</span><span>())</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;failed to initialize UART&quot;</span><span>)</span></span>
+<span class="giallo-l"><span>    });</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Al igual que con el <a href="https://os.phil-opp.com/vga-text-mode/#lazy-statics">buffer de texto VGA</a>, usamos <code>lazy_static</code> y un spinlock para crear una instancia <code>static</code> de escritor. Usando <code>lazy_static</code> podemos asegurarnos de que el UART se inicialice exactamente una vez en su primer uso.</p>
-<p>Al igual que el dispositivo <code>isa-debug-exit</code>, el UART se programa usando E/S de puerto, lo cual se indica mediante el parámetro <a href="https://docs.rs/uart_16550/latest/uart_16550/backend/struct.PioBackend.html"><code>PioBackend</code></a>. Dado que el UART es más complejo, utiliza varios puertos de E/S para programar diferentes registros del dispositivo. La función insegura <code>Uart16550Tty::new_port</code> espera la dirección del primer puerto de E/S del UART como argumento, desde la cual puede calcular las direcciones de todos los puertos necesarios. Estamos pasando la dirección de puerto <code>0x3F8</code>, que es el número de puerto estándar para la primera interfaz serial.</p>
+<p>Al igual que el dispositivo <code>isa-debug-exit</code>, el UART se programa usando E/S de puerto, lo cual se indica mediante el parámetro <a rel="external" href="https://docs.rs/uart_16550/latest/uart_16550/backend/struct.PioBackend.html"><code>PioBackend</code></a>. Dado que el UART es más complejo, utiliza varios puertos de E/S para programar diferentes registros del dispositivo. La función insegura <code>Uart16550Tty::new_port</code> espera la dirección del primer puerto de E/S del UART como argumento, desde la cual puede calcular las direcciones de todos los puertos necesarios. Estamos pasando la dirección de puerto <code>0x3F8</code>, que es el número de puerto estándar para la primera interfaz serial.</p>
 <p>Para hacer que el puerto serial sea fácilmente utilizable, añadimos los macros <code>serial_print!</code> y <code>serial_println!</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/serial.rs
-</span><span>
-</span><span>#[doc(hidden)]
-</span><span style="color:#569cd6;">pub fn </span><span>_print(args: ::core::fmt::Arguments) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>core::fmt::Write;
-</span><span>    </span><span style="color:#b4cea8;">SERIAL1</span><span>.lock().write_fmt(args).expect(</span><span style="color:#d69d85;">&quot;Error al imprimir en serial&quot;</span><span>);
-</span><span>}
-</span><span>
-</span><span style="color:#608b4e;">/// Imprime en el host a través de la interfaz serial.
-</span><span>#[macro_export]
-</span><span>macro_rules! serial_print {
-</span><span>    (</span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>{
-</span><span>        $crate::serial::_print(format_args!(</span><span style="color:#569cd6;">$</span><span>($arg)*));
-</span><span>    };
-</span><span>}
-</span><span>
-</span><span style="color:#608b4e;">/// Imprime en el host a través de la interfaz serial, añadiendo una nueva línea.
-</span><span>#[macro_export]
-</span><span>macro_rules! serial_println {
-</span><span>    () </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(</span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>));
-</span><span>    ($fmt:</span><span style="color:#569cd6;">expr</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>)));
-</span><span>    ($fmt:</span><span style="color:#569cd6;">expr</span><span>, </span><span style="color:#569cd6;">$</span><span>($arg:</span><span style="color:#569cd6;">tt</span><span>)</span><span style="color:#569cd6;">*</span><span>) </span><span style="color:#569cd6;">=&gt; </span><span>($crate::serial_print</span><span style="color:#569cd6;">!</span><span>(
-</span><span>        concat!($fmt, </span><span style="color:#d69d85;">&quot;</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>), </span><span style="color:#569cd6;">$</span><span>($arg)*));
-</span><span>}
-</span></code></pre>
-<p>La implementación es muy similar a la implementación de nuestros macros <code>print</code> y <code>println</code>. Dado que el tipo <code>Uart16550Tty</code> ya implementa el trait <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a>, no necesitamos proporcionar nuestra propia implementación.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/serial.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[doc(hidden)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> _print</span><span>(</span><span style="color: #9CDCFE;">args</span><span>: ::</span><span style="color: #4EC9B0;">core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Arguments</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">fmt</span><span>::</span><span style="color: #4EC9B0;">Write</span><span>;</span></span>
+<span class="giallo-l"><span>    SERIAL1.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>).</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;Error al imprimir en serial&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Imprime en el host a través de la interfaz serial.</span></span>
+<span class="giallo-l"><span>#[macro_export]</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">macro_rules! serial_print</span><span> {</span></span>
+<span class="giallo-l"><span>    ($($</span><span style="color: #9CDCFE;">arg</span><span>:</span><span style="color: #9CDCFE;">tt</span><span>)*) =&gt; {</span></span>
+<span class="giallo-l"><span>        $</span><span style="color: #569CD6;">crate</span><span>::</span><span style="color: #4EC9B0;">serial</span><span>::</span><span style="color: #DCDCAA;">_print</span><span>(</span><span style="color: #DCDCAA;">format_args!</span><span>($($</span><span style="color: #9CDCFE;">arg</span><span>)*));</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Imprime en el host a través de la interfaz serial, añadiendo una nueva línea.</span></span>
+<span class="giallo-l"><span>#[macro_export]</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">macro_rules! serial_println</span><span> {</span></span>
+<span class="giallo-l"><span>    () =&gt; ($</span><span style="color: #569CD6;">crate</span><span>::</span><span style="color: #DCDCAA;">serial_print!</span><span>(</span><span style="color: #CE9178;">&quot;</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>));</span></span>
+<span class="giallo-l"><span>    ($</span><span style="color: #9CDCFE;">fmt</span><span>:</span><span style="color: #9CDCFE;">expr</span><span>) =&gt; ($</span><span style="color: #569CD6;">crate</span><span>::</span><span style="color: #DCDCAA;">serial_print!</span><span>(</span><span style="color: #DCDCAA;">concat!</span><span>($</span><span style="color: #9CDCFE;">fmt</span><span>,</span><span style="color: #CE9178;"> &quot;</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>)));</span></span>
+<span class="giallo-l"><span>    ($</span><span style="color: #9CDCFE;">fmt</span><span>:</span><span style="color: #9CDCFE;">expr</span><span>, $($</span><span style="color: #9CDCFE;">arg</span><span>:</span><span style="color: #9CDCFE;">tt</span><span>)*) =&gt; ($</span><span style="color: #569CD6;">crate</span><span>::</span><span style="color: #DCDCAA;">serial_print!</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        concat!</span><span>($</span><span style="color: #9CDCFE;">fmt</span><span>,</span><span style="color: #CE9178;"> &quot;</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>), $($</span><span style="color: #9CDCFE;">arg</span><span>)*));</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>La implementación es muy similar a la implementación de nuestros macros <code>print</code> y <code>println</code>. Dado que el tipo <code>Uart16550Tty</code> ya implementa el trait <a rel="external" href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html"><code>fmt::Write</code></a>, no necesitamos proporcionar nuestra propia implementación.</p>
 <p>Ahora podemos imprimir en la interfaz serial en lugar de en el buffer de texto VGA en nuestro código de prueba:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span>#[cfg(test)]
-</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Ejecutando {} pruebas&quot;</span><span>, tests.len());
-</span><span>    […]
-</span><span>}
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
-</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;aserción trivial... &quot;</span><span>);
-</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #DCDCAA;"> Fn</span><span>()]) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Ejecutando {} pruebas&quot;</span><span>,</span><span style="color: #9CDCFE;"> tests</span><span>.</span><span style="color: #DCDCAA;">len</span><span>());</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> trivial_assertion</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_print!</span><span>(</span><span style="color: #CE9178;">&quot;aserción trivial... &quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 1</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[ok]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Ten en cuenta que el macro <code>serial_println</code> vive directamente en el espacio de nombres raíz porque usamos el atributo <code>#[macro_export]</code>, por lo que importarlo a través de <code>use crate::serial::serial_println</code> no funcionará.</p>
 <h3 id="argumentos-de-qemu"><a class="zola-anchor" href="#argumentos-de-qemu" aria-label="Anchor link for: argumentos-de-qemu">🔗</a>Argumentos de QEMU</h3>
 <p>Para ver la salida serial de QEMU, necesitamos usar el argumento <code>-serial</code> para redirigir la salida a stdout:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
-</span><span style="color:#569cd6;">test-args </span><span>= [
-</span><span>    </span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span>, </span><span style="color:#d69d85;">&quot;stdio&quot;
-</span><span>]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[package.metadata.bootimage]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">test-args</span><span> = [</span></span>
+<span class="giallo-l"><span style="color: #CE9178;">    &quot;-device&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;-serial&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;stdio&quot;</span></span>
+<span class="giallo-l"><span>]</span></span></code></pre>
 <p>Cuando ejecutamos <code>cargo test</code> ahora, vemos la salida de las pruebas directamente en la consola:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
-</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
-</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
-</span><span>Building bootloader
-</span><span>    Finished release [optimized + debuginfo] target(s) in 0.02s
-</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
-</span><span>    deps/bootimage-blog_os-7b7c37b4ad62551a.bin -device
-</span><span>    isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`
-</span><span>Ejecutando 1 pruebas
-</span><span>aserción trivial... [ok]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test</span></span>
+<span class="giallo-l"><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.02s</span></span>
+<span class="giallo-l"><span>     Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a</span></span>
+<span class="giallo-l"><span>Building bootloader</span></span>
+<span class="giallo-l"><span>    Finished release [optimized + debuginfo] target(s) in 0.02s</span></span>
+<span class="giallo-l"><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/</span></span>
+<span class="giallo-l"><span>    deps/bootimage-blog_os-7b7c37b4ad62551a.bin -device</span></span>
+<span class="giallo-l"><span>    isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`</span></span>
+<span class="giallo-l"><span>Ejecutando 1 pruebas</span></span>
+<span class="giallo-l"><span>aserción trivial... [ok]</span></span></code></pre>
 <p>Sin embargo, cuando una prueba falla, todavía vemos la salida dentro de QEMU porque nuestro manejador de pánicos todavía usa <code>println</code>. Para simular esto, podemos cambiar la afirmación en nuestra prueba de <code>trivial_assertion</code> a <code>assert_eq!(0, 1)</code>:</p>
 <p><img src="https://os.phil-opp.com/es/testing/qemu-failed-test.png" alt="QEMU imprimiendo “¡Hola Mundo!” y “panicked at ‘assertion failed: (left == right) left: 0, right: 1’, src/main.rs:55:5" /></p>
 <p>Vemos que el mensaje de pánico todavía se imprime en el buffer de VGA, mientras que la otra salida de prueba se imprime en el puerto serial. El mensaje de pánico es bastante útil, así que sería útil verlo también en la consola.</p>
 <h3 id="imprimir-un-mensaje-de-error-en-el-panico"><a class="zola-anchor" href="#imprimir-un-mensaje-de-error-en-el-panico" aria-label="Anchor link for: imprimir-un-mensaje-de-error-en-el-panico">🔗</a>Imprimir un Mensaje de Error en el Pánico</h3>
-<p>Para salir de QEMU con un mensaje de error en un pánico, podemos usar <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">compilación condicional</a> para usar un manejador de pánicos diferente en modo de prueba:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span style="color:#608b4e;">// nuestro manejador de pánico existente
-</span><span>#[cfg(not(test))] </span><span style="color:#608b4e;">// nuevo atributo
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span><span>
-</span><span style="color:#608b4e;">// nuestro manejador de pánico en modo de prueba
-</span><span>#[cfg(test)]
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[fallido]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
-</span><span>    exit_qemu(QemuExitCode::Failed);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<p>Para salir de QEMU con un mensaje de error en un pánico, podemos usar <a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/conditional-compilation.html">compilación condicional</a> para usar un manejador de pánicos diferente en modo de prueba:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// nuestro manejador de pánico existente</span></span>
+<span class="giallo-l"><span>#[cfg(not(test))]</span><span style="color: #6A9955;"> // nuevo atributo</span></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> info</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// nuestro manejador de pánico en modo de prueba</span></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[fallido]</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Error: {}</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>,</span><span style="color: #9CDCFE;"> info</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Failed</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Para nuestro manejador de pánico en las pruebas, usamos <code>serial_println</code> en lugar de <code>println</code> y luego salimos de QEMU con un código de salida de error. Ten en cuenta que aún necesitamos un bucle infinito después de la llamada a <code>exit_qemu</code> porque el compilador no sabe que el dispositivo <code>isa-debug-exit</code> provoca una salida del programa.</p>
 <p>Ahora QEMU también saldrá para pruebas fallidas e imprimirá un mensaje de error útil en la consola:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test
-</span><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
-</span><span>     Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a
-</span><span>Building bootloader
-</span><span>    Finished release [optimized + debuginfo] target(s) in 0.02s
-</span><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/
-</span><span>    deps/bootimage-blog_os-7b7c37b4ad62551a.bin -device
-</span><span>    isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`
-</span><span>Ejecutando 1 pruebas
-</span><span>aserción trivial... [fallido]
-</span><span>
-</span><span>Error: panicked at &#39;assertion failed: `(left == right)`
-</span><span>  left: `0`,
-</span><span> right: `1`&#39;, src/main.rs:65:5
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test</span></span>
+<span class="giallo-l"><span>    Finished dev [unoptimized + debuginfo] target(s) in 0.02s</span></span>
+<span class="giallo-l"><span>     Running target/x86_64-blog_os/debug/deps/blog_os-7b7c37b4ad62551a</span></span>
+<span class="giallo-l"><span>Building bootloader</span></span>
+<span class="giallo-l"><span>    Finished release [optimized + debuginfo] target(s) in 0.02s</span></span>
+<span class="giallo-l"><span>Running: `qemu-system-x86_64 -drive format=raw,file=/…/target/x86_64-blog_os/debug/</span></span>
+<span class="giallo-l"><span>    deps/bootimage-blog_os-7b7c37b4ad62551a.bin -device</span></span>
+<span class="giallo-l"><span>    isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio`</span></span>
+<span class="giallo-l"><span>Ejecutando 1 pruebas</span></span>
+<span class="giallo-l"><span>aserción trivial... [fallido]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Error: panicked at &#39;assertion failed: `(left == right)`</span></span>
+<span class="giallo-l"><span>  left: `0`,</span></span>
+<span class="giallo-l"><span> right: `1`&#39;, src/main.rs:65:5</span></span></code></pre>
 <p>Dado que ahora vemos toda la salida de prueba en la consola, ya no necesitamos la ventana de QEMU que aparece por un corto período de tiempo. Así que podemos ocultarla completamente.</p>
 <h3 id="ocultando-qemu"><a class="zola-anchor" href="#ocultando-qemu" aria-label="Anchor link for: ocultando-qemu">🔗</a>Ocultando QEMU</h3>
 <p>Dado que reportamos todos los resultados de las pruebas utilizando el dispositivo <code>isa-debug-exit</code> y el puerto serial, ya no necesitamos la ventana de QEMU. Podemos ocultarla pasando el argumento <code>-display none</code> a QEMU:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
-</span><span style="color:#569cd6;">test-args </span><span>= [
-</span><span>    </span><span style="color:#d69d85;">&quot;-device&quot;</span><span>, </span><span style="color:#d69d85;">&quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>, </span><span style="color:#d69d85;">&quot;-serial&quot;</span><span>, </span><span style="color:#d69d85;">&quot;stdio&quot;</span><span>,
-</span><span>    </span><span style="color:#d69d85;">&quot;-display&quot;</span><span>, </span><span style="color:#d69d85;">&quot;none&quot;
-</span><span>]
-</span></code></pre>
-<p>Ahora QEMU se ejecuta completamente en segundo plano y no se abre ninguna ventana. Esto no solo es menos molesto, sino que también permite que nuestro framework de pruebas se ejecute en entornos sin una interfaz gráfica, como servicios CI o conexiones <a href="https://en.wikipedia.org/wiki/Secure_Shell">SSH</a>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[package.metadata.bootimage]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">test-args</span><span> = [</span></span>
+<span class="giallo-l"><span style="color: #CE9178;">    &quot;-device&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;isa-debug-exit,iobase=0xf4,iosize=0x04&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;-serial&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;stdio&quot;</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #CE9178;">    &quot;-display&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;none&quot;</span></span>
+<span class="giallo-l"><span>]</span></span></code></pre>
+<p>Ahora QEMU se ejecuta completamente en segundo plano y no se abre ninguna ventana. Esto no solo es menos molesto, sino que también permite que nuestro framework de pruebas se ejecute en entornos sin una interfaz gráfica, como servicios CI o conexiones <a rel="external" href="https://en.wikipedia.org/wiki/Secure_Shell">SSH</a>.</p>
 <h3 id="timeouts"><a class="zola-anchor" href="#timeouts" aria-label="Anchor link for: timeouts">🔗</a>Timeouts</h3>
 <p>Dado que <code>cargo test</code> espera hasta que el runner de pruebas salga, una prueba que nunca retorna puede bloquear el runner de pruebas para siempre. Eso es desafortunado, pero no es un gran problema en la práctica, ya que generalmente es fácil evitar bucles infinitos. En nuestro caso, sin embargo, pueden ocurrir bucles infinitos en varias situaciones:</p>
 <ul>
@@ -519,291 +498,273 @@
 <li>El hardware provoca un reinicio del sistema, por ejemplo, cuando una excepción de CPU no es capturada (explicado en una publicación futura).</li>
 </ul>
 <p>Dado que los bucles infinitos pueden ocurrir en tantas situaciones, la herramienta <code>bootimage</code> establece un tiempo de espera de 5 minutos para cada ejecutable de prueba de manera predeterminada. Si la prueba no termina dentro de este tiempo, se marca como fallida y se imprime un error de “Tiempo de espera”. Esta función asegura que las pruebas que están atrapadas en un bucle infinito no bloqueen <code>cargo test</code> para siempre.</p>
-<p>Puedes intentarlo tú mismo añadiendo una instrucción <code>loop {}</code> en la prueba <code>trivial_assertion</code>. Cuando ejecutes <code>cargo test</code>, verás que la prueba se marca como expirado después de 5 minutos. La duración del tiempo de espera es <a href="https://github.com/rust-osdev/bootimage#configuration">configurable</a> a través de una clave <code>test-timeout</code> en el Cargo.toml:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">package.metadata.bootimage</span><span>]
-</span><span style="color:#569cd6;">test-timeout </span><span>= </span><span style="color:#b5cea8;">300          </span><span style="color:#608b4e;"># (en segundos)
-</span></code></pre>
+<p>Puedes intentarlo tú mismo añadiendo una instrucción <code>loop {}</code> en la prueba <code>trivial_assertion</code>. Cuando ejecutes <code>cargo test</code>, verás que la prueba se marca como expirado después de 5 minutos. La duración del tiempo de espera es <a rel="external" href="https://github.com/rust-osdev/bootimage#configuration">configurable</a> a través de una clave <code>test-timeout</code> en el Cargo.toml:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[package.metadata.bootimage]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">test-timeout</span><span> =</span><span style="color: #B5CEA8;"> 300</span><span style="color: #6A9955;">          # (en segundos)</span></span></code></pre>
 <p>Si no quieres esperar 5 minutos para que la prueba <code>trivial_assertion</code> expire, puedes reducir temporalmente el valor anterior.</p>
 <h3 id="insertar-impresion-automaticamente"><a class="zola-anchor" href="#insertar-impresion-automaticamente" aria-label="Anchor link for: insertar-impresion-automaticamente">🔗</a>Insertar Impresión Automáticamente</h3>
 <p>Nuestra prueba <code>trivial_assertion</code> actualmente necesita imprimir su propia información de estado usando <code>serial_print!</code>/<code>serial_println!</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
-</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;aserción trivial... &quot;</span><span>);
-</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> trivial_assertion</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_print!</span><span>(</span><span style="color: #CE9178;">&quot;aserción trivial... &quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 1</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[ok]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Añadir manualmente estas declaraciones de impresión para cada prueba que escribimos es engorroso, así que actualicemos nuestro <code>test_runner</code> para imprimir estos mensajes automáticamente. Para hacer eso, necesitamos crear un nuevo trait <code>Testable</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">pub trait </span><span>Testable {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; ();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub trait</span><span style="color: #4EC9B0;"> Testable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> run</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt; ();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>El truco ahora es implementar este trait para todos los tipos <code>T</code> que implementan el trait [<code>Fn()</code>]:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">impl</span><span>&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span>T
-</span><span style="color:#569cd6;">where
-</span><span>    T: Fn(),
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) {
-</span><span>        serial_print!(</span><span style="color:#d69d85;">&quot;{}...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>, core::any::type_name::&lt;T&gt;());
-</span><span>        self();
-</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>Implementamos la función <code>run</code> imprimiendo primero el nombre de la función utilizando la función <a href="https://doc.rust-lang.org/stable/core/any/fn.type_name.html"><code>any::type_name</code></a> . Esta función se implementa directamente en el compilador y devuelve una descripción de cadena de cada tipo. Para las funciones, el tipo es su nombre, así que esto es exactamente lo que queremos en este caso. El carácter <code>\t</code> es el <a href="https://en.wikipedia.org/wiki/Tab_character">carácter de tabulación</a>, que añade algo de alineación a los mensajes <code>[ok]</code>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span>&lt;</span><span style="color: #4EC9B0;">T</span><span>&gt;</span><span style="color: #4EC9B0;"> Testable</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> T</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">where</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    T</span><span>:</span><span style="color: #DCDCAA;"> Fn</span><span>(),</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> run</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        serial_print!</span><span>(</span><span style="color: #CE9178;">&quot;{}...</span><span style="color: #D7BA7D;">\t</span><span style="color: #CE9178;">&quot;</span><span>,</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">any</span><span>::</span><span style="color: #DCDCAA;">type_name</span><span>::&lt;</span><span style="color: #4EC9B0;">T</span><span>&gt;());</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[ok]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Implementamos la función <code>run</code> imprimiendo primero el nombre de la función utilizando la función <a rel="external" href="https://doc.rust-lang.org/stable/core/any/fn.type_name.html"><code>any::type_name</code></a> . Esta función se implementa directamente en el compilador y devuelve una descripción de cadena de cada tipo. Para las funciones, el tipo es su nombre, así que esto es exactamente lo que queremos en este caso. El carácter <code>\t</code> es el <a rel="external" href="https://en.wikipedia.org/wiki/Tab_character">carácter de tabulación</a>, que añade algo de alineación a los mensajes <code>[ok]</code>.</p>
 <p>Después de imprimir el nombre de la función, invocamos la función de prueba a través de <code>self()</code>. Esto solo funciona porque requerimos que <code>self</code> implemente el trait <code>Fn()</code>. Después de que la función de prueba retorna, imprimimos <code>[ok]</code> para indicar que la función no provocó un pánico.</p>
 <p>El último paso es actualizar nuestro <code>test_runner</code> para usar el nuevo trait <code>Testable</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span>#[cfg(test)]
-</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Testable]) { </span><span style="color:#608b4e;">// nuevo
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Ejecutando {} pruebas&quot;</span><span>, tests.len());
-</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
-</span><span>        test.run(); </span><span style="color:#608b4e;">// nuevo
-</span><span>    }
-</span><span>    exit_qemu(QemuExitCode::Success);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #4EC9B0;"> Testable</span><span>]) {</span><span style="color: #6A9955;"> // nuevo</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Ejecutando {} pruebas&quot;</span><span>,</span><span style="color: #9CDCFE;"> tests</span><span>.</span><span style="color: #DCDCAA;">len</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> test</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> tests</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        test</span><span>.</span><span style="color: #DCDCAA;">run</span><span>();</span><span style="color: #6A9955;"> // nuevo</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Success</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Los únicos dos cambios son el tipo del argumento <code>tests</code> de <code>&amp;[&amp;dyn Fn()]</code> a <code>&amp;[&amp;dyn Testable]</code> y el hecho de que ahora llamamos a <code>test.run()</code> en lugar de <code>test()</code>.</p>
 <p>Ahora podemos eliminar las declaraciones de impresión de nuestra prueba <code>trivial_assertion</code> ya que ahora se imprimen automáticamente:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>trivial_assertion() {
-</span><span>    assert_eq!(</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> trivial_assertion</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 1</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>La salida de <code>cargo test</code> ahora se ve así:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>Ejecutando 1 pruebas
-</span><span>blog_os::trivial_assertion...	[ok]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>Ejecutando 1 pruebas</span></span>
+<span class="giallo-l"><span>blog_os::trivial_assertion...	[ok]</span></span></code></pre>
 <p>El nombre de la función ahora incluye la ruta completa a la función, que es útil cuando las funciones de prueba en diferentes módulos tienen el mismo nombre. De lo contrario, la salida se ve igual que antes, pero ya no necesitamos agregar declaraciones de impresión a nuestras pruebas manualmente.</p>
 <h2 id="pruebas-del-buffer-vga"><a class="zola-anchor" href="#pruebas-del-buffer-vga" aria-label="Anchor link for: pruebas-del-buffer-vga">🔗</a>Pruebas del Buffer VGA</h2>
 <p>Ahora que tenemos un marco de pruebas funcional, podemos crear algunas pruebas para nuestra implementación del buffer VGA. Primero, creamos una prueba muy simple para verificar que <code>println</code> funciona sin provocar un pánico:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>test_println_simple() {
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;salida de test_println_simple&quot;</span><span>);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_println_simple</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;salida de test_println_simple&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>La prueba simplemente imprime algo en el buffer VGA. Si termina sin provocar un pánico, significa que la invocación de <code>println</code> tampoco provocó un pánico.</p>
 <p>Para asegurarnos de que no se produzca un pánico incluso si se imprimen muchas líneas y las líneas se desplazan de la pantalla, podemos crear otra prueba:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>test_println_many() {
-</span><span>    </span><span style="color:#569cd6;">for _ in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">200 </span><span>{
-</span><span>        println!(</span><span style="color:#d69d85;">&quot;salida de test_println_many&quot;</span><span>);
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_println_many</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> _</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..</span><span style="color: #B5CEA8;">200</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        println!</span><span>(</span><span style="color: #CE9178;">&quot;salida de test_println_many&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>También podemos crear una función de prueba para verificar que las líneas impresas realmente aparecen en la pantalla:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/vga_buffer.rs
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>test_println_output() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> s = </span><span style="color:#d69d85;">&quot;Alguna cadena de prueba que cabe en una única línea&quot;</span><span>;
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, s);
-</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, c) </span><span style="color:#569cd6;">in</span><span> s.chars().enumerate() {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> screen_char = </span><span style="color:#b4cea8;">WRITER</span><span>.lock().buffer.chars[</span><span style="color:#b4cea8;">BUFFER_HEIGHT </span><span>- </span><span style="color:#b5cea8;">2</span><span>][i].read();
-</span><span>        assert_eq!(</span><span style="color:#569cd6;">char</span><span>::from(screen_char.ascii_character), c);
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/vga_buffer.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_println_output</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> s</span><span> =</span><span style="color: #CE9178;"> &quot;Alguna cadena de prueba que cabe en una única línea&quot;</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> s</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span> (</span><span style="color: #9CDCFE;">i</span><span>,</span><span style="color: #9CDCFE;"> c</span><span>)</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> s</span><span>.</span><span style="color: #DCDCAA;">chars</span><span>().</span><span style="color: #DCDCAA;">enumerate</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> screen_char</span><span> = WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().buffer.chars[BUFFER_HEIGHT -</span><span style="color: #B5CEA8;"> 2</span><span>][</span><span style="color: #9CDCFE;">i</span><span>].</span><span style="color: #DCDCAA;">read</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        assert_eq!</span><span>(</span><span style="color: #4EC9B0;">char</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #9CDCFE;">screen_char</span><span>.ascii_character),</span><span style="color: #9CDCFE;"> c</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>La función define una cadena de prueba, la imprime usando <code>println</code>, y luego itera sobre los caracteres de pantalla del estático <code>WRITER</code>, que representa el buffer de texto VGA. Dado que <code>println</code> imprime en la última línea de pantalla y luego inmediatamente agrega una nueva línea, la cadena debería aparecer en la línea <code>BUFFER_HEIGHT - 2</code>.</p>
-<p>Usando <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a>, contamos el número de iteraciones en la variable <code>i</code>, que luego utilizamos para cargar el carácter de pantalla correspondiente a <code>c</code>. Al comparar el <code>ascii_character</code> del carácter de pantalla con <code>c</code>, nos aseguramos de que cada carácter de la cadena realmente aparece en el buffer de texto VGA.</p>
+<p>Usando <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a>, contamos el número de iteraciones en la variable <code>i</code>, que luego utilizamos para cargar el carácter de pantalla correspondiente a <code>c</code>. Al comparar el <code>ascii_character</code> del carácter de pantalla con <code>c</code>, nos aseguramos de que cada carácter de la cadena realmente aparece en el buffer de texto VGA.</p>
 <p>Como puedes imaginar, podríamos crear muchas más funciones de prueba. Por ejemplo, una función que teste que no se produzca un pánico al imprimir líneas muy largas y que se envuelvan correctamente, o una función que pruebe que se manejan correctamente nuevas líneas, caracteres no imprimibles y caracteres no unicode.</p>
 <p>Para el resto de esta publicación, sin embargo, explicaremos cómo crear <em>pruebas de integración</em> para probar la interacción de diferentes componentes juntos.</p>
 <h2 id="pruebas-de-integracion"><a class="zola-anchor" href="#pruebas-de-integracion" aria-label="Anchor link for: pruebas-de-integracion">🔗</a>Pruebas de Integración</h2>
-<p>La convención para las <a href="https://doc.rust-lang.org/book/ch11-03-test-organization.html#integration-tests">pruebas de integración</a> en Rust es ponerlas en un directorio <code>tests</code> en la raíz del proyecto (es decir, junto al directorio <code>src</code>). Tanto el marco de prueba predeterminado como los marcos de prueba personalizados recogerán y ejecutarán automáticamente todas las pruebas en ese directorio.</p>
+<p>La convención para las <a rel="external" href="https://doc.rust-lang.org/book/ch11-03-test-organization.html#integration-tests">pruebas de integración</a> en Rust es ponerlas en un directorio <code>tests</code> en la raíz del proyecto (es decir, junto al directorio <code>src</code>). Tanto el marco de prueba predeterminado como los marcos de prueba personalizados recogerán y ejecutarán automáticamente todas las pruebas en ese directorio.</p>
 <p>Todas las pruebas de integración son sus propios ejecutables y completamente separadas de nuestro <code>main.rs</code>. Esto significa que cada prueba necesita definir su propia función de punto de entrada. Creemos una prueba de integración de ejemplo llamada <code>basic_boot</code> para ver cómo funciona en detalle:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/basic_boot.rs
-</span><span>
-</span><span>#![no_std]
-</span><span>#![no_main]
-</span><span>#![feature(custom_test_frameworks)]
-</span><span>#![test_runner(crate::test_runner)]
-</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
-</span><span>
-</span><span>#[no_mangle] </span><span style="color:#608b4e;">// no modificar el nombre de esta función
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    test_main();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
-</span><span>    unimplemented!();
-</span><span>}
-</span><span>
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en tests/basic_boot.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![no_std]</span></span>
+<span class="giallo-l"><span>#![no_main]</span></span>
+<span class="giallo-l"><span>#![feature(custom_test_frameworks)]</span></span>
+<span class="giallo-l"><span>#![test_runner(</span><span style="color: #569CD6;">crate</span><span>::test_runner)]</span></span>
+<span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[no_mangle]</span><span style="color: #6A9955;"> // no modificar el nombre de esta función</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #DCDCAA;"> Fn</span><span>()]) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    unimplemented!</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Dado que las pruebas de integración son ejecutables separados, necesitamos proporcionar todos los atributos de crate nuevamente (<code>no_std</code>, <code>no_main</code>, <code>test_runner</code>, etc.). También necesitamos crear una nueva función de punto de entrada <code>_start</code>, que llama a la función de punto de entrada de prueba <code>test_main</code>. No necesitamos ningún atributo <code>cfg(test)</code> porque los ejecutables de prueba de integración nunca se construyen en modo no prueba.</p>
-<p>Usamos el macro <a href="https://doc.rust-lang.org/core/macro.unimplemented.html"><code>unimplemented</code></a> que siempre provoca un pánico como un marcador de posición para la función <code>test_runner</code> y simplemente hacemos <code>loop</code> en el manejador de pánico por ahora. Idealmente, queremos implementar estas funciones exactamente como lo hicimos en nuestro <code>main.rs</code> utilizando el macro <code>serial_println</code> y la función <code>exit_qemu</code>. El problema es que no tenemos acceso a estas funciones ya que las pruebas se construyen completamente por separado de nuestro ejecutable <code>main.rs</code>.</p>
+<p>Usamos el macro <a rel="external" href="https://doc.rust-lang.org/core/macro.unimplemented.html"><code>unimplemented</code></a> que siempre provoca un pánico como un marcador de posición para la función <code>test_runner</code> y simplemente hacemos <code>loop</code> en el manejador de pánico por ahora. Idealmente, queremos implementar estas funciones exactamente como lo hicimos en nuestro <code>main.rs</code> utilizando el macro <code>serial_println</code> y la función <code>exit_qemu</code>. El problema es que no tenemos acceso a estas funciones ya que las pruebas se construyen completamente por separado de nuestro ejecutable <code>main.rs</code>.</p>
 <p>Si ejecutas <code>cargo test</code> en esta etapa, te quedarás atrapado en un bucle infinito porque el manejador de pánicos se queda en un bucle indefinidamente. Necesitas usar el atajo de teclado <code>ctrl+c</code> para salir de QEMU.</p>
 <h3 id="crear-una-biblioteca"><a class="zola-anchor" href="#crear-una-biblioteca" aria-label="Anchor link for: crear-una-biblioteca">🔗</a>Crear una Biblioteca</h3>
 <p>Para que las funciones requeridas estén disponibles para nuestra prueba de integración, necesitamos separar una biblioteca de nuestro <code>main.rs</code>, que pueda ser incluida por otros crates y ejecutables de pruebas de integración. Para hacer esto, creamos un nuevo archivo <code>src/lib.rs</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs
-</span><span>
-</span><span>#![no_std]
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![no_std]</span></span>
+<span class="giallo-l"></span></code></pre>
 <p>Al igual que <code>main.rs</code>, <code>lib.rs</code> es un archivo especial que es automáticamente reconocido por cargo. La biblioteca es una unidad de compilación separada, por lo que necesitamos especificar el atributo <code>#![no_std]</code> nuevamente.</p>
 <p>Para que nuestra biblioteca funcione con <code>cargo test</code>, también necesitamos mover las funciones y atributos de prueba de <code>main.rs</code> a <code>lib.rs</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
-</span><span>
-</span><span>#![cfg_attr(test, no_main)]
-</span><span>#![feature(custom_test_frameworks)]
-</span><span>#![test_runner(crate::test_runner)]
-</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
-</span><span>
-</span><span style="color:#569cd6;">pub trait </span><span>Testable {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; ();
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl</span><span>&lt;T&gt; Testable </span><span style="color:#569cd6;">for </span><span>T
-</span><span style="color:#569cd6;">where
-</span><span>    T: Fn(),
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>run(</span><span style="color:#569cd6;">&amp;</span><span>self) {
-</span><span>        serial_print!(</span><span style="color:#d69d85;">&quot;{}...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>, core::any::type_name::&lt;T&gt;());
-</span><span>        self();
-</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
-</span><span>    }
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Testable]) {
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Ejecutando {} pruebas&quot;</span><span>, tests.len());
-</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
-</span><span>        test.run();
-</span><span>    }
-</span><span>    exit_qemu(QemuExitCode::Success);
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>test_panic_handler(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[fallido]</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>);
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Error: {}</span><span style="color:#e3bbab;">\n</span><span style="color:#d69d85;">&quot;</span><span>, info);
-</span><span>    exit_qemu(QemuExitCode::Failed);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span><span>
-</span><span style="color:#608b4e;">/// Punto de entrada para `cargo test`
-</span><span>#[cfg(test)]
-</span><span>#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    test_main();
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span><span>
-</span><span>#[cfg(test)]
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    test_panic_handler(info)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![cfg_attr(test, no_main)]</span></span>
+<span class="giallo-l"><span>#![feature(custom_test_frameworks)]</span></span>
+<span class="giallo-l"><span>#![test_runner(</span><span style="color: #569CD6;">crate</span><span>::test_runner)]</span></span>
+<span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub trait</span><span style="color: #4EC9B0;"> Testable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> run</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt; ();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span>&lt;</span><span style="color: #4EC9B0;">T</span><span>&gt;</span><span style="color: #4EC9B0;"> Testable</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> T</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">where</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    T</span><span>:</span><span style="color: #DCDCAA;"> Fn</span><span>(),</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> run</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        serial_print!</span><span>(</span><span style="color: #CE9178;">&quot;{}...</span><span style="color: #D7BA7D;">\t</span><span style="color: #CE9178;">&quot;</span><span>,</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">any</span><span>::</span><span style="color: #DCDCAA;">type_name</span><span>::&lt;</span><span style="color: #4EC9B0;">T</span><span>&gt;());</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[ok]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #4EC9B0;"> Testable</span><span>]) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Ejecutando {} pruebas&quot;</span><span>,</span><span style="color: #9CDCFE;"> tests</span><span>.</span><span style="color: #DCDCAA;">len</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> test</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> tests</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        test</span><span>.</span><span style="color: #DCDCAA;">run</span><span>();</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Success</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[fallido]</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Error: {}</span><span style="color: #D7BA7D;">\n</span><span style="color: #CE9178;">&quot;</span><span>,</span><span style="color: #9CDCFE;"> info</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Failed</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Punto de entrada para `cargo test`</span></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Para hacer que nuestra <code>test_runner</code> esté disponible para los ejecutables y pruebas de integración, la hacemos pública y no le aplicamos el atributo <code>cfg(test)</code>. También extraemos la implementación de nuestro manejador de pánicos en una función pública <code>test_panic_handler</code>, para que esté disponible para los ejecutables también.</p>
-<p>Dado que nuestra <code>lib.rs</code> se prueba independientemente de <code>main.rs</code>, necesitamos añadir una función de entrada <code>_start</code> y un manejador de pánico cuando la biblioteca se compila en modo de prueba. Usando el atributo <a href="https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg_attr-attribute"><code>cfg_attr</code></a> de crate, habilitamos condicionalmente el atributo <code>no_main</code> en este caso.</p>
+<p>Dado que nuestra <code>lib.rs</code> se prueba independientemente de <code>main.rs</code>, necesitamos añadir una función de entrada <code>_start</code> y un manejador de pánico cuando la biblioteca se compila en modo de prueba. Usando el atributo <a rel="external" href="https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg_attr-attribute"><code>cfg_attr</code></a> de crate, habilitamos condicionalmente el atributo <code>no_main</code> en este caso.</p>
 <p>También movemos el enum <code>QemuExitCode</code> y la función <code>exit_qemu</code> y los hacemos públicos:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
-</span><span>
-</span><span>#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-</span><span>#[repr(u32)]
-</span><span style="color:#569cd6;">pub enum </span><span>QemuExitCode {
-</span><span>    Success = </span><span style="color:#b5cea8;">0x10</span><span>,
-</span><span>    Failed = </span><span style="color:#b5cea8;">0x11</span><span>,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>exit_qemu(exit_code: QemuExitCode) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::port::Port;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> port = Port::new(</span><span style="color:#b5cea8;">0xf4</span><span>);
-</span><span>        port.write(exit_code </span><span style="color:#569cd6;">as u32</span><span>);
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>,</span><span style="color: #4EC9B0;"> PartialEq</span><span>,</span><span style="color: #4EC9B0;"> Eq</span><span>)]</span></span>
+<span class="giallo-l"><span>#[repr(</span><span style="color: #4EC9B0;">u32</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> QemuExitCode</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Success</span><span> =</span><span style="color: #B5CEA8;"> 0x10</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Failed</span><span> =</span><span style="color: #B5CEA8;"> 0x11</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> exit_qemu</span><span>(</span><span style="color: #9CDCFE;">exit_code</span><span>:</span><span style="color: #4EC9B0;"> QemuExitCode</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">port</span><span>::</span><span style="color: #4EC9B0;">Port</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> port</span><span> =</span><span style="color: #4EC9B0;"> Port</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0xf4</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        port</span><span>.</span><span style="color: #DCDCAA;">write</span><span>(</span><span style="color: #9CDCFE;">exit_code</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u32</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Ahora los ejecutables y las pruebas de integración pueden importar estas funciones de la biblioteca y no necesitan definir sus propias implementaciones. Para también hacer que <code>println</code> y <code>serial_println</code> estén disponibles, movemos también las declaraciones de módulo:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub mod </span><span>serial;
-</span><span style="color:#569cd6;">pub mod </span><span>vga_buffer;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub mod</span><span> serial;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub mod</span><span> vga_buffer;</span></span></code></pre>
 <p>Hacemos que los módulos sean públicos para que sean utilizables fuera de nuestra biblioteca. Esto también es necesario para hacer que nuestros macros <code>println</code> y <code>serial_println</code> sean utilizables ya que utilizan las funciones <code>_print</code> de los módulos.</p>
 <p>Ahora podemos actualizar nuestro <code>main.rs</code> para usar la biblioteca:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en src/main.rs
-</span><span>
-</span><span>#![no_std]
-</span><span>#![no_main]
-</span><span>#![feature(custom_test_frameworks)]
-</span><span>#![test_runner(blog_os::test_runner)]
-</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
-</span><span style="color:#569cd6;">use </span><span>blog_os::println;
-</span><span>
-</span><span>#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;¡Hola Mundo</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">!&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
-</span><span>
-</span><span>    #[cfg(test)]
-</span><span>    test_main();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span><span>
-</span><span style="color:#608b4e;">/// Esta función se llama en caso de pánico.
-</span><span>#[cfg(not(test))]
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, info);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span><span>
-</span><span>#[cfg(test)]
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    blog_os::test_panic_handler(info)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![no_std]</span></span>
+<span class="giallo-l"><span>#![no_main]</span></span>
+<span class="giallo-l"><span>#![feature(custom_test_frameworks)]</span></span>
+<span class="giallo-l"><span>#![test_runner(blog_os::test_runner)]</span></span>
+<span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::println;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;¡Hola Mundo{}!&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    #[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Esta función se llama en caso de pánico.</span></span>
+<span class="giallo-l"><span>#[cfg(not(test))]</span></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> info</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>La biblioteca es utilizable como si fuera una crate externa normal. Se llama <code>blog_os</code>, como nuestra crate. El código anterior utiliza la función <code>test_runner</code> de <code>blog_os</code> en el atributo <code>test_runner</code> y la función <code>test_panic_handler</code> de <code>blog_os</code> en nuestro manejador de pánicos <code>cfg(test)</code>. También importa el macro <code>println</code> para hacerlo disponible en nuestras funciones <code>_start</code> y <code>panic</code>.</p>
 <p>En este punto, <code>cargo run</code> y <code>cargo test</code> deberían funcionar nuevamente. Por supuesto, <code>cargo test</code> todavía se queda atrapado en un bucle infinito (puedes salir con <code>ctrl+c</code>). Vamos a solucionar esto usando las funciones de biblioteca requeridas en nuestra prueba de integración.</p>
 <h3 id="completar-la-prueba-de-integracion"><a class="zola-anchor" href="#completar-la-prueba-de-integracion" aria-label="Anchor link for: completar-la-prueba-de-integracion">🔗</a>Completar la Prueba de Integración</h3>
 <p>Al igual que nuestro <code>src/main.rs</code>, nuestro ejecutable <code>tests/basic_boot.rs</code> puede importar tipos de nuestra nueva biblioteca. Esto nos permite importar los componentes faltantes para completar nuestra prueba:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/basic_boot.rs
-</span><span>
-</span><span>#![test_runner(blog_os::test_runner)]
-</span><span>
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    blog_os::test_panic_handler(info)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en tests/basic_boot.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![test_runner(blog_os::test_runner)]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>En lugar de reimplementar el runner de prueba, usamos la función <code>test_runner</code> de nuestra biblioteca cambiando el atributo <code>#![test_runner(crate::test_runner)]</code> a <code>#![test_runner(blog_os::test_runner)]</code>. Ya no necesitamos la función de sanidad <code>test_runner</code> de referencia en <code>basic_boot.rs</code>, así que podemos eliminarla. Para nuestro manejador de pánicos, llamamos a la función <code>blog_os::test_panic_handler</code> como hicimos en nuestro archivo <code>main.rs</code>.</p>
 <p>Ahora <code>cargo test</code> sale normalmente nuevamente. Cuando lo ejecutas, verás que construye y ejecuta las pruebas para <code>lib.rs</code>, <code>main.rs</code> y <code>basic_boot.rs</code> por separado después de cada uno. Para <code>main.rs</code> y las pruebas de integración <code>basic_boot</code>, informa “Ejecutando 0 pruebas” ya que estos archivos no tienen funciones anotadas con <code>#[test_case]</code>.</p>
 <p>Ahora podemos añadir pruebas a nuestro <code>basic_boot.rs</code>. Por ejemplo, podemos probar que <code>println</code> funciona sin provocar un pánico, como hicimos en las pruebas del buffer VGA:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/basic_boot.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>blog_os::println;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>test_println() {
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;salida de test_println&quot;</span><span>);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en tests/basic_boot.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::println;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_println</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;salida de test_println&quot;</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Cuando ejecutamos <code>cargo test</code> ahora, vemos que encuentra y ejecuta la función de prueba.</p>
 <p>La prueba podría parecer un poco inútil ahora ya que es casi idéntica a una de las pruebas del buffer VGA. Sin embargo, en el futuro, las funciones <code>_start</code> de nuestros <code>main.rs</code> y <code>lib.rs</code> podrían crecer y llamar a varias rutinas de inicialización antes de ejecutar la función <code>test_main</code>, de modo que las dos pruebas se ejecuten en entornos muy diferentes.</p>
 <p>Al probar <code>println</code> en un entorno de <code>basic_boot</code> sin llamar a ninguna rutina de inicialización en <code>_start</code>, podemos asegurarnos de que <code>println</code> funcione justo después de arrancar. Esto es importante porque nos basamos en ello, por ejemplo, para imprimir mensajes de pánico.</p>
@@ -817,59 +778,56 @@
 </ul>
 <p>Como puedes imaginar, son posibles muchas más pruebas. Al añadir tales pruebas, podemos asegurarnos de no romperlas accidentalmente al añadir nuevas características a nuestro núcleo o refactorizar nuestro código. Esto es especialmente importante cuando nuestro núcleo se vuelve más grande y complejo.</p>
 <h3 id="pruebas-que-deberian-fallar"><a class="zola-anchor" href="#pruebas-que-deberian-fallar" aria-label="Anchor link for: pruebas-que-deberian-fallar">🔗</a>Pruebas que Deberían Fallar</h3>
-<p>El marco de pruebas de la biblioteca estándar admite un atributo <a href="https://doc.rust-lang.org/rust-by-example/testing/unit_testing.html#testing-panics"><code>#[should_panic]</code></a> que permite construir funciones de prueba que deberían fallar. Esto es útil, por ejemplo, para verificar que una función falle cuando se pasa un argumento inválido. Desafortunadamente, este atributo no está soportado en crates <code>#[no_std]</code> ya que requiere soporte de la biblioteca estándar.</p>
+<p>El marco de pruebas de la biblioteca estándar admite un atributo <a rel="external" href="https://doc.rust-lang.org/rust-by-example/testing/unit_testing.html#testing-panics"><code>#[should_panic]</code></a> que permite construir funciones de prueba que deberían fallar. Esto es útil, por ejemplo, para verificar que una función falle cuando se pasa un argumento inválido. Desafortunadamente, este atributo no está soportado en crates <code>#[no_std]</code> ya que requiere soporte de la biblioteca estándar.</p>
 <p>Si bien no podemos usar el atributo <code>#[should_panic]</code> en nuestro núcleo, podemos obtener un comportamiento similar creando una prueba de integración que salga con un código de error de éxito desde el manejador de pánicos. Comencemos a crear tal prueba con el nombre <code>should_panic</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/should_panic.rs
-</span><span>
-</span><span>#![no_std]
-</span><span>#![no_main]
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
-</span><span style="color:#569cd6;">use </span><span>blog_os::{QemuExitCode, exit_qemu, serial_println};
-</span><span>
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
-</span><span>    exit_qemu(QemuExitCode::Success);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en tests/should_panic.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![no_std]</span></span>
+<span class="giallo-l"><span>#![no_main]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::{</span><span style="color: #4EC9B0;">QemuExitCode</span><span>, exit_qemu, serial_println};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">_info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[ok]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Success</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Esta prueba aún está incompleta ya que no define una función <code>_start</code> ni ninguno de los atributos del marco de prueba personalizados que faltan. Añadamos las partes que faltan:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/should_panic.rs
-</span><span>
-</span><span>#![feature(custom_test_frameworks)]
-</span><span>#![test_runner(test_runner)]
-</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
-</span><span>
-</span><span>#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    test_main();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>test_runner(tests: </span><span style="color:#569cd6;">&amp;</span><span>[</span><span style="color:#569cd6;">&amp;</span><span>dyn Fn()]) {
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;Ejecutando {} pruebas&quot;</span><span>, tests.len());
-</span><span>    </span><span style="color:#569cd6;">for</span><span> test </span><span style="color:#569cd6;">in</span><span> tests {
-</span><span>        test();
-</span><span>        serial_println!(</span><span style="color:#d69d85;">&quot;[la prueba no falló]&quot;</span><span>);
-</span><span>        exit_qemu(QemuExitCode::Failed);
-</span><span>    }
-</span><span>    exit_qemu(QemuExitCode::Success);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en tests/should_panic.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![feature(custom_test_frameworks)]</span></span>
+<span class="giallo-l"><span>#![test_runner(test_runner)]</span></span>
+<span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #DCDCAA;"> Fn</span><span>()]) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Ejecutando {} pruebas&quot;</span><span>,</span><span style="color: #9CDCFE;"> tests</span><span>.</span><span style="color: #DCDCAA;">len</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> test</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> tests</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        test</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[la prueba no falló]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Failed</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Success</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>En lugar de reutilizar el <code>test_runner</code> de <code>lib.rs</code>, la prueba define su propia función <code>test_runner</code> que sale con un código de error de fallo cuando una prueba retorna sin provocar un pánico (queremos que nuestras pruebas fallen). Si no se define ninguna función de prueba, el runner sale con un código de éxito. Dado que el runner siempre sale después de ejecutar una sola prueba, no tiene sentido definir más de una función <code>#[test_case]</code>.</p>
 <p>Ahora podemos crear una prueba que debería fallar:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/should_panic.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>blog_os::serial_print;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>should_fail() {
-</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>);
-</span><span>    assert_eq!(</span><span style="color:#b5cea8;">0</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en tests/should_panic.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::serial_print;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> should_fail</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_print!</span><span>(</span><span style="color: #CE9178;">&quot;should_panic::should_fail...</span><span style="color: #D7BA7D;">\t</span><span style="color: #CE9178;">&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #B5CEA8;">0</span><span>,</span><span style="color: #B5CEA8;"> 1</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>La prueba utiliza <code>assert_eq</code> para afirmar que <code>0</code> y <code>1</code> son iguales. Por supuesto, esto falla, por lo que nuestra prueba provoca un pánico como se deseaba. Ten en cuenta que necesitamos imprimir manualmente el nombre de la función usando <code>serial_print!</code> aquí porque no usamos el trait <code>Testable</code>.</p>
 <p>Cuando ejecutamos la prueba a través de <code>cargo test --test should_panic</code> vemos que es exitosa porque la prueba se produjo como se esperaba. Cuando comentamos la afirmación y ejecutamos la prueba nuevamente, vemos que, de hecho, falla con el mensaje <em>“la prueba no falló”</em>.</p>
 <p>Una gran desventaja de este enfoque es que solo funciona para una única función de prueba. Con múltiples funciones <code>#[test_case]</code>, solo se ejecuta la primera función porque la ejecución no puede continuar después de que se ha llamado al manejador de pánicos. Actualmente no sé una buena manera de resolver este problema, ¡así que házmelo saber si tienes una idea!</p>
@@ -877,41 +835,39 @@
 <p>Para las pruebas de integración que solo tienen una única función de prueba (como nuestra prueba <code>should_panic</code>), el runner de prueba no es realmente necesario. Para casos como este, podemos deshabilitar completamente el runner de pruebas y ejecutar nuestra prueba directamente en la función <code>_start</code>.</p>
 <p>La clave para esto es deshabilitar la bandera <code>harness</code> para la prueba en el <code>Cargo.toml</code>, que define si se usa un runner de prueba para una prueba de integración. Cuando está configurada como <code>false</code>, se desactivan tanto el marco de prueba predeterminado como la característica de marcos de prueba personalizados, por lo que la prueba se trata como un ejecutable normal.</p>
 <p>Deshabilitemos la bandera <code>harness</code> para nuestra prueba <code>should_panic</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># en Cargo.toml
-</span><span>
-</span><span>[[</span><span style="color:#808080;">test</span><span>]]
-</span><span style="color:#569cd6;">name </span><span>= </span><span style="color:#d69d85;">&quot;should_panic&quot;
-</span><span style="color:#569cd6;">harness </span><span>= </span><span style="color:#569cd6;">false
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[[test]]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">name</span><span> =</span><span style="color: #CE9178;"> &quot;should_panic&quot;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">harness</span><span> =</span><span style="color: #569CD6;"> false</span></span></code></pre>
 <p>Ahora simplificamos enormemente nuestra prueba <code>should_panic</code> al eliminar el código relacionado con el <code>test_runner</code>. El resultado se ve así:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// en tests/should_panic.rs
-</span><span>
-</span><span>#![no_std]
-</span><span>#![no_main]
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
-</span><span style="color:#569cd6;">use </span><span>blog_os::{exit_qemu, serial_print, serial_println, QemuExitCode};
-</span><span>
-</span><span>#[no_mangle]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    should_fail();
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[la prueba no falló]&quot;</span><span>);
-</span><span>    exit_qemu(QemuExitCode::Failed);
-</span><span>    </span><span style="color:#569cd6;">loop</span><span>{}
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>should_fail() {
-</span><span>    serial_print!(</span><span style="color:#d69d85;">&quot;should_panic::should_fail...</span><span style="color:#e3bbab;">\t</span><span style="color:#d69d85;">&quot;</span><span>);
-</span><span>    assert_eq!(</span><span style="color:#b5cea8;">0</span><span>, </span><span style="color:#b5cea8;">1</span><span>);
-</span><span>}
-</span><span>
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(_info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    serial_println!(</span><span style="color:#d69d85;">&quot;[ok]&quot;</span><span>);
-</span><span>    exit_qemu(QemuExitCode::Success);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en tests/should_panic.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![no_std]</span></span>
+<span class="giallo-l"><span>#![no_main]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::{exit_qemu, serial_print, serial_println,</span><span style="color: #4EC9B0;"> QemuExitCode</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    should_fail</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[la prueba no falló]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Failed</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span>{}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> should_fail</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_print!</span><span>(</span><span style="color: #CE9178;">&quot;should_panic::should_fail...</span><span style="color: #D7BA7D;">\t</span><span style="color: #CE9178;">&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #B5CEA8;">0</span><span>,</span><span style="color: #B5CEA8;"> 1</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">_info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[ok]&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    exit_qemu</span><span>(</span><span style="color: #4EC9B0;">QemuExitCode</span><span>::</span><span style="color: #4EC9B0;">Success</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Ahora llamamos a la función <code>should_fail</code> directamente desde nuestra función <code>_start</code> y salimos con un código de error de fallo si retorna. Cuando ejecutamos <code>cargo test --test should_panic</code> ahora, vemos que la prueba se comporta exactamente como antes.</p>
 <p>Además de crear pruebas <code>should_panic</code>, deshabilitar el atributo <code>harness</code> también puede ser útil para pruebas de integración complejas, por ejemplo, cuando las funciones de prueba individuales tienen efectos secundarios y necesitan ejecutarse en un orden específico.</p>
 <h2 id="resumen"><a class="zola-anchor" href="#resumen" aria-label="Anchor link for: resumen">🔗</a>Resumen</h2>

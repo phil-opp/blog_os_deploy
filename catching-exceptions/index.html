@@ -81,7 +81,7 @@
 
     <p>In this post, we start exploring exceptions. We set up an interrupt descriptor table and add handler functions. At the end of this post, our kernel will be able to catch divide-by-zero faults.</p>
 <span id="continue-reading"></span>
-<p>As always, the complete source code is on <a href="https://github.com/phil-opp/blog_os/tree/catching_exceptions">GitHub</a>. Please file <a href="https://github.com/phil-opp/blog_os/issues">issues</a> for any problems, questions, or improvement suggestions. There is also a comment section at the end of this page.</p>
+<p>As always, the complete source code is on <a rel="external" href="https://github.com/phil-opp/blog_os/tree/catching_exceptions">GitHub</a>. Please file <a rel="external" href="https://github.com/phil-opp/blog_os/issues">issues</a> for any problems, questions, or improvement suggestions. There is also a comment section at the end of this page.</p>
 <blockquote>
 <p><strong>Note</strong>: This post describes how to handle exceptions using naked functions (see <a href="https://os.phil-opp.com/edition-1/extra/naked-exceptions/">“Handling Exceptions with Naked Functions”</a> for an overview). Our new way of handling exceptions can be found in the <a href="https://os.phil-opp.com/handling-exceptions/">“Handling Exceptions”</a> post.</p>
 </blockquote>
@@ -94,7 +94,7 @@
 <li><strong>Double Fault</strong>: When an exception occurs, the CPU tries to call the corresponding handler function. If another exception exception occurs <em>while calling the exception handler</em>, the CPU raises a double fault exception. This exception also occurs when there is no handler function registered for an exception.</li>
 <li><strong>Triple Fault</strong>: If an exception occurs while the CPU tries to call the double fault handler function, it issues a fatal <em>triple fault</em>. We can’t catch or handle a triple fault. Most processors react by resetting themselves and rebooting the operating system. This causes the bootloops we experienced in the previous posts.</li>
 </ul>
-<p>For the full list of exceptions check out the <a href="https://wiki.osdev.org/Exceptions">OSDev wiki</a>.</p>
+<p>For the full list of exceptions check out the <a rel="external" href="https://wiki.osdev.org/Exceptions">OSDev wiki</a>.</p>
 <h3 id="the-interrupt-descriptor-table"><a class="zola-anchor" href="#the-interrupt-descriptor-table" aria-label="Anchor link for: the-interrupt-descriptor-table">🔗</a>The Interrupt Descriptor Table</h3>
 <p>In order to catch and handle exceptions, we have to set up a so-called <em>Interrupt Descriptor Table</em> (IDT). In this table we can specify a handler function for each CPU exception. The hardware uses this table directly, so we need to follow a predefined format. Each entry must have the following 16-byte structure:</p>
 <table><thead><tr><th>Type</th><th>Name</th><th>Description</th></tr></thead><tbody>
@@ -115,145 +115,133 @@
 <tr><td>13‑14</td><td>Descriptor Privilege Level (DPL)</td><td>The minimal privilege level required for calling this handler.</td></tr>
 <tr><td>15</td><td>Present</td><td></td></tr>
 </tbody></table>
-<p>Each exception has a predefined IDT index. For example the invalid opcode exception has table index 6 and the page fault exception has table index 14. Thus, the hardware can automatically load the corresponding IDT entry for each exception. The <a href="https://wiki.osdev.org/Exceptions">Exception Table</a> in the OSDev wiki shows the IDT indexes of all exceptions in the “Vector nr.” column.</p>
+<p>Each exception has a predefined IDT index. For example the invalid opcode exception has table index 6 and the page fault exception has table index 14. Thus, the hardware can automatically load the corresponding IDT entry for each exception. The <a rel="external" href="https://wiki.osdev.org/Exceptions">Exception Table</a> in the OSDev wiki shows the IDT indexes of all exceptions in the “Vector nr.” column.</p>
 <p>When an exception occurs, the CPU roughly does the following:</p>
 <ol>
 <li>Read the corresponding entry from the Interrupt Descriptor Table (IDT). For example, the CPU reads the 14-th entry when a page fault occurs.</li>
 <li>Check if the entry is present. Raise a double fault if not.</li>
-<li>Push some registers on the stack, including the instruction pointer and the <a href="https://en.wikipedia.org/wiki/FLAGS_register">EFLAGS</a> register. (We will use these values in a future post.)</li>
+<li>Push some registers on the stack, including the instruction pointer and the <a rel="external" href="https://en.wikipedia.org/wiki/FLAGS_register">EFLAGS</a> register. (We will use these values in a future post.)</li>
 <li>Disable interrupts if the entry is an interrupt gate (bit 40 not set).</li>
 <li>Load the specified GDT selector into the CS segment.</li>
 <li>Jump to the specified handler function.</li>
 </ol>
 <h2 id="handling-exceptions"><a class="zola-anchor" href="#handling-exceptions" aria-label="Anchor link for: handling-exceptions">🔗</a>Handling Exceptions</h2>
 <p>Let’s try to catch and handle CPU exceptions. We start by creating a new <code>interrupts</code> module with an <code>idt</code> submodule:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span style="color:#569cd6;">...
-</span><span style="color:#569cd6;">mod </span><span>interrupts;
-</span><span style="color:#569cd6;">...
-</span></code></pre>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">mod </span><span>idt;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"><span>...</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">mod</span><span> interrupts;</span></span>
+<span class="giallo-l"><span>...</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/interrupts/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">mod</span><span> idt;</span></span></code></pre>
 <p>Now we create types for the IDT and its entries:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/interrupts/idt.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::instructions::segmentation;
-</span><span style="color:#569cd6;">use </span><span>x86_64::structures::gdt::SegmentSelector;
-</span><span style="color:#569cd6;">use </span><span>x86_64::PrivilegeLevel;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Idt([Entry; 16]);
-</span><span>
-</span><span>#[derive(Debug, Clone, Copy)]
-</span><span>#[repr(C, packed)]
-</span><span style="color:#569cd6;">pub struct </span><span>Entry {
-</span><span>    pointer_low: </span><span style="color:#569cd6;">u16</span><span>,
-</span><span>    gdt_selector: SegmentSelector,
-</span><span>    options: EntryOptions,
-</span><span>    pointer_middle: </span><span style="color:#569cd6;">u16</span><span>,
-</span><span>    pointer_high: </span><span style="color:#569cd6;">u32</span><span>,
-</span><span>    reserved: </span><span style="color:#569cd6;">u32</span><span>,
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/interrupts/idt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::segmentation;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">gdt</span><span>::</span><span style="color: #4EC9B0;">SegmentSelector</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">PrivilegeLevel</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Idt</span><span>([</span><span style="color: #4EC9B0;">Entry</span><span>;</span><span style="color: #B5CEA8;"> 16</span><span>]);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>)]</span></span>
+<span class="giallo-l"><span>#[repr(</span><span style="color: #4EC9B0;">C</span><span>, packed)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Entry</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    pointer_low</span><span>:</span><span style="color: #4EC9B0;"> u16</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    gdt_selector</span><span>:</span><span style="color: #4EC9B0;"> SegmentSelector</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    options</span><span>:</span><span style="color: #4EC9B0;"> EntryOptions</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    pointer_middle</span><span>:</span><span style="color: #4EC9B0;"> u16</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    pointer_high</span><span>:</span><span style="color: #4EC9B0;"> u32</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    reserved</span><span>:</span><span style="color: #4EC9B0;"> u32</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The IDT is variable sized and can have up to 256 entries. We only need the first 16 entries in this post, so we define the table as <code>[Entry; 16]</code>. The remaining 240 handlers are treated as non-present by the CPU.</p>
 <p>The <code>Entry</code> type is the translation of the above table to Rust. The <code>repr(C, packed)</code> attribute ensures that the compiler keeps the field ordering and does not add any padding between them. Instead of describing the <code>gdt_selector</code> as a plain <code>u16</code>, we use the <code>SegmentSelector</code> type of the <code>x86</code> crate. We also merge bits 32 to 47 into an <code>option</code> field, because Rust has no <code>u3</code> or <code>u1</code> type. The <code>EntryOptions</code> type is described below:</p>
 <h3 id="entry-options"><a class="zola-anchor" href="#entry-options" aria-label="Anchor link for: entry-options">🔗</a>Entry Options</h3>
 <p>The <code>EntryOptions</code> type has the following skeleton:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>#[derive(Debug, Clone, Copy)]
-</span><span style="color:#569cd6;">pub struct </span><span>EntryOptions(</span><span style="color:#569cd6;">u16</span><span>);
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>EntryOptions {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>set_present(</span><span style="color:#569cd6;">&amp;mut </span><span>self, present: </span><span style="color:#569cd6;">bool</span><span>) {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>disable_interrupts(</span><span style="color:#569cd6;">&amp;mut </span><span>self, disable: </span><span style="color:#569cd6;">bool</span><span>) {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>set_privilege_level(</span><span style="color:#569cd6;">&amp;mut </span><span>self, dpl: </span><span style="color:#569cd6;">u16</span><span>) {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>set_stack_index(</span><span style="color:#569cd6;">&amp;mut </span><span>self, index: </span><span style="color:#569cd6;">u16</span><span>) {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> EntryOptions</span><span>(</span><span style="color: #4EC9B0;">u16</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> EntryOptions</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> new</span><span>() -&gt;</span><span style="color: #569CD6;"> Self</span><span> {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> set_present</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> present</span><span>:</span><span style="color: #4EC9B0;"> bool</span><span>) {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> disable_interrupts</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> disable</span><span>:</span><span style="color: #4EC9B0;"> bool</span><span>) {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> set_privilege_level</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> dpl</span><span>:</span><span style="color: #4EC9B0;"> u16</span><span>) {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> set_stack_index</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> u16</span><span>) {...}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The implementations of these methods need to modify the correct bits of the <code>u16</code> without touching the other bits. For example, we would need the following bit-fiddling to set the stack index:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>self.</span><span style="color:#b5cea8;">0 </span><span>= (self.</span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0xfff8</span><span>) </span><span style="color:#569cd6;">|</span><span> stack_index;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> = (</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> &amp;</span><span style="color: #B5CEA8;"> 0xfff8</span><span>) |</span><span style="color: #9CDCFE;"> stack_index</span><span>;</span></span></code></pre>
 <p>Or alternatively:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>self.</span><span style="color:#b5cea8;">0 </span><span>= (self.</span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">&amp; </span><span>(</span><span style="color:#569cd6;">!</span><span style="color:#b5cea8;">0b111</span><span>)) </span><span style="color:#569cd6;">|</span><span> stack_index;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> = (</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> &amp; (!</span><span style="color: #B5CEA8;">0b111</span><span>)) |</span><span style="color: #9CDCFE;"> stack_index</span><span>;</span></span></code></pre>
 <p>Or:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>self.</span><span style="color:#b5cea8;">0 </span><span>= ((self.</span><span style="color:#b5cea8;">0 </span><span>&gt;&gt; </span><span style="color:#b5cea8;">3</span><span>) &lt;&lt; </span><span style="color:#b5cea8;">3</span><span>) </span><span style="color:#569cd6;">|</span><span> stack_index;
-</span></code></pre>
-<p>Well, none of these variants is really <em>readable</em> and it’s very easy to make mistakes somewhere. Therefore I created a <code>BitField</code> trait that provides the following <a href="https://doc.rust-lang.org/nightly/core/ops/struct.Range.html">Range</a>-based API:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>self.</span><span style="color:#b5cea8;">0.</span><span>set_bits(</span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">3</span><span>, stack_index);
-</span></code></pre>
-<p>I think it is much more readable, since we abstracted away all bit-masking details. The <code>BitField</code> trait is contained in the <a href="https://crates.io/crates/bit_field">bit_field</a> crate. (It’s pretty new, so it might still contain bugs.) To add it as dependency, we run <code>cargo add bit_field</code> and add <code>extern crate bit_field;</code> to our <code>src/lib.rs</code>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> = ((</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> &gt;&gt;</span><span style="color: #B5CEA8;"> 3</span><span>) &lt;&lt;</span><span style="color: #B5CEA8;"> 3</span><span>) |</span><span style="color: #9CDCFE;"> stack_index</span><span>;</span></span></code></pre>
+<p>Well, none of these variants is really <em>readable</em> and it’s very easy to make mistakes somewhere. Therefore I created a <code>BitField</code> trait that provides the following <a rel="external" href="https://doc.rust-lang.org/nightly/core/ops/struct.Range.html">Range</a>-based API:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">self</span><span>.</span><span style="color: #B5CEA8;">0.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">0</span><span>..</span><span style="color: #B5CEA8;">3</span><span>,</span><span style="color: #9CDCFE;"> stack_index</span><span>);</span></span></code></pre>
+<p>I think it is much more readable, since we abstracted away all bit-masking details. The <code>BitField</code> trait is contained in the <a rel="external" href="https://crates.io/crates/bit_field">bit_field</a> crate. (It’s pretty new, so it might still contain bugs.) To add it as dependency, we run <code>cargo add bit_field</code> and add <code>extern crate bit_field;</code> to our <code>src/lib.rs</code>.</p>
 <p>Now we can use the trait to implement the methods of <code>EntryOptions</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/idt.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>bit_field::BitField;
-</span><span>
-</span><span>#[derive(Debug, Clone, Copy)]
-</span><span style="color:#569cd6;">pub struct </span><span>EntryOptions(</span><span style="color:#569cd6;">u16</span><span>);
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>EntryOptions {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>minimal() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> options = </span><span style="color:#b5cea8;">0</span><span>;
-</span><span>        options.set_bits(</span><span style="color:#b5cea8;">9</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">12</span><span>, </span><span style="color:#b5cea8;">0b111</span><span>); </span><span style="color:#608b4e;">// &#39;must-be-one&#39; bits
-</span><span>        EntryOptions(options)
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>new() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> options = </span><span style="color:#569cd6;">Self</span><span>::minimal();
-</span><span>        options.set_present(</span><span style="color:#569cd6;">true</span><span>).disable_interrupts(</span><span style="color:#569cd6;">true</span><span>);
-</span><span>        options
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>set_present(</span><span style="color:#569cd6;">&amp;mut </span><span>self, present: </span><span style="color:#569cd6;">bool</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;mut Self </span><span>{
-</span><span>        self.</span><span style="color:#b5cea8;">0.</span><span>set_bit(</span><span style="color:#b5cea8;">15</span><span>, present);
-</span><span>        self
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>disable_interrupts(</span><span style="color:#569cd6;">&amp;mut </span><span>self, disable: </span><span style="color:#569cd6;">bool</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;mut Self </span><span>{
-</span><span>        self.</span><span style="color:#b5cea8;">0.</span><span>set_bit(</span><span style="color:#b5cea8;">8</span><span>, </span><span style="color:#569cd6;">!</span><span>disable);
-</span><span>        self
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>set_privilege_level(</span><span style="color:#569cd6;">&amp;mut </span><span>self, dpl: </span><span style="color:#569cd6;">u16</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;mut Self </span><span>{
-</span><span>        self.</span><span style="color:#b5cea8;">0.</span><span>set_bits(</span><span style="color:#b5cea8;">13</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">15</span><span>, dpl);
-</span><span>        self
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>set_stack_index(</span><span style="color:#569cd6;">&amp;mut </span><span>self, index: </span><span style="color:#569cd6;">u16</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;mut Self </span><span>{
-</span><span>        self.</span><span style="color:#b5cea8;">0.</span><span>set_bits(</span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">3</span><span>, index);
-</span><span>        self
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/idt.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bit_field</span><span>::</span><span style="color: #4EC9B0;">BitField</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> EntryOptions</span><span>(</span><span style="color: #4EC9B0;">u16</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> EntryOptions</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> minimal</span><span>() -&gt;</span><span style="color: #569CD6;"> Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> options</span><span> =</span><span style="color: #B5CEA8;"> 0</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        options</span><span>.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">9</span><span>..</span><span style="color: #B5CEA8;">12</span><span>,</span><span style="color: #B5CEA8;"> 0b111</span><span>);</span><span style="color: #6A9955;"> // &#39;must-be-one&#39; bits</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        EntryOptions</span><span>(</span><span style="color: #9CDCFE;">options</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> new</span><span>() -&gt;</span><span style="color: #569CD6;"> Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> options</span><span> =</span><span style="color: #569CD6;"> Self</span><span>::</span><span style="color: #DCDCAA;">minimal</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        options</span><span>.</span><span style="color: #DCDCAA;">set_present</span><span>(</span><span style="color: #569CD6;">true</span><span>).</span><span style="color: #DCDCAA;">disable_interrupts</span><span>(</span><span style="color: #569CD6;">true</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        options</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> set_present</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> present</span><span>:</span><span style="color: #4EC9B0;"> bool</span><span>) -&gt; &amp;</span><span style="color: #569CD6;">mut Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #B5CEA8;">0.</span><span style="color: #DCDCAA;">set_bit</span><span>(</span><span style="color: #B5CEA8;">15</span><span>,</span><span style="color: #9CDCFE;"> present</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> disable_interrupts</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> disable</span><span>:</span><span style="color: #4EC9B0;"> bool</span><span>) -&gt; &amp;</span><span style="color: #569CD6;">mut Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #B5CEA8;">0.</span><span style="color: #DCDCAA;">set_bit</span><span>(</span><span style="color: #B5CEA8;">8</span><span>, !</span><span style="color: #9CDCFE;">disable</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> set_privilege_level</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> dpl</span><span>:</span><span style="color: #4EC9B0;"> u16</span><span>) -&gt; &amp;</span><span style="color: #569CD6;">mut Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #B5CEA8;">0.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">13</span><span>..</span><span style="color: #B5CEA8;">15</span><span>,</span><span style="color: #9CDCFE;"> dpl</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> set_stack_index</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> u16</span><span>) -&gt; &amp;</span><span style="color: #569CD6;">mut Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #B5CEA8;">0.</span><span style="color: #DCDCAA;">set_bits</span><span>(</span><span style="color: #B5CEA8;">0</span><span>..</span><span style="color: #B5CEA8;">3</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Note that the ranges are <em>exclusive</em> the upper bound. The <code>minimal</code> function creates an <code>EntryOptions</code> type with only the “must-be-one” bits set. The <code>new</code> function, on the other hand, chooses reasonable defaults: It sets the present bit (why would you want to create a non-present entry?) and disables interrupts (normally we don’t want that our exception handlers can be interrupted). By returning the self pointer from the <code>set_*</code> methods, we allow easy method chaining such as <code>options.set_present(true).disable_interrupts(true)</code>.</p>
 <h3 id="creating-idt-entries"><a class="zola-anchor" href="#creating-idt-entries" aria-label="Anchor link for: creating-idt-entries">🔗</a>Creating IDT Entries</h3>
 <p>Now we can add a function to create new IDT entries:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>Entry {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>new(gdt_selector: SegmentSelector, handler: HandlerFunc) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let</span><span> pointer = handler </span><span style="color:#569cd6;">as u64</span><span>;
-</span><span>        Entry {
-</span><span>            gdt_selector: gdt_selector,
-</span><span>            pointer_low: pointer </span><span style="color:#569cd6;">as u16</span><span>,
-</span><span>            pointer_middle: (pointer &gt;&gt; </span><span style="color:#b5cea8;">16</span><span>) </span><span style="color:#569cd6;">as u16</span><span>,
-</span><span>            pointer_high: (pointer &gt;&gt; </span><span style="color:#b5cea8;">32</span><span>) </span><span style="color:#569cd6;">as u32</span><span>,
-</span><span>            options: EntryOptions::new(),
-</span><span>            reserved: </span><span style="color:#b5cea8;">0</span><span>,
-</span><span>        }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Entry</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> new</span><span>(</span><span style="color: #9CDCFE;">gdt_selector</span><span>:</span><span style="color: #4EC9B0;"> SegmentSelector</span><span>,</span><span style="color: #9CDCFE;"> handler</span><span>:</span><span style="color: #4EC9B0;"> HandlerFunc</span><span>) -&gt;</span><span style="color: #569CD6;"> Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> pointer</span><span> =</span><span style="color: #9CDCFE;"> handler</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Entry</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            gdt_selector</span><span>:</span><span style="color: #9CDCFE;"> gdt_selector</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            pointer_low</span><span>:</span><span style="color: #9CDCFE;"> pointer</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u16</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            pointer_middle</span><span>: (</span><span style="color: #9CDCFE;">pointer</span><span> &gt;&gt;</span><span style="color: #B5CEA8;"> 16</span><span>)</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u16</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            pointer_high</span><span>: (</span><span style="color: #9CDCFE;">pointer</span><span> &gt;&gt;</span><span style="color: #B5CEA8;"> 32</span><span>)</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u32</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            options</span><span>:</span><span style="color: #4EC9B0;"> EntryOptions</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(),</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            reserved</span><span>:</span><span style="color: #B5CEA8;"> 0</span><span>,</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We take a GDT selector and a handler function as arguments and create a new IDT entry for it. The <code>HandlerFunc</code> type is described below. It is a function pointer that can be converted to an <code>u64</code>. We choose the lower 16 bits for <code>pointer_low</code>, the next 16 bits for <code>pointer_middle</code> and the remaining 32 bits for <code>pointer_high</code>. For the options field we choose our default options, i.e. present and disabled interrupts.</p>
 <h3 id="the-handler-function-type"><a class="zola-anchor" href="#the-handler-function-type" aria-label="Anchor link for: the-handler-function-type">🔗</a>The Handler Function Type</h3>
 <p>The <code>HandlerFunc</code> type is a type alias for a function type:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub type </span><span style="color:#4ec9b0;">HandlerFunc </span><span>= </span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn</span><span>() -&gt; </span><span style="color:#569cd6;">!</span><span>;
-</span></code></pre>
-<p>It needs to be a function with a defined <a href="https://en.wikipedia.org/wiki/Calling_convention">calling convention</a>, as it called directly by the hardware. The C calling convention is the de facto standard in OS development, so we’re using it, too. The function takes no arguments, since the hardware doesn’t supply any arguments when jumping to the handler function.</p>
-<p>It is important that the function is <a href="https://doc.rust-lang.org/rust-by-example/fn/diverging.html">diverging</a>, i.e. it must never return. The reason is that the hardware doesn’t <em>call</em> the handler functions, it just <em>jumps</em> to them after pushing some values to the stack. So our stack might look different:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub type</span><span style="color: #4EC9B0;"> HandlerFunc</span><span> =</span><span style="color: #569CD6;"> extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #DCDCAA;"> fn</span><span>() -&gt; !;</span></span></code></pre>
+<p>It needs to be a function with a defined <a rel="external" href="https://en.wikipedia.org/wiki/Calling_convention">calling convention</a>, as it called directly by the hardware. The C calling convention is the de facto standard in OS development, so we’re using it, too. The function takes no arguments, since the hardware doesn’t supply any arguments when jumping to the handler function.</p>
+<p>It is important that the function is <a rel="external" href="https://doc.rust-lang.org/rust-by-example/fn/diverging.html">diverging</a>, i.e. it must never return. The reason is that the hardware doesn’t <em>call</em> the handler functions, it just <em>jumps</em> to them after pushing some values to the stack. So our stack might look different:</p>
 <p><img src="https://os.phil-opp.com/catching-exceptions/normal-vs-interrupt-function-return.svg" alt="normal function return vs interrupt function return" /></p>
 <p>If our handler function returned normally, it would try to pop the return address from the stack. But it might get some completely different value then. For example, the CPU pushes an error code for some exceptions. Bad things would happen if we interpreted this error code as return address and jumped to it. Therefore interrupt handler functions must diverge<sup class="footnote-reference"><a href="#fn-must-diverge">1</a></sup>.</p>
 <div class="footnote-definition" id="fn-must-diverge"><sup class="footnote-definition-label">1</sup>
@@ -261,61 +249,58 @@
 </div>
 <h3 id="idt-methods"><a class="zola-anchor" href="#idt-methods" aria-label="Anchor link for: idt-methods">🔗</a>IDT methods</h3>
 <p>Let’s add a function to create new interrupt descriptor tables:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>Idt {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>new() -&gt; Idt {
-</span><span>        Idt([Entry::missing(); </span><span style="color:#b5cea8;">16</span><span>])
-</span><span>    }
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Entry {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>missing() -&gt; </span><span style="color:#569cd6;">Self </span><span>{
-</span><span>        Entry {
-</span><span>            gdt_selector: SegmentSelector::new(</span><span style="color:#b5cea8;">0</span><span>, PrivilegeLevel::Ring0),
-</span><span>            pointer_low: </span><span style="color:#b5cea8;">0</span><span>,
-</span><span>            pointer_middle: </span><span style="color:#b5cea8;">0</span><span>,
-</span><span>            pointer_high: </span><span style="color:#b5cea8;">0</span><span>,
-</span><span>            options: EntryOptions::minimal(),
-</span><span>            reserved: </span><span style="color:#b5cea8;">0</span><span>,
-</span><span>        }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Idt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> new</span><span>() -&gt;</span><span style="color: #4EC9B0;"> Idt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        Idt</span><span>([</span><span style="color: #4EC9B0;">Entry</span><span>::</span><span style="color: #DCDCAA;">missing</span><span>();</span><span style="color: #B5CEA8;"> 16</span><span>])</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Entry</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> missing</span><span>() -&gt;</span><span style="color: #569CD6;"> Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Entry</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            gdt_selector</span><span>:</span><span style="color: #4EC9B0;"> SegmentSelector</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0</span><span>,</span><span style="color: #4EC9B0;"> PrivilegeLevel</span><span>::</span><span style="color: #4EC9B0;">Ring0</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            pointer_low</span><span>:</span><span style="color: #B5CEA8;"> 0</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            pointer_middle</span><span>:</span><span style="color: #B5CEA8;"> 0</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            pointer_high</span><span>:</span><span style="color: #B5CEA8;"> 0</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            options</span><span>:</span><span style="color: #4EC9B0;"> EntryOptions</span><span>::</span><span style="color: #DCDCAA;">minimal</span><span>(),</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            reserved</span><span>:</span><span style="color: #B5CEA8;"> 0</span><span>,</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The <code>missing</code> function creates a non-present Entry. We could choose any values for the pointer and GDT selector fields as long as the present bit is not set.</p>
 <p>However, a table with non-present entries is not very useful. So we create a <code>set_handler</code> method to add new handler functions:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>Idt {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>set_handler(</span><span style="color:#569cd6;">&amp;mut </span><span>self, entry: </span><span style="color:#569cd6;">u8</span><span>, handler: HandlerFunc)
-</span><span>        -&gt; </span><span style="color:#569cd6;">&amp;mut</span><span> EntryOptions
-</span><span>    {
-</span><span>        self.</span><span style="color:#b5cea8;">0</span><span>[entry </span><span style="color:#569cd6;">as usize</span><span>] = Entry::new(segmentation::cs(), handler);
-</span><span>        </span><span style="color:#569cd6;">&amp;mut </span><span>self.</span><span style="color:#b5cea8;">0</span><span>[entry </span><span style="color:#569cd6;">as usize</span><span>].options
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>The method overwrites the specified entry with the given handler function. We use the <code>segmentation::cs</code> function of the <a href="https://docs.rs/x86_64">x86_64 crate</a> to get the current code segment descriptor. There’s no need for different kernel code segments in long mode, so the current <code>cs</code> value should be always the right choice.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Idt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> set_handler</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> entry</span><span>:</span><span style="color: #4EC9B0;"> u8</span><span>,</span><span style="color: #9CDCFE;"> handler</span><span>:</span><span style="color: #4EC9B0;"> HandlerFunc</span><span>)</span></span>
+<span class="giallo-l"><span>        -&gt; &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> EntryOptions</span></span>
+<span class="giallo-l"><span>    {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #B5CEA8;">0</span><span>[</span><span style="color: #9CDCFE;">entry</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> usize</span><span>] =</span><span style="color: #4EC9B0;"> Entry</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #4EC9B0;">segmentation</span><span>::</span><span style="color: #DCDCAA;">cs</span><span>(),</span><span style="color: #9CDCFE;"> handler</span><span>);</span></span>
+<span class="giallo-l"><span>        &amp;</span><span style="color: #569CD6;">mut self</span><span>.</span><span style="color: #B5CEA8;">0</span><span>[</span><span style="color: #9CDCFE;">entry</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> usize</span><span>].options</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>The method overwrites the specified entry with the given handler function. We use the <code>segmentation::cs</code> function of the <a rel="external" href="https://docs.rs/x86_64">x86_64 crate</a> to get the current code segment descriptor. There’s no need for different kernel code segments in long mode, so the current <code>cs</code> value should be always the right choice.</p>
 <p>By returning a mutual reference to the entry’s options, we allow the caller to override the default settings. For example, the caller could add a non-present entry by executing: <code>idt.set_handler(11, handler_fn).set_present(false)</code>.</p>
 <h3 id="loading-the-idt"><a class="zola-anchor" href="#loading-the-idt" aria-label="Anchor link for: loading-the-idt">🔗</a>Loading the IDT</h3>
-<p>Now we’re able to create new interrupt descriptor tables with registered handler functions. We just need a way to load an IDT, so that the CPU uses it. The x86 architecture uses a special register to store the active IDT and its length. In order to load a new IDT we need to update this register through the <a href="https://www.felixcloutier.com/x86/lgdt:lidt">lidt</a> instruction.</p>
+<p>Now we’re able to create new interrupt descriptor tables with registered handler functions. We just need a way to load an IDT, so that the CPU uses it. The x86 architecture uses a special register to store the active IDT and its length. In order to load a new IDT we need to update this register through the <a rel="external" href="https://www.felixcloutier.com/x86/lgdt:lidt">lidt</a> instruction.</p>
 <p>The <code>lidt</code> instruction expects a pointer to a special data structure, which specifies the start address of the IDT and its length:</p>
 <table><thead><tr><th>Type</th><th>Name</th><th>Description</th></tr></thead><tbody>
 <tr><td>u16</td><td>Limit</td><td>The maximum addressable byte in the table. Equal to the table size in bytes minus 1.</td></tr>
 <tr><td>u64</td><td>Offset</td><td>Virtual start address of the table.</td></tr>
 </tbody></table>
-<p>This structure is already contained <a href="https://docs.rs/x86_64/0.1.0/x86_64/instructions/tables/struct.DescriptorTablePointer.html">in the x86_64 crate</a>, so we don’t need to create it ourselves. The same is true for the <a href="https://docs.rs/x86_64/0.1.0/x86_64/instructions/tables/fn.lidt.html">lidt function</a>. So we just need to put the pieces together to create a <code>load</code>  method:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>Idt {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>load(</span><span style="color:#569cd6;">&amp;</span><span>self) {
-</span><span>        </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::tables::{DescriptorTablePointer, lidt};
-</span><span>        </span><span style="color:#569cd6;">use </span><span>core::mem::size_of;
-</span><span>
-</span><span>        </span><span style="color:#569cd6;">let</span><span> ptr = DescriptorTablePointer {
-</span><span>            base: self </span><span style="color:#569cd6;">as *const _ as u64</span><span>,
-</span><span>            limit: (size_of::&lt;</span><span style="color:#569cd6;">Self</span><span>&gt;() - </span><span style="color:#b5cea8;">1</span><span>) </span><span style="color:#569cd6;">as u16</span><span>,
-</span><span>        };
-</span><span>
-</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{ lidt(</span><span style="color:#569cd6;">&amp;</span><span>ptr) };
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>The method does not need to modify the IDT, so it takes <code>self</code> by immutable reference. First, we create a <code>DescriptorTablePointer</code> and then we pass it to <code>lidt</code>. The <code>lidt</code> function expects that the <code>base</code> field has the type <code>u64</code>, therefore we need to cast the <code>self</code> pointer. For calculating the <code>limit</code> we use <a href="https://doc.rust-lang.org/nightly/core/mem/fn.size_of.html">mem::size_of</a>. The additional <code>-1</code> is needed because the limit field has to be the maximum addressable byte (inclusive bound). We need an unsafe block around <code>lidt</code>, because the function assumes that the specified handler addresses are valid.</p>
+<p>This structure is already contained <a rel="external" href="https://docs.rs/x86_64/0.1.0/x86_64/instructions/tables/struct.DescriptorTablePointer.html">in the x86_64 crate</a>, so we don’t need to create it ourselves. The same is true for the <a rel="external" href="https://docs.rs/x86_64/0.1.0/x86_64/instructions/tables/fn.lidt.html">lidt function</a>. So we just need to put the pieces together to create a <code>load</code>  method:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Idt</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> load</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">tables</span><span>::{</span><span style="color: #4EC9B0;">DescriptorTablePointer</span><span>, lidt};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">mem</span><span>::size_of;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> ptr</span><span> =</span><span style="color: #4EC9B0;"> DescriptorTablePointer</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            base</span><span>:</span><span style="color: #569CD6;"> self as</span><span> *</span><span style="color: #569CD6;">const</span><span style="color: #9CDCFE;"> _</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            limit</span><span>: (</span><span style="color: #DCDCAA;">size_of</span><span>::&lt;</span><span style="color: #569CD6;">Self</span><span>&gt;() -</span><span style="color: #B5CEA8;"> 1</span><span>)</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u16</span><span>,</span></span>
+<span class="giallo-l"><span>        };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">        unsafe</span><span> {</span><span style="color: #DCDCAA;"> lidt</span><span>(&amp;</span><span style="color: #9CDCFE;">ptr</span><span>) };</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>The method does not need to modify the IDT, so it takes <code>self</code> by immutable reference. First, we create a <code>DescriptorTablePointer</code> and then we pass it to <code>lidt</code>. The <code>lidt</code> function expects that the <code>base</code> field has the type <code>u64</code>, therefore we need to cast the <code>self</code> pointer. For calculating the <code>limit</code> we use <a rel="external" href="https://doc.rust-lang.org/nightly/core/mem/fn.size_of.html">mem::size_of</a>. The additional <code>-1</code> is needed because the limit field has to be the maximum addressable byte (inclusive bound). We need an unsafe block around <code>lidt</code>, because the function assumes that the specified handler addresses are valid.</p>
 <h4 id="safety"><a class="zola-anchor" href="#safety" aria-label="Anchor link for: safety">🔗</a>Safety</h4>
 <p>But can we really guarantee that handler addresses are always valid? Let’s see:</p>
 <ul>
@@ -324,22 +309,21 @@
 </ul>
 <p>There are no other public functions in the <code>idt</code> module (except <code>load</code>), so it should be safe… right?</p>
 <p>Wrong! Imagine the following scenario:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>init() {
-</span><span>    load_idt();
-</span><span>    cause_page_fault();
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>load_idt() {
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = idt::Idt::new();
-</span><span>    idt.set_handler(</span><span style="color:#b5cea8;">14</span><span>, page_fault_handler);
-</span><span>    idt.load();
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>cause_page_fault() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> x = [</span><span style="color:#b5cea8;">1</span><span>,</span><span style="color:#b5cea8;">2</span><span>,</span><span style="color:#b5cea8;">3</span><span>,</span><span style="color:#b5cea8;">4</span><span>,</span><span style="color:#b5cea8;">5</span><span>,</span><span style="color:#b5cea8;">6</span><span>,</span><span style="color:#b5cea8;">7</span><span>,</span><span style="color:#b5cea8;">8</span><span>,</span><span style="color:#b5cea8;">9</span><span>];
-</span><span>    </span><span style="color:#569cd6;">unsafe</span><span>{ *(</span><span style="color:#b5cea8;">0xdeadbeaf </span><span style="color:#569cd6;">as *mut u64</span><span>) = x[</span><span style="color:#b5cea8;">4</span><span>] };
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    load_idt</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    cause_page_fault</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> load_idt</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    idt</span><span>.</span><span style="color: #DCDCAA;">set_handler</span><span>(</span><span style="color: #B5CEA8;">14</span><span>,</span><span style="color: #9CDCFE;"> page_fault_handler</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    idt</span><span>.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> cause_page_fault</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> x</span><span> = [</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;">2</span><span>,</span><span style="color: #B5CEA8;">3</span><span>,</span><span style="color: #B5CEA8;">4</span><span>,</span><span style="color: #B5CEA8;">5</span><span>,</span><span style="color: #B5CEA8;">6</span><span>,</span><span style="color: #B5CEA8;">7</span><span>,</span><span style="color: #B5CEA8;">8</span><span>,</span><span style="color: #B5CEA8;">9</span><span>];</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span>{ *(</span><span style="color: #B5CEA8;">0xdeadbeaf</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u64</span><span>) =</span><span style="color: #9CDCFE;"> x</span><span>[</span><span style="color: #B5CEA8;">4</span><span>] };</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>This won’t work. If we’re lucky, we get a triple fault and a boot loop. If we’re unlucky, our kernel does strange things and fails at some completely unrelated place. So what’s the problem here?</p>
 <p>Well, we construct an IDT <em>on the stack</em> and load it. It is perfectly valid until the end of the <code>load_idt</code> function. But as soon as the function returns, its stack frame can be reused by other functions. Thus, the IDT gets overwritten by the stack frame of the <code>cause_page_fault</code> function. So when the page fault occurs and the CPU tries to read the entry, it only sees some garbage values and issues a double fault, which escalates to a triple fault and a CPU reset.</p>
 <p>Now imagine that the <code>cause_page_fault</code> function declared an array of pointers instead. If the present was coincidentally set, the CPU would jump to some random pointer and interpret random memory as code. This would be a clear violation of memory safety.</p>
@@ -352,118 +336,105 @@
 <blockquote>
 <p>The referenced IDT must be valid as long as our kernel runs.</p>
 </blockquote>
-<p>This is exactly the definition of a <a href="https://doc.rust-lang.org/rust-by-example/scope/lifetime/static_lifetime.html">static lifetime</a>. So we can easily ensure that the IDT lives long enough by adding a <code>'static</code> requirement to the signature of the <code>load</code> function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>load(</span><span style="color:#569cd6;">&amp;&#39;static </span><span>self) {</span><span style="color:#569cd6;">...</span><span>}
-</span><span style="color:#608b4e;">//           ^^^^^^^ ensure that the IDT reference has the &#39;static lifetime
-</span></code></pre>
+<p>This is exactly the definition of a <a rel="external" href="https://doc.rust-lang.org/rust-by-example/scope/lifetime/static_lifetime.html">static lifetime</a>. So we can easily ensure that the IDT lives long enough by adding a <code>'static</code> requirement to the signature of the <code>load</code> function:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> load</span><span>(&amp;&#39;</span><span style="color: #4EC9B0;">static</span><span style="color: #569CD6;"> self</span><span>) {...}</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">//           ^^^^^^^ ensure that the IDT reference has the &#39;static lifetime</span></span></code></pre>
 <p>That’s it! Now the Rust compiler ensures that the above error can’t happen anymore:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: `idt` does not live long enough
-</span><span>  --&gt; src/interrupts/mod.rs:78:5
-</span><span>78 |&gt;     idt.load();
-</span><span>   |&gt;     ^^^
-</span><span>note: reference must be valid for the static lifetime...
-</span><span>note: ...but borrowed value is only valid for the block suffix following
-</span><span>          statement 0 at 75:34
-</span><span>  --&gt; src/interrupts/mod.rs:75:35
-</span><span>75 |&gt;     let mut idt = idt::Idt::new();
-</span><span>   |&gt;                                   ^
-</span></code></pre>
-<h3 id="a-static-idt"><a class="zola-anchor" href="#a-static-idt" aria-label="Anchor link for: a-static-idt">🔗</a>A static IDT</h3>
-<p>So a valid IDT needs to have the <code>'static</code> lifetime. We can either create a <code>static</code> IDT or <a href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.into_raw">deliberately leak a Box</a>. We will most likely only need a single IDT for the foreseeable future, so let’s try the <code>static</code> approach:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">IDT</span><span>: idt::Idt = {
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> idt = idt::Idt::new();
-</span><span>
-</span><span>    idt.set_handler(</span><span style="color:#b5cea8;">0</span><span>, divide_by_zero_handler);
-</span><span>
-</span><span>    idt
-</span><span>};
-</span><span>
-</span><span style="color:#569cd6;">extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>divide_by_zero_handler() -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;EXCEPTION: DIVIDE BY ZERO&quot;</span><span>);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
-<p>We register a single handler function for a <a href="https://wiki.osdev.org/Exceptions#Division_Error">divide by zero error</a> (index 0). Like the name says, this exception occurs when dividing a number by 0. Thus we have an easy way to test our new exception handler.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: `idt` does not live long enough</span></span>
+<span class="giallo-l"><span>  --&gt; src/interrupts/mod.rs:78:5</span></span>
+<span class="giallo-l"><span>78 |&gt;     idt.load();</span></span>
+<span class="giallo-l"><span>   |&gt;     ^^^</span></span>
+<span class="giallo-l"><span>note: reference must be valid for the static lifetime...</span></span>
+<span class="giallo-l"><span>note: ...but borrowed value is only valid for the block suffix following</span></span>
+<span class="giallo-l"><span>          statement 0 at 75:34</span></span>
+<span class="giallo-l"><span>  --&gt; src/interrupts/mod.rs:75:35</span></span>
+<span class="giallo-l"><span>75 |&gt;     let mut idt = idt::Idt::new();</span></span>
+<span class="giallo-l"><span>   |&gt;                                   ^</span></span></code></pre><h3 id="a-static-idt"><a class="zola-anchor" href="#a-static-idt" aria-label="Anchor link for: a-static-idt">🔗</a>A static IDT</h3>
+<p>So a valid IDT needs to have the <code>'static</code> lifetime. We can either create a <code>static</code> IDT or <a rel="external" href="https://doc.rust-lang.org/nightly/alloc/boxed/struct.Box.html#method.into_raw">deliberately leak a Box</a>. We will most likely only need a single IDT for the foreseeable future, so let’s try the <code>static</code> approach:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> IDT:</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    idt</span><span>.</span><span style="color: #DCDCAA;">set_handler</span><span>(</span><span style="color: #B5CEA8;">0</span><span>,</span><span style="color: #9CDCFE;"> divide_by_zero_handler</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    idt</span></span>
+<span class="giallo-l"><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> divide_by_zero_handler</span><span>() -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;EXCEPTION: DIVIDE BY ZERO&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>We register a single handler function for a <a rel="external" href="https://wiki.osdev.org/Exceptions#Division_Error">divide by zero error</a> (index 0). Like the name says, this exception occurs when dividing a number by 0. Thus we have an easy way to test our new exception handler.</p>
 <p>However, it doesn’t work this way:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: calls in statics are limited to constant functions, struct and enum
-</span><span>       constructors [E0015]
-</span><span>...
-</span><span>error: blocks in statics are limited to items and tail expressions [E0016]
-</span><span>...
-</span><span>error: references in statics may only refer to immutable values [E0017]
-</span><span>...
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: calls in statics are limited to constant functions, struct and enum</span></span>
+<span class="giallo-l"><span>       constructors [E0015]</span></span>
+<span class="giallo-l"><span>...</span></span>
+<span class="giallo-l"><span>error: blocks in statics are limited to items and tail expressions [E0016]</span></span>
+<span class="giallo-l"><span>...</span></span>
+<span class="giallo-l"><span>error: references in statics may only refer to immutable values [E0017]</span></span>
+<span class="giallo-l"><span>...</span></span></code></pre>
 <p>The reason is that the Rust compiler is not able to evaluate the value of the <code>static</code> at compile time. Maybe it will work someday when <code>const</code> functions become more powerful. But until then, we have to find another solution.</p>
 <h4 id="lazy-statics-to-the-rescue"><a class="zola-anchor" href="#lazy-statics-to-the-rescue" aria-label="Anchor link for: lazy-statics-to-the-rescue">🔗</a>Lazy Statics to the Rescue</h4>
 <p>Fortunately the <code>lazy_static</code> macro exists. Instead of evaluating a <code>static</code> at compile time, the macro performs the initialization when the <code>static</code> is referenced the first time. Thus, we can do almost everything in the initialization block and are even able to read runtime values.</p>
 <p>Let’s add the <code>lazy_static</code> crate to our project:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span>#[macro_use]
-</span><span style="color:#569cd6;">extern crate</span><span> lazy_static;
-</span></code></pre>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># in Cargo.toml
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies.lazy_static</span><span>]
-</span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;0.2.1&quot;
-</span><span style="color:#569cd6;">features </span><span>= [</span><span style="color:#d69d85;">&quot;spin_no_std&quot;</span><span>]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[macro_use]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> lazy_static;</span></span></code></pre><pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies.lazy_static]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">version</span><span> =</span><span style="color: #CE9178;"> &quot;0.2.1&quot;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">features</span><span> = [</span><span style="color: #CE9178;">&quot;spin_no_std&quot;</span><span>]</span></span></code></pre>
 <p>We need the <code>spin_no_std</code> feature, since we don’t link the standard library.</p>
 <p>With <code>lazy_static</code>, we can define our IDT without problems:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/mod.rs
-</span><span>
-</span><span>lazy_static! {
-</span><span>    </span><span style="color:#569cd6;">static ref </span><span style="color:#b4cea8;">IDT</span><span>: idt::Idt = {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> idt = idt::Idt::new();
-</span><span>
-</span><span>        idt.set_handler(</span><span style="color:#b5cea8;">0</span><span>, divide_by_zero_handler);
-</span><span>
-</span><span>        idt
-</span><span>    };
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> IDT:</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> idt</span><span>::</span><span style="color: #4EC9B0;">Idt</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.</span><span style="color: #DCDCAA;">set_handler</span><span>(</span><span style="color: #B5CEA8;">0</span><span>,</span><span style="color: #9CDCFE;"> divide_by_zero_handler</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Now we’re ready to load our IDT! Therefore we add a <code>interrupts::init</code> function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/interrupts/mod.rs
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init() {
-</span><span>    </span><span style="color:#b4cea8;">IDT</span><span>.load();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>() {</span></span>
+<span class="giallo-l"><span>    IDT.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We don’t need our <code>assert_has_not_been_called</code> macro here, since nothing bad happens when <code>init</code> is called twice. It just reloads the same IDT again.</p>
 <h2 id="testing-it"><a class="zola-anchor" href="#testing-it" aria-label="Anchor link for: testing-it">🔗</a>Testing it</h2>
 <p>Now we should be able to catch page faults! Let’s try it in our <code>rust_main</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>rust_main(...) {
-</span><span>    </span><span style="color:#569cd6;">...
-</span><span>    memory::init(boot_info);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// initialize our IDT
-</span><span>    interrupts::init();
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// provoke a divide-by-zero fault
-</span><span>    </span><span style="color:#b5cea8;">42 </span><span>/ </span><span style="color:#b5cea8;">0</span><span>;
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> rust_main</span><span>(...) {</span></span>
+<span class="giallo-l"><span>    ...</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // initialize our IDT</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // provoke a divide-by-zero fault</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">    42</span><span> /</span><span style="color: #B5CEA8;"> 0</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>When we run it, we get a runtime panic:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>PANIC in src/lib.rs at line 57:
-</span><span>    attempted to divide by zero
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>PANIC in src/lib.rs at line 57:</span></span>
+<span class="giallo-l"><span>    attempted to divide by zero</span></span></code></pre>
 <p>That’s a not our exception handler. The reason is that Rust itself checks for a possible division by zero and panics in that case. So in order to raise a divide-by-zero error in the CPU, we need to bypass the Rust compiler somehow.</p>
 <h3 id="inline-assembly"><a class="zola-anchor" href="#inline-assembly" aria-label="Anchor link for: inline-assembly">🔗</a>Inline Assembly</h3>
-<p>In order to cause a divide-by-zero exception, we need to execute a <a href="https://www.felixcloutier.com/x86/div">div</a> or <a href="https://www.felixcloutier.com/x86/idiv">idiv</a> assembly instruction with operand 0. We could write a small assembly function and call it from our Rust code. An easier way is to use Rust’s <a href="https://doc.rust-lang.org/1.10.0/book/inline-assembly.html">inline assembly</a> macro.</p>
+<p>In order to cause a divide-by-zero exception, we need to execute a <a rel="external" href="https://www.felixcloutier.com/x86/div">div</a> or <a rel="external" href="https://www.felixcloutier.com/x86/idiv">idiv</a> assembly instruction with operand 0. We could write a small assembly function and call it from our Rust code. An easier way is to use Rust’s <a rel="external" href="https://doc.rust-lang.org/1.10.0/book/inline-assembly.html">inline assembly</a> macro.</p>
 <p>Inline assembly allows us to write raw x86 assembly within a Rust function. The feature is unstable, so we need to add <code>#![feature(asm)]</code> to our <code>src/lib.rs</code>. Then we’re able to write a <code>divide_by_zero</code> function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>divide_by_zero() {
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        asm!(</span><span style="color:#d69d85;">&quot;mov dx, 0; div dx&quot; </span><span>::: </span><span style="color:#d69d85;">&quot;ax&quot;</span><span>, </span><span style="color:#d69d85;">&quot;dx&quot; </span><span>: </span><span style="color:#d69d85;">&quot;volatile&quot;</span><span>, </span><span style="color:#d69d85;">&quot;intel&quot;</span><span>)
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> divide_by_zero</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        asm!</span><span>(</span><span style="color: #CE9178;">&quot;mov dx, 0; div dx&quot;</span><span> :::</span><span style="color: #CE9178;"> &quot;ax&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;dx&quot;</span><span> :</span><span style="color: #CE9178;"> &quot;volatile&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;intel&quot;</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Let’s try to decode it:</p>
 <ul>
 <li>The <code>asm!</code> macro emits raw assembly instructions, so it’s <code>unsafe</code> to use it.</li>
@@ -473,18 +444,17 @@
 <li>The last block (after the 4th colon) specifies some options. The <code>volatile</code> option tells the compiler: “This code has side effects. Do not delete it and do not move it elsewhere”. In our case, the “side effect” is the divide-by-zero exception. Finally, the <code>intel</code> option allows us to use the Intel assembly syntax instead of the default AT&amp;T syntax.</li>
 </ul>
 <p>Let’s use our new <code>divide_by_zero</code> function to raise a CPU exception:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>rust_main(...) {
-</span><span>    </span><span style="color:#569cd6;">...
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// provoke a divide-by-zero fault
-</span><span>    divide_by_zero();
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> rust_main</span><span>(...) {</span></span>
+<span class="giallo-l"><span>    ...</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // provoke a divide-by-zero fault</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    divide_by_zero</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>It works! We see a <code>EXCEPTION: DIVIDE BY ZERO</code> message at the bottom of our screen:</p>
 <p><img src="https://os.phil-opp.com/catching-exceptions/qemu-divide-error-println.png" alt="QEMU screenshot with EXCEPTION: DIVIDE BY ZERO message" /></p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What’s next?</h2>

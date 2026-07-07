@@ -113,9 +113,9 @@
 
     <p>In this post we will create a paging module, which allows us to access and modify the 4-level page table. We will explore recursive page table mapping and use some Rust features to make it safe. Finally we will create functions to translate virtual addresses and to map and unmap pages.</p>
 <span id="continue-reading"></span>
-<p>You can find the source code and this post itself on <a href="https://github.com/phil-opp/blog_os/tree/first_edition_post_6">GitHub</a>. Please file an issue there if you have any problems or improvement suggestions. There is also a comment section at the end of this page. Note that this post requires a current Rust nightly.</p>
+<p>You can find the source code and this post itself on <a rel="external" href="https://github.com/phil-opp/blog_os/tree/first_edition_post_6">GitHub</a>. Please file an issue there if you have any problems or improvement suggestions. There is also a comment section at the end of this page. Note that this post requires a current Rust nightly.</p>
 <h2 id="paging"><a class="zola-anchor" href="#paging" aria-label="Anchor link for: paging">🔗</a>Paging</h2>
-<p><em>Paging</em> is a memory management scheme that separates virtual and physical memory. The address space is split into equal sized <em>pages</em> and <em>page tables</em> specify which virtual page points to which physical frame. For an extensive paging introduction take a look at the paging chapter (<a href="http://pages.cs.wisc.edu/~remzi/OSTEP/vm-paging.pdf">PDF</a>) of the <a href="http://pages.cs.wisc.edu/~remzi/OSTEP/">Three Easy Pieces</a> OS book.</p>
+<p><em>Paging</em> is a memory management scheme that separates virtual and physical memory. The address space is split into equal sized <em>pages</em> and <em>page tables</em> specify which virtual page points to which physical frame. For an extensive paging introduction take a look at the paging chapter (<a rel="external" href="http://pages.cs.wisc.edu/~remzi/OSTEP/vm-paging.pdf">PDF</a>) of the <a rel="external" href="http://pages.cs.wisc.edu/~remzi/OSTEP/">Three Easy Pieces</a> OS book.</p>
 <p>The x86 architecture uses a 4-level page table in 64-bit mode. A virtual address has the following structure:</p>
 <p><img src="https://os.phil-opp.com/page-tables/x86_address_structure.svg" alt="structure of a virtual address on x86" /></p>
 <p>The bits 48–63 are so-called <em>sign extension</em> bits and must be copies of bit 47. The following 36 bits define the page table indexes (9 bits per table) and the last 12 bits specify the offset in the 4KiB page.</p>
@@ -125,34 +125,32 @@
 <p>The P4 entry points to a P3 table, where the next 9 bits of the address are used to select an entry. The P3 entry then points to a P2 table and the P2 entry points to a P1 table. The P1 entry, which is specified through bits 12–20, finally points to the physical frame.</p>
 <h2 id="a-basic-paging-module"><a class="zola-anchor" href="#a-basic-paging-module" aria-label="Anchor link for: a-basic-paging-module">🔗</a>A Basic Paging Module</h2>
 <p>Let’s create a basic paging module in <code>memory/paging/mod.rs</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>memory::</span><span style="color:#b4cea8;">PAGE_SIZE</span><span>; </span><span style="color:#608b4e;">// needed later
-</span><span>
-</span><span style="color:#569cd6;">const </span><span style="color:#b4cea8;">ENTRY_COUNT</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">512</span><span>;
-</span><span>
-</span><span style="color:#569cd6;">pub type </span><span style="color:#4ec9b0;">PhysicalAddress </span><span>= </span><span style="color:#569cd6;">usize</span><span>;
-</span><span style="color:#569cd6;">pub type </span><span style="color:#4ec9b0;">VirtualAddress </span><span>= </span><span style="color:#569cd6;">usize</span><span>;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Page {
-</span><span>   number: </span><span style="color:#569cd6;">usize</span><span>,
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">PAGE_SIZE</span><span>;</span><span style="color: #6A9955;"> // needed later</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">const</span><span> ENTRY_COUNT:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 512</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub type</span><span style="color: #4EC9B0;"> PhysicalAddress</span><span> =</span><span style="color: #4EC9B0;"> usize</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub type</span><span style="color: #4EC9B0;"> VirtualAddress</span><span> =</span><span style="color: #4EC9B0;"> usize</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Page</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">   number</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We import the <code>PAGE_SIZE</code> and define a constant for the number of entries per table. To make future function signatures more expressive, we can use the type aliases <code>PhysicalAddress</code> and <code>VirtualAddress</code>. The <code>Page</code> struct is similar to the <code>Frame</code> struct in the <a href="https://os.phil-opp.com/allocating-frames/#a-memory-module">previous post</a>, but represents a virtual page instead of a physical frame.</p>
 <h3 id="page-table-entries"><a class="zola-anchor" href="#page-table-entries" aria-label="Anchor link for: page-table-entries">🔗</a>Page Table Entries</h3>
 <p>To model page table entries, we create a new <code>entry</code> submodule:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>memory::Frame; </span><span style="color:#608b4e;">// needed later
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Entry(</span><span style="color:#569cd6;">u64</span><span>);
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Entry {
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>is_unused(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">bool </span><span>{
-</span><span>        self.</span><span style="color:#b5cea8;">0 </span><span>== </span><span style="color:#b5cea8;">0
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>set_unused(</span><span style="color:#569cd6;">&amp;mut </span><span>self) {
-</span><span>        self.</span><span style="color:#b5cea8;">0 </span><span>= </span><span style="color:#b5cea8;">0</span><span>;
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">Frame</span><span>;</span><span style="color: #6A9955;"> // needed later</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Entry</span><span>(</span><span style="color: #4EC9B0;">u64</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Entry</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> is_unused</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> bool</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> ==</span><span style="color: #B5CEA8;"> 0</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> set_unused</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> =</span><span style="color: #B5CEA8;"> 0</span><span>;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We define that an unused entry is completely 0. That allows us to distinguish unused entries from other non-present entries in the future. For example, we could define one of the available bits as the <code>swapped_out</code> bit for pages that are swapped to disk.</p>
 <p>Next we will model the contained physical address and the various flags. Remember, entries have the following format:</p>
 <table><thead><tr><th>Bit(s)</th><th>Name</th><th>Meaning</th></tr></thead><tbody>
@@ -170,100 +168,90 @@
 <tr><td>52-62</td><td>available</td><td>can be used freely by the OS</td></tr>
 <tr><td>63</td><td>no execute</td><td>forbid executing code on this page (the NXE bit in the EFER register must be set)</td></tr>
 </tbody></table>
-<p>To model the various flags, we will use the <a href="https://github.com/rust-lang-nursery/bitflags">bitflags</a> crate. To add it as a dependency, add the following to your <code>Cargo.toml</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#ff3333;">...
-</span><span style="color:#569cd6;">bitflags </span><span>= </span><span style="color:#d69d85;">&quot;0.9.1&quot;
-</span></code></pre>
+<p>To model the various flags, we will use the <a rel="external" href="https://github.com/rust-lang-nursery/bitflags">bitflags</a> crate. To add it as a dependency, add the following to your <code>Cargo.toml</code>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #F44747;">...</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">bitflags</span><span> =</span><span style="color: #CE9178;"> &quot;0.9.1&quot;</span></span></code></pre>
 <p>To import the macro, we need to use <code>#[macro_use]</code> above the <code>extern crate</code> definition:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>#[macro_use]
-</span><span style="color:#569cd6;">extern crate</span><span> bitflags;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"><span>#[macro_use]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> bitflags;</span></span></code></pre>
 <p>Now we can model the various flags:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>bitflags! {
-</span><span>    </span><span style="color:#569cd6;">pub struct </span><span>EntryFlags: u64 {
-</span><span>        const PRESENT =         1 &lt;&lt; 0;
-</span><span>        const WRITABLE =        1 &lt;&lt; 1;
-</span><span>        const USER_ACCESSIBLE = 1 &lt;&lt; 2;
-</span><span>        const WRITE_THROUGH =   1 &lt;&lt; 3;
-</span><span>        const NO_CACHE =        1 &lt;&lt; 4;
-</span><span>        const ACCESSED =        1 &lt;&lt; 5;
-</span><span>        const DIRTY =           1 &lt;&lt; 6;
-</span><span>        const HUGE_PAGE =       1 &lt;&lt; 7;
-</span><span>        const GLOBAL =          1 &lt;&lt; 8;
-</span><span>        const NO_EXECUTE =      1 &lt;&lt; 63;
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>To extract the flags from the entry we create an <code>Entry::flags</code> method that uses <a href="https://docs.rs/bitflags/0.9.1/bitflags/example_generated/struct.Flags.html#method.from_bits_truncate">from_bits_truncate</a>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>flags(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; EntryFlags {
-</span><span>    EntryFlags::from_bits_truncate(self.</span><span style="color:#b5cea8;">0</span><span>)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #DCDCAA;">bitflags!</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub struct</span><span style="color: #4EC9B0;"> EntryFlags</span><span>:</span><span style="color: #4EC9B0;"> u64</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> PRESENT =</span><span style="color: #B5CEA8;">         1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 0</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> WRITABLE =</span><span style="color: #B5CEA8;">        1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 1</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> USER_ACCESSIBLE =</span><span style="color: #B5CEA8;"> 1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 2</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> WRITE_THROUGH =</span><span style="color: #B5CEA8;">   1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 3</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> NO_CACHE =</span><span style="color: #B5CEA8;">        1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 4</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> ACCESSED =</span><span style="color: #B5CEA8;">        1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 5</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> DIRTY =</span><span style="color: #B5CEA8;">           1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 6</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> HUGE_PAGE =</span><span style="color: #B5CEA8;">       1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 7</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> GLOBAL =</span><span style="color: #B5CEA8;">          1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 8</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        const</span><span> NO_EXECUTE =</span><span style="color: #B5CEA8;">      1</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 63</span><span>;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>To extract the flags from the entry we create an <code>Entry::flags</code> method that uses <a rel="external" href="https://docs.rs/bitflags/0.9.1/bitflags/example_generated/struct.Flags.html#method.from_bits_truncate">from_bits_truncate</a>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> flags</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> EntryFlags</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    EntryFlags</span><span>::</span><span style="color: #DCDCAA;">from_bits_truncate</span><span>(</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #B5CEA8;">0</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>This allows us to check for flags through the <code>contains()</code> function. For example, <code>flags().contains(PRESENT | WRITABLE)</code> returns true if the entry contains <em>both</em> flags.</p>
 <p>To extract the physical address, we add a <code>pointed_frame</code> method:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>pointed_frame(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; Option&lt;Frame&gt; {
-</span><span>    </span><span style="color:#569cd6;">if </span><span>self.flags().contains(</span><span style="color:#b4cea8;">PRESENT</span><span>) {
-</span><span>        Some(Frame::containing_address(
-</span><span>            self.</span><span style="color:#b5cea8;">0 </span><span style="color:#569cd6;">as usize &amp; </span><span style="color:#b5cea8;">0x000fffff_fffff000
-</span><span>        ))
-</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
-</span><span>        None
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> pointed_frame</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">Frame</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    if</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">flags</span><span>().</span><span style="color: #DCDCAA;">contains</span><span>(PRESENT) {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Some</span><span>(</span><span style="color: #4EC9B0;">Frame</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            self</span><span>.</span><span style="color: #B5CEA8;">0</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> usize</span><span> &amp;</span><span style="color: #B5CEA8;"> 0x000fffff_fffff000</span></span>
+<span class="giallo-l"><span>        ))</span></span>
+<span class="giallo-l"><span>    }</span><span style="color: #C586C0;"> else</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        None</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>If the entry is present, we mask bits 12–51 and return the corresponding frame. If the entry is not present, it does not point to a valid frame so we return <code>None</code>.</p>
 <p>To modify entries, we add a <code>set</code> method that updates the flags and the pointed frame:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>set(</span><span style="color:#569cd6;">&amp;mut </span><span>self, frame: Frame, flags: EntryFlags) {
-</span><span>    assert!(frame.start_address() </span><span style="color:#569cd6;">&amp; !</span><span style="color:#b5cea8;">0x000fffff_fffff000 </span><span>== </span><span style="color:#b5cea8;">0</span><span>);
-</span><span>    self.</span><span style="color:#b5cea8;">0 </span><span>= (frame.start_address() </span><span style="color:#569cd6;">as u64</span><span>) </span><span style="color:#569cd6;">|</span><span> flags.bits();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> set</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>:</span><span style="color: #4EC9B0;"> Frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>:</span><span style="color: #4EC9B0;"> EntryFlags</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert!</span><span>(</span><span style="color: #9CDCFE;">frame</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>() &amp; !</span><span style="color: #B5CEA8;">0x000fffff_fffff000</span><span> ==</span><span style="color: #B5CEA8;"> 0</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    self</span><span>.</span><span style="color: #B5CEA8;">0</span><span> = (</span><span style="color: #9CDCFE;">frame</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>()</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>) |</span><span style="color: #9CDCFE;"> flags</span><span>.</span><span style="color: #DCDCAA;">bits</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The start address of a frame should be page aligned and smaller than 2^52 (since x86 uses 52bit physical addresses). Since an invalid address could mess up the entry, we add an assertion. To actually set the entry, we just need to <code>or</code> the start address and the flag bits.</p>
 <p>The missing <code>Frame::start_address</code> method is pretty simple:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>self::paging::PhysicalAddress;
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>start_address(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; PhysicalAddress {
-</span><span>    self.number * </span><span style="color:#b4cea8;">PAGE_SIZE
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use self</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">PhysicalAddress</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> start_address</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> PhysicalAddress</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    self</span><span>.number * PAGE_SIZE</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We add it to the <code>impl Frame</code> block in <code>memory/mod.rs</code>.</p>
 <h3 id="page-tables"><a class="zola-anchor" href="#page-tables" aria-label="Anchor link for: page-tables">🔗</a>Page Tables</h3>
 <p>To model page tables, we create a basic <code>Table</code> struct in a new <code>table</code> submodule:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>memory::paging::entry::*;
-</span><span style="color:#569cd6;">use </span><span>memory::paging::</span><span style="color:#b4cea8;">ENTRY_COUNT</span><span>;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Table {
-</span><span>    entries: [Entry; ENTRY_COUNT],
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">entry</span><span>::*;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">ENTRY_COUNT</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Table</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    entries</span><span>: [</span><span style="color: #4EC9B0;">Entry</span><span>; ENTRY_COUNT],</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>It’s just an array of 512 page table entries.</p>
 <p>To make the <code>Table</code> indexable itself, we can implement the <code>Index</code> and <code>IndexMut</code> traits:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>core::ops::{Index, IndexMut};
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>Index&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; </span><span style="color:#569cd6;">for </span><span>Table {
-</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">Output </span><span>= Entry;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>index(</span><span style="color:#569cd6;">&amp;</span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;</span><span>Entry {
-</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self.entries[index]
-</span><span>    }
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>IndexMut&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; </span><span style="color:#569cd6;">for </span><span>Table {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>index_mut(</span><span style="color:#569cd6;">&amp;mut </span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;mut</span><span> Entry {
-</span><span>        </span><span style="color:#569cd6;">&amp;mut </span><span>self.entries[index]
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">ops</span><span>::{</span><span style="color: #4EC9B0;">Index</span><span>,</span><span style="color: #4EC9B0;"> IndexMut</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> Index</span><span>&lt;</span><span style="color: #4EC9B0;">usize</span><span>&gt;</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Table</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    type</span><span style="color: #4EC9B0;"> Output</span><span> =</span><span style="color: #4EC9B0;"> Entry</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> index</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt; &amp;</span><span style="color: #4EC9B0;">Entry</span><span> {</span></span>
+<span class="giallo-l"><span>        &amp;</span><span style="color: #569CD6;">self</span><span>.entries[</span><span style="color: #9CDCFE;">index</span><span>]</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> IndexMut</span><span>&lt;</span><span style="color: #4EC9B0;">usize</span><span>&gt;</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Table</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> index_mut</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt; &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> Entry</span><span> {</span></span>
+<span class="giallo-l"><span>        &amp;</span><span style="color: #569CD6;">mut self</span><span>.entries[</span><span style="color: #9CDCFE;">index</span><span>]</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Now it’s possible to get the 42th entry through <code>some_table[42]</code>. Of course we could replace <code>usize</code> with <code>u32</code> or even <code>u16</code> here but it would cause more numerical conversions (<code>x as u16</code>).</p>
 <p>Let’s add a method that sets all entries to unused. We will need it when we create new page tables in the future. The method looks like this:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>zero(</span><span style="color:#569cd6;">&amp;mut </span><span>self) {
-</span><span>    </span><span style="color:#569cd6;">for</span><span> entry </span><span style="color:#569cd6;">in </span><span>self.entries.iter_mut() {
-</span><span>        entry.set_unused();
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> zero</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> entry</span><span style="color: #569CD6;"> in self</span><span>.entries.</span><span style="color: #DCDCAA;">iter_mut</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        entry</span><span>.</span><span style="color: #DCDCAA;">set_unused</span><span>();</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Now we can read page tables and retrieve the mapping information. We can also update them through the <code>IndexMut</code> trait and the <code>Entry::set</code> method. But how do we get references to the various page tables?</p>
 <p>We could read the <code>CR3</code> register to get the physical address of the P4 table and read its entries to get the P3 addresses. The P3 entries then point to the P2 tables and so on. But this method only works for identity-mapped pages. In the future we will create new page tables, which aren’t in the identity-mapped area anymore. Since we can’t access them through their physical address, we need a way to map them to virtual addresses.</p>
 <h2 id="mapping-page-tables"><a class="zola-anchor" href="#mapping-page-tables" aria-label="Anchor link for: mapping-page-tables">🔗</a>Mapping Page Tables</h2>
@@ -285,14 +273,12 @@
 <p>Of course recursive mapping has some disadvantages, too. It occupies a P4 entry and thus 512GiB of the virtual address space. But since we’re in long mode and have a 48-bit address space, there are still 225.5TiB left. The bigger problem is that only the active table can be modified by default. To access another table, the recursive entry needs to be replaced temporary. We will tackle this problem in the next post when we switch to a new page table.</p>
 <h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h3>
 <p>To map the P4 table recursively, we just need to point the 511th entry to the table itself. Of course we could do it in Rust, but it would require some fiddling with unsafe pointers. It’s easier to just add some lines to our boot assembly:</p>
-<pre data-lang="nasm" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-nasm "><code class="language-nasm" data-lang="nasm"><span style="color:#569cd6;">mov </span><span>eax, p4_table
-</span><span style="color:#569cd6;">or </span><span>eax, 0b11</span><span style="color:#608b4e;"> ; present + writable
-</span><span style="color:#569cd6;">mov </span><span>[p4_table + </span><span style="color:#b4cea8;">511 </span><span>* </span><span style="color:#b4cea8;">8</span><span>], eax
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="asm"><span class="giallo-l"><span>mov</span><span style="color: #569CD6;"> eax</span><span>, p4_table</span></span>
+<span class="giallo-l"><span>or</span><span style="color: #569CD6;"> eax</span><span>, </span><span style="color: #B5CEA8;">0b11</span><span style="color: #6A9955;"> ; present + writable</span></span>
+<span class="giallo-l"><span>mov [p4_table + </span><span style="color: #B5CEA8;">511</span><span> * </span><span style="color: #B5CEA8;">8</span><span>], </span><span style="color: #569CD6;">eax</span></span></code></pre>
 <p>I put it right after the <code>set_up_page_tables</code> label, but you can add it wherever you like.</p>
 <p>Now we can use special virtual addresses to access the page tables. The P4 table is available at <code>0xfffffffffffff000</code>. Let’s add a P4 constant to the <code>table</code> submodule:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">P4</span><span>: </span><span style="color:#569cd6;">*mut</span><span> Table = </span><span style="color:#b5cea8;">0xffffffff_fffff000 </span><span style="color:#569cd6;">as *mut _</span><span>;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> P4: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> Table</span><span> =</span><span style="color: #B5CEA8;"> 0xffffffff_fffff000</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> _</span><span>;</span></span></code></pre>
 <p>Let’s switch to the octal system, since it makes more sense for the other special addresses. The P4 address from above is equivalent to <code>0o177777_777_777_777_777_0000</code> in octal. You can see that is has index <code>777</code> in all tables and offset <code>0000</code>. The <code>177777</code> bits on the left are the sign extension bits, which are copies of the 47th bit. They are required because x86 only uses 48bit virtual addresses.</p>
 <p>The other tables can be accessed through the following addresses:</p>
 <table><thead><tr><th>Table</th><th>Address</th><th>Indexes</th></tr></thead><tbody>
@@ -302,41 +288,36 @@
 <tr><td>P1</td><td><code>0o177777_777_XXX_YYY_ZZZ_0000</code></td><td>like above, and <code>ZZZ</code> is the P2 index</td></tr>
 </tbody></table>
 <p>If we look closely, we can see that the P3 address is equal to <code>(P4 &lt;&lt; 9) | XXX_0000</code>. And the P2 address is calculated through <code>(P3 &lt;&lt; 9) | YYY_0000</code>. So to get the next address, we need to shift it 9 bits to the left and add the table index. As a formula:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>next_table_address = (table_address &lt;&lt; 9) | (index &lt;&lt; 12)
-</span></code></pre>
-<h3 id="the-next-table-methods"><a class="zola-anchor" href="#the-next-table-methods" aria-label="Anchor link for: the-next-table-methods">🔗</a>The <code>next_table</code> Methods</h3>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>next_table_address = (table_address &lt;&lt; 9) | (index &lt;&lt; 12)</span></span></code></pre><h3 id="the-next-table-methods"><a class="zola-anchor" href="#the-next-table-methods" aria-label="Anchor link for: the-next-table-methods">🔗</a>The <code>next_table</code> Methods</h3>
 <p>Let’s add the above formula as a <code>Table</code> method:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>next_table_address(</span><span style="color:#569cd6;">&amp;</span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Option&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> entry_flags = self[index].flags();
-</span><span>    </span><span style="color:#569cd6;">if</span><span> entry_flags.contains(</span><span style="color:#b4cea8;">PRESENT</span><span>) </span><span style="color:#569cd6;">&amp;&amp; !</span><span>entry_flags.contains(</span><span style="color:#b4cea8;">HUGE_PAGE</span><span>) {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> table_address = self </span><span style="color:#569cd6;">as *const _ as usize</span><span>;
-</span><span>        Some((table_address &lt;&lt; </span><span style="color:#b5cea8;">9</span><span>) </span><span style="color:#569cd6;">| </span><span>(index &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>))
-</span><span>    } </span><span style="color:#569cd6;">else </span><span>{
-</span><span>        None
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> next_table_address</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">usize</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> entry_flags</span><span> =</span><span style="color: #569CD6;"> self</span><span>[</span><span style="color: #9CDCFE;">index</span><span>].</span><span style="color: #DCDCAA;">flags</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    if</span><span style="color: #9CDCFE;"> entry_flags</span><span>.</span><span style="color: #DCDCAA;">contains</span><span>(PRESENT) &amp;&amp; !</span><span style="color: #9CDCFE;">entry_flags</span><span>.</span><span style="color: #DCDCAA;">contains</span><span>(HUGE_PAGE) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> table_address</span><span> =</span><span style="color: #569CD6;"> self as</span><span> *</span><span style="color: #569CD6;">const</span><span style="color: #9CDCFE;"> _</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> usize</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Some</span><span>((</span><span style="color: #9CDCFE;">table_address</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 9</span><span>) | (</span><span style="color: #9CDCFE;">index</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 12</span><span>))</span></span>
+<span class="giallo-l"><span>    }</span><span style="color: #C586C0;"> else</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        None</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The next table address is only valid if the corresponding entry is present and does not create a huge page. Then we can do some pointer casting to get the table address and use the formula to calculate the next address.</p>
 <p>If the index is out of bounds, the function will panic since Rust checks array bounds. The panic is desired here since a wrong index should not be possible and indicates a bug.</p>
 <p>To convert the address into references, we add two functions:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>next_table(</span><span style="color:#569cd6;">&amp;</span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Option&lt;</span><span style="color:#569cd6;">&amp;</span><span>Table&gt; {
-</span><span>    self.next_table_address(index)
-</span><span>        .map(|address| </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span>*(address </span><span style="color:#569cd6;">as *const _</span><span>) })
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>next_table_mut(</span><span style="color:#569cd6;">&amp;mut </span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Option&lt;</span><span style="color:#569cd6;">&amp;mut</span><span> Table&gt; {
-</span><span>    self.next_table_address(index)
-</span><span>        .map(|address| </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*(address </span><span style="color:#569cd6;">as *mut _</span><span>) })
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> next_table</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;&amp;</span><span style="color: #4EC9B0;">Table</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    self</span><span>.</span><span style="color: #DCDCAA;">next_table_address</span><span>(</span><span style="color: #9CDCFE;">index</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">map</span><span>(|</span><span style="color: #9CDCFE;">address</span><span>|</span><span style="color: #569CD6;"> unsafe</span><span> { &amp;*(</span><span style="color: #9CDCFE;">address</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">const</span><span style="color: #9CDCFE;"> _</span><span>) })</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> next_table_mut</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> Table</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    self</span><span>.</span><span style="color: #DCDCAA;">next_table_address</span><span>(</span><span style="color: #9CDCFE;">index</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">map</span><span>(|</span><span style="color: #9CDCFE;">address</span><span>|</span><span style="color: #569CD6;"> unsafe</span><span> { &amp;</span><span style="color: #569CD6;">mut</span><span> *(</span><span style="color: #9CDCFE;">address</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> _</span><span>) })</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We convert the address into raw pointers through <code>as</code> casts and then convert them into Rust references through <code>&amp;mut *</code>. The latter is an <code>unsafe</code> operation since Rust can’t guarantee that the raw pointer is valid.</p>
-<p>Note that <code>self</code> stays borrowed as long as the returned reference is valid. This is because of Rust’s <a href="https://doc.rust-lang.org/1.30.0/book/first-edition/lifetimes.html#lifetime-elision">lifetime elision</a> rules. Basically, these rules say that the lifetime of an output reference is the same as the lifetime of the input reference by default. So the above function signatures are expanded to:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>next_table&lt;</span><span style="color:#569cd6;">&#39;a</span><span>&gt;(</span><span style="color:#569cd6;">&amp;&#39;a </span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Option&lt;</span><span style="color:#569cd6;">&amp;&#39;a</span><span> Table&gt; {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>next_table_mut&lt;</span><span style="color:#569cd6;">&#39;a</span><span>&gt;(</span><span style="color:#569cd6;">&amp;&#39;a mut </span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>)
-</span><span>    -&gt; Option&lt;</span><span style="color:#569cd6;">&amp;&#39;a mut</span><span> Table&gt;
-</span><span>{</span><span style="color:#569cd6;">...</span><span>}
-</span></code></pre>
+<p>Note that <code>self</code> stays borrowed as long as the returned reference is valid. This is because of Rust’s <a rel="external" href="https://doc.rust-lang.org/1.30.0/book/first-edition/lifetimes.html#lifetime-elision">lifetime elision</a> rules. Basically, these rules say that the lifetime of an output reference is the same as the lifetime of the input reference by default. So the above function signatures are expanded to:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> next_table</span><span>&lt;&#39;</span><span style="color: #4EC9B0;">a</span><span>&gt;(&amp;&#39;</span><span style="color: #4EC9B0;">a</span><span style="color: #569CD6;"> self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;&amp;&#39;</span><span style="color: #4EC9B0;">a Table</span><span>&gt; {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> next_table_mut</span><span>&lt;&#39;</span><span style="color: #4EC9B0;">a</span><span>&gt;(&amp;&#39;</span><span style="color: #4EC9B0;">a</span><span style="color: #569CD6;"> mut self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>)</span></span>
+<span class="giallo-l"><span>    -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;&amp;&#39;</span><span style="color: #4EC9B0;">a</span><span style="color: #569CD6;"> mut</span><span style="color: #4EC9B0;"> Table</span><span>&gt;</span></span>
+<span class="giallo-l"><span>{...}</span></span></code></pre>
 <p>Note the additional lifetime parameters, which are identical for input and output references. That’s exactly what we want. It ensures that we can’t modify tables as long as we have references to lower tables. For example, it would be very bad if we could unmap a P3 table if we still write to one of its P2 tables.</p>
 <h4 id="safety"><a class="zola-anchor" href="#safety" aria-label="Anchor link for: safety">🔗</a>Safety</h4>
 <p>Now we can start at the <code>P4</code> constant and use the <code>next_table</code> functions to access the lower tables. And we don’t even need <code>unsafe</code> blocks to do it! Right now, your alarm bells should be ringing. Thanks to Rust, everything we’ve done before in this post was completely safe. But we just introduced two unsafe blocks to convince Rust that there are valid tables at the specified addresses. Can we really be sure?</p>
@@ -350,225 +331,208 @@
 <h2 id="some-clever-solution"><a class="zola-anchor" href="#some-clever-solution" aria-label="Anchor link for: some-clever-solution">🔗</a>Some Clever Solution</h2>
 <p>We can use Rust’s type system to statically guarantee that the <code>next_table</code> methods can only be called on P4, P3, and P2 tables, but not on a P1 table. The idea is to add a <code>Level</code> parameter to the <code>Table</code> type and implement the <code>next_table</code> methods only for level 4, 3, and 2.</p>
 <p>To model the levels we use a trait and empty enums:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub trait </span><span>TableLevel {}
-</span><span>
-</span><span style="color:#569cd6;">pub enum </span><span>Level4 {}
-</span><span style="color:#569cd6;">pub enum </span><span>Level3 {}
-</span><span style="color:#569cd6;">pub enum </span><span>Level2 {}
-</span><span style="color:#569cd6;">pub enum </span><span>Level1 {}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>TableLevel </span><span style="color:#569cd6;">for </span><span>Level4 {}
-</span><span style="color:#569cd6;">impl </span><span>TableLevel </span><span style="color:#569cd6;">for </span><span>Level3 {}
-</span><span style="color:#569cd6;">impl </span><span>TableLevel </span><span style="color:#569cd6;">for </span><span>Level2 {}
-</span><span style="color:#569cd6;">impl </span><span>TableLevel </span><span style="color:#569cd6;">for </span><span>Level1 {}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub trait</span><span style="color: #4EC9B0;"> TableLevel</span><span> {}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> Level4</span><span> {}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> Level3</span><span> {}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> Level2</span><span> {}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub enum</span><span style="color: #4EC9B0;"> Level1</span><span> {}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> TableLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level4</span><span> {}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> TableLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level3</span><span> {}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> TableLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level2</span><span> {}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> TableLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level1</span><span> {}</span></span></code></pre>
 <p>An empty enum has size zero and disappears completely after compiling. Unlike an empty struct, it’s not possible to instantiate an empty enum. Since we will use <code>TableLevel</code> and the table levels in exported types, they need to be public.</p>
 <p>To differentiate the P1 table from the other tables, we introduce a <code>HierarchicalLevel</code> trait, which is a subtrait of <code>TableLevel</code>. But we implement it only for the levels 4, 3, and 2:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub trait </span><span>HierarchicalLevel: TableLevel {}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>HierarchicalLevel </span><span style="color:#569cd6;">for </span><span>Level4 {}
-</span><span style="color:#569cd6;">impl </span><span>HierarchicalLevel </span><span style="color:#569cd6;">for </span><span>Level3 {}
-</span><span style="color:#569cd6;">impl </span><span>HierarchicalLevel </span><span style="color:#569cd6;">for </span><span>Level2 {}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub trait</span><span style="color: #4EC9B0;"> HierarchicalLevel</span><span>:</span><span style="color: #4EC9B0;"> TableLevel</span><span> {}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> HierarchicalLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level4</span><span> {}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> HierarchicalLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level3</span><span> {}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> HierarchicalLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level2</span><span> {}</span></span></code></pre>
 <p>Now we add the level parameter to the <code>Table</code> type:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>core::marker::PhantomData;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Table&lt;L: TableLevel&gt; {
-</span><span>    entries: [Entry; ENTRY_COUNT],
-</span><span>    level: PhantomData&lt;L&gt;,
-</span><span>}
-</span></code></pre>
-<p>We need to add a <a href="https://doc.rust-lang.org/core/marker/struct.PhantomData.html#unused-type-parameters">PhantomData</a> field because unused type parameters are not allowed in Rust.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">marker</span><span>::</span><span style="color: #4EC9B0;">PhantomData</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>:</span><span style="color: #4EC9B0;"> TableLevel</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    entries</span><span>: [</span><span style="color: #4EC9B0;">Entry</span><span>; ENTRY_COUNT],</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    level</span><span>:</span><span style="color: #4EC9B0;"> PhantomData</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;,</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>We need to add a <a rel="external" href="https://doc.rust-lang.org/core/marker/struct.PhantomData.html#unused-type-parameters">PhantomData</a> field because unused type parameters are not allowed in Rust.</p>
 <p>Since we changed the <code>Table</code> type, we need to update every use of it:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">P4</span><span>: </span><span style="color:#569cd6;">*mut </span><span>Table&lt;Level4&gt; = </span><span style="color:#b5cea8;">0xffffffff_fffff000 </span><span style="color:#569cd6;">as *mut _</span><span>;
-</span><span style="color:#569cd6;">...
-</span><span style="color:#569cd6;">impl</span><span>&lt;L&gt; Table&lt;L&gt; </span><span style="color:#569cd6;">where</span><span> L: TableLevel
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>zero(</span><span style="color:#569cd6;">&amp;mut </span><span>self) {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl</span><span>&lt;L&gt; Table&lt;L&gt; </span><span style="color:#569cd6;">where</span><span> L: HierarchicalLevel
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>next_table(</span><span style="color:#569cd6;">&amp;</span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Option&lt;</span><span style="color:#569cd6;">&amp;</span><span>Table&lt;</span><span style="color:#ff3333;">??</span><span style="color:#569cd6;">?</span><span>&gt;&gt; {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>next_table_mut(</span><span style="color:#569cd6;">&amp;mut </span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Option&lt;</span><span style="color:#569cd6;">&amp;mut </span><span>Table&lt;</span><span style="color:#ff3333;">??</span><span style="color:#569cd6;">?</span><span>&gt;&gt;
-</span><span>    {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>next_table_address(</span><span style="color:#569cd6;">&amp;</span><span>self, index: </span><span style="color:#569cd6;">usize</span><span>) -&gt; Option&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl</span><span>&lt;L&gt; Index&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; </span><span style="color:#569cd6;">for </span><span>Table&lt;L&gt; </span><span style="color:#569cd6;">where</span><span> L: TableLevel {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl</span><span>&lt;L&gt; IndexMut&lt;</span><span style="color:#569cd6;">usize</span><span>&gt; </span><span style="color:#569cd6;">for </span><span>Table&lt;L&gt; </span><span style="color:#569cd6;">where</span><span> L: TableLevel {</span><span style="color:#569cd6;">...</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> P4: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">Level4</span><span>&gt; =</span><span style="color: #B5CEA8;"> 0xffffffff_fffff000</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> _</span><span>;</span></span>
+<span class="giallo-l"><span>...</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;</span><span style="color: #569CD6;"> where</span><span style="color: #4EC9B0;"> L</span><span>:</span><span style="color: #4EC9B0;"> TableLevel</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> zero</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>) {...}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;</span><span style="color: #569CD6;"> where</span><span style="color: #4EC9B0;"> L</span><span>:</span><span style="color: #4EC9B0;"> HierarchicalLevel</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> next_table</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;&amp;</span><span style="color: #4EC9B0;">Table</span><span>&lt;???&gt;&gt; {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> next_table_mut</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> Table</span><span>&lt;???&gt;&gt;</span></span>
+<span class="giallo-l"><span>    {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> next_table_address</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">usize</span><span>&gt; {...}</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;</span><span style="color: #4EC9B0;"> Index</span><span>&lt;</span><span style="color: #4EC9B0;">usize</span><span>&gt;</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;</span><span style="color: #569CD6;"> where</span><span style="color: #4EC9B0;"> L</span><span>:</span><span style="color: #4EC9B0;"> TableLevel</span><span> {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;</span><span style="color: #4EC9B0;"> IndexMut</span><span>&lt;</span><span style="color: #4EC9B0;">usize</span><span>&gt;</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>&gt;</span><span style="color: #569CD6;"> where</span><span style="color: #4EC9B0;"> L</span><span>:</span><span style="color: #4EC9B0;"> TableLevel</span><span> {...}</span></span></code></pre>
 <p>Now the <code>next_table</code> methods are only available for P4, P3, and P2 tables. But they have the incomplete return type <code>Table&lt;???&gt;</code> now. What should we fill in for the <code>???</code>?</p>
 <p>For a P4 table we would like to return a <code>Table&lt;Level3&gt;</code>, for a P3 table a <code>Table&lt;Level2&gt;</code>, and for a P2 table a <code>Table&lt;Level1&gt;</code>. So we want to return a table of the <em>next level</em>.</p>
 <p>We can define the next level by adding an associated type to the <code>HierarchicalLevel</code> trait:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">trait </span><span>HierarchicalLevel: TableLevel {
-</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">NextLevel</span><span>: TableLevel;
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>HierarchicalLevel </span><span style="color:#569cd6;">for </span><span>Level4 {
-</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">NextLevel </span><span>= Level3;
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>HierarchicalLevel </span><span style="color:#569cd6;">for </span><span>Level3 {
-</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">NextLevel </span><span>= Level2;
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>HierarchicalLevel </span><span style="color:#569cd6;">for </span><span>Level2 {
-</span><span>    </span><span style="color:#569cd6;">type </span><span style="color:#4ec9b0;">NextLevel </span><span>= Level1;
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">trait</span><span style="color: #4EC9B0;"> HierarchicalLevel</span><span>:</span><span style="color: #4EC9B0;"> TableLevel</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    type</span><span style="color: #4EC9B0;"> NextLevel</span><span>:</span><span style="color: #4EC9B0;"> TableLevel</span><span>;</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> HierarchicalLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level4</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    type</span><span style="color: #4EC9B0;"> NextLevel</span><span> =</span><span style="color: #4EC9B0;"> Level3</span><span>;</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> HierarchicalLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level3</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    type</span><span style="color: #4EC9B0;"> NextLevel</span><span> =</span><span style="color: #4EC9B0;"> Level2</span><span>;</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> HierarchicalLevel</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Level2</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    type</span><span style="color: #4EC9B0;"> NextLevel</span><span> =</span><span style="color: #4EC9B0;"> Level1</span><span>;</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Now we can replace the <code>Table&lt;???&gt;</code> types with <code>Table&lt;L::NextLevel&gt;</code> types and our code works as intended. You can try it with a simple test function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>test() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> p4 = </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span>*</span><span style="color:#b4cea8;">P4 </span><span>};
-</span><span>    p4.next_table(</span><span style="color:#b5cea8;">42</span><span>)
-</span><span>      .and_then(|p3| p3.next_table(</span><span style="color:#b5cea8;">1337</span><span>))
-</span><span>      .and_then(|p2| p2.next_table(</span><span style="color:#b5cea8;">0xdeadbeaf</span><span>))
-</span><span>      .and_then(|p1| p1.next_table(</span><span style="color:#b5cea8;">0xcafebabe</span><span>))
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> p4</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> { &amp;*</span><span style="color: #4EC9B0;">P4</span><span> };</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    p4</span><span>.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #B5CEA8;">42</span><span>)</span></span>
+<span class="giallo-l"><span>      .</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p3</span><span>|</span><span style="color: #9CDCFE;"> p3</span><span>.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #B5CEA8;">1337</span><span>))</span></span>
+<span class="giallo-l"><span>      .</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p2</span><span>|</span><span style="color: #9CDCFE;"> p2</span><span>.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #B5CEA8;">0xdeadbeaf</span><span>))</span></span>
+<span class="giallo-l"><span>      .</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p1</span><span>|</span><span style="color: #9CDCFE;"> p1</span><span>.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #B5CEA8;">0xcafebabe</span><span>))</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Most of the indexes are completely out of bounds, so it would panic if it’s called. But we don’t need to call it since it already fails at compile time:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: no method named `next_table` found for type
-</span><span>  `&amp;memory::paging::table::Table&lt;memory::paging::table::Level1&gt;`
-</span><span>  in the current scope
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: no method named `next_table` found for type</span></span>
+<span class="giallo-l"><span>  `&amp;memory::paging::table::Table&lt;memory::paging::table::Level1&gt;`</span></span>
+<span class="giallo-l"><span>  in the current scope</span></span></code></pre>
 <p>Remember that this is bare metal kernel code. We just used type system magic to make low-level page table manipulations safer. Rust is just awesome!</p>
 <h2 id="translating-addresses"><a class="zola-anchor" href="#translating-addresses" aria-label="Anchor link for: translating-addresses">🔗</a>Translating Addresses</h2>
 <p>Now let’s do something useful with our new module. We will create a function that translates a virtual address to the corresponding physical address. We add it to the <code>paging/mod.rs</code> module:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>translate(virtual_address: VirtualAddress)
-</span><span>    -&gt; Option&lt;PhysicalAddress&gt;
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> offset = virtual_address % </span><span style="color:#b4cea8;">PAGE_SIZE</span><span>;
-</span><span>    translate_page(Page::containing_address(virtual_address))
-</span><span>        .map(|frame| frame.number * </span><span style="color:#b4cea8;">PAGE_SIZE </span><span>+ offset)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> translate</span><span>(</span><span style="color: #9CDCFE;">virtual_address</span><span>:</span><span style="color: #4EC9B0;"> VirtualAddress</span><span>)</span></span>
+<span class="giallo-l"><span>    -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">PhysicalAddress</span><span>&gt;</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> offset</span><span> =</span><span style="color: #9CDCFE;"> virtual_address</span><span> % PAGE_SIZE;</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    translate_page</span><span>(</span><span style="color: #4EC9B0;">Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">virtual_address</span><span>))</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">map</span><span>(|</span><span style="color: #9CDCFE;">frame</span><span>|</span><span style="color: #9CDCFE;"> frame</span><span>.number * PAGE_SIZE +</span><span style="color: #9CDCFE;"> offset</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>It uses two functions we haven’t defined yet: <code>translate_page</code> and <code>Page::containing_address</code>. Let’s start with the latter:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>containing_address(address: VirtualAddress) -&gt; Page {
-</span><span>    assert!(address &lt; </span><span style="color:#b5cea8;">0x0000_8000_0000_0000 </span><span style="color:#569cd6;">||
-</span><span>        address &gt;= </span><span style="color:#b5cea8;">0xffff_8000_0000_0000</span><span>,
-</span><span>        </span><span style="color:#d69d85;">&quot;invalid address: 0x{:x}&quot;</span><span>, address);
-</span><span>    Page { number: address / </span><span style="color:#b4cea8;">PAGE_SIZE </span><span>}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> containing_address</span><span>(</span><span style="color: #9CDCFE;">address</span><span>:</span><span style="color: #4EC9B0;"> VirtualAddress</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Page</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert!</span><span>(</span><span style="color: #9CDCFE;">address</span><span> &lt;</span><span style="color: #B5CEA8;"> 0x0000_8000_0000_0000</span><span> ||</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        address</span><span> &gt;=</span><span style="color: #B5CEA8;"> 0xffff_8000_0000_0000</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #CE9178;">        &quot;invalid address: 0x{:x}&quot;</span><span>,</span><span style="color: #9CDCFE;"> address</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Page</span><span> {</span><span style="color: #9CDCFE;"> number</span><span>:</span><span style="color: #9CDCFE;"> address</span><span> / PAGE_SIZE }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The assertion is needed because there can be invalid addresses. Addresses on x86 are just 48-bit long and the other bits are just <em>sign extension</em>, i.e. a copy of the most significant bit. For example:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>invalid address: 0x0000_8000_0000_0000
-</span><span>valid address:   0xffff_8000_0000_0000
-</span><span>                        └── bit 47
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>invalid address: 0x0000_8000_0000_0000</span></span>
+<span class="giallo-l"><span>valid address:   0xffff_8000_0000_0000</span></span>
+<span class="giallo-l"><span>                        └── bit 47</span></span></code></pre>
 <p>So the address space is split into two halves: the <em>higher half</em> containing addresses with sign extension and the <em>lower half</em> containing addresses without. Everything in between is invalid.</p>
 <p>Since we added <code>containing_address</code>, we add the inverse method as well (maybe we need it later):</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>start_address(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>    self.number * </span><span style="color:#b4cea8;">PAGE_SIZE
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> start_address</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    self</span><span>.number * PAGE_SIZE</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The other missing function, <code>translate_page</code>, looks like this:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>memory::Frame;
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>translate_page(page: Page) -&gt; Option&lt;Frame&gt; {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>self::entry::</span><span style="color:#b4cea8;">HUGE_PAGE</span><span>;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> p3 = </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span>*table::</span><span style="color:#b4cea8;">P4 </span><span>}.next_table(page.p4_index());
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let </span><span>huge_page </span><span style="color:#569cd6;">= </span><span>|| {
-</span><span>        </span><span style="color:#608b4e;">// TODO
-</span><span>    };
-</span><span>
-</span><span>    p3.and_then(|p3| p3.next_table(page.p3_index()))
-</span><span>      .and_then(|p2| p2.next_table(page.p2_index()))
-</span><span>      .and_then(|p1| p1[page.p1_index()].pointed_frame())
-</span><span>      .or_else(huge_page)
-</span><span>}
-</span></code></pre>
-<p>We use an unsafe block to convert the raw <code>P4</code> pointer to a reference. Then we use the <a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.and_then">Option::and_then</a> function to go through the four table levels. If some entry along the way is <code>None</code>, we check if the page is a huge page through the (unimplemented) <code>huge_page</code> closure.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">Frame</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> translate_page</span><span>(</span><span style="color: #9CDCFE;">page</span><span>:</span><span style="color: #4EC9B0;"> Page</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">Frame</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use self</span><span>::</span><span style="color: #4EC9B0;">entry</span><span>::</span><span style="color: #4EC9B0;">HUGE_PAGE</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> p3</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> { &amp;*</span><span style="color: #4EC9B0;">table</span><span>::</span><span style="color: #4EC9B0;">P4</span><span> }.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p4_index</span><span>());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> huge_page</span><span> = || {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // TODO</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    p3</span><span>.</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p3</span><span>|</span><span style="color: #9CDCFE;"> p3</span><span>.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p3_index</span><span>()))</span></span>
+<span class="giallo-l"><span>      .</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p2</span><span>|</span><span style="color: #9CDCFE;"> p2</span><span>.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p2_index</span><span>()))</span></span>
+<span class="giallo-l"><span>      .</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p1</span><span>|</span><span style="color: #9CDCFE;"> p1</span><span>[</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>()].</span><span style="color: #DCDCAA;">pointed_frame</span><span>())</span></span>
+<span class="giallo-l"><span>      .</span><span style="color: #DCDCAA;">or_else</span><span>(</span><span style="color: #9CDCFE;">huge_page</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>We use an unsafe block to convert the raw <code>P4</code> pointer to a reference. Then we use the <a rel="external" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.and_then">Option::and_then</a> function to go through the four table levels. If some entry along the way is <code>None</code>, we check if the page is a huge page through the (unimplemented) <code>huge_page</code> closure.</p>
 <p>The <code>Page::p*_index</code> functions return the different table indexes. They look like this:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>p4_index(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>    (self.number &gt;&gt; </span><span style="color:#b5cea8;">27</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777
-</span><span>}
-</span><span style="color:#569cd6;">fn </span><span>p3_index(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>    (self.number &gt;&gt; </span><span style="color:#b5cea8;">18</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777
-</span><span>}
-</span><span style="color:#569cd6;">fn </span><span>p2_index(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>    (self.number &gt;&gt; </span><span style="color:#b5cea8;">9</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777
-</span><span>}
-</span><span style="color:#569cd6;">fn </span><span>p1_index(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">usize </span><span>{
-</span><span>    (self.number &gt;&gt; </span><span style="color:#b5cea8;">0</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777
-</span><span>}
-</span></code></pre>
-<h3 id="safety-1"><a class="zola-anchor" href="#safety-1" aria-label="Anchor link for: safety-1">🔗</a>Safety</h3>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> p4_index</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span>    (</span><span style="color: #569CD6;">self</span><span>.number &gt;&gt;</span><span style="color: #B5CEA8;"> 27</span><span>) &amp;</span><span style="color: #B5CEA8;"> 0o777</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> p3_index</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span>    (</span><span style="color: #569CD6;">self</span><span>.number &gt;&gt;</span><span style="color: #B5CEA8;"> 18</span><span>) &amp;</span><span style="color: #B5CEA8;"> 0o777</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> p2_index</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span>    (</span><span style="color: #569CD6;">self</span><span>.number &gt;&gt;</span><span style="color: #B5CEA8;"> 9</span><span>) &amp;</span><span style="color: #B5CEA8;"> 0o777</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> p1_index</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
+<span class="giallo-l"><span>    (</span><span style="color: #569CD6;">self</span><span>.number &gt;&gt;</span><span style="color: #B5CEA8;"> 0</span><span>) &amp;</span><span style="color: #B5CEA8;"> 0o777</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre><h3 id="safety-1"><a class="zola-anchor" href="#safety-1" aria-label="Anchor link for: safety-1">🔗</a>Safety</h3>
 <p>We use an <code>unsafe</code> block to convert the raw <code>P4</code> pointer into a shared reference. It’s safe because we don’t create any <code>&amp;mut</code> references to the table right now and don’t switch the P4 table either. But as soon as we do something like that, we have to revisit this method.</p>
 <h3 id="huge-pages"><a class="zola-anchor" href="#huge-pages" aria-label="Anchor link for: huge-pages">🔗</a>Huge Pages</h3>
 <p>The <code>huge_page</code> closure calculates the corresponding frame if huge pages are used. Its content looks like this:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>p3.and_then(|p3| {
-</span><span>      </span><span style="color:#569cd6;">let</span><span> p3_entry = </span><span style="color:#569cd6;">&amp;</span><span>p3[page.p3_index()];
-</span><span>      </span><span style="color:#608b4e;">// 1GiB page?
-</span><span>      </span><span style="color:#569cd6;">if let </span><span>Some(start_frame) = p3_entry.pointed_frame() {
-</span><span>          </span><span style="color:#569cd6;">if</span><span> p3_entry.flags().contains(</span><span style="color:#b4cea8;">HUGE_PAGE</span><span>) {
-</span><span>              </span><span style="color:#608b4e;">// address must be 1GiB aligned
-</span><span>              assert!(start_frame.number % (</span><span style="color:#b4cea8;">ENTRY_COUNT </span><span>* </span><span style="color:#b4cea8;">ENTRY_COUNT</span><span>) == </span><span style="color:#b5cea8;">0</span><span>);
-</span><span>              </span><span style="color:#569cd6;">return </span><span>Some(Frame {
-</span><span>                  number: start_frame.number + page.p2_index() *
-</span><span>                          </span><span style="color:#b4cea8;">ENTRY_COUNT </span><span>+ page.p1_index(),
-</span><span>              });
-</span><span>          }
-</span><span>      }
-</span><span>      </span><span style="color:#569cd6;">if let </span><span>Some(p2) = p3.next_table(page.p3_index()) {
-</span><span>          </span><span style="color:#569cd6;">let</span><span> p2_entry = </span><span style="color:#569cd6;">&amp;</span><span>p2[page.p2_index()];
-</span><span>          </span><span style="color:#608b4e;">// 2MiB page?
-</span><span>          </span><span style="color:#569cd6;">if let </span><span>Some(start_frame) = p2_entry.pointed_frame() {
-</span><span>              </span><span style="color:#569cd6;">if</span><span> p2_entry.flags().contains(</span><span style="color:#b4cea8;">HUGE_PAGE</span><span>) {
-</span><span>                  </span><span style="color:#608b4e;">// address must be 2MiB aligned
-</span><span>                  assert!(start_frame.number % </span><span style="color:#b4cea8;">ENTRY_COUNT </span><span>== </span><span style="color:#b5cea8;">0</span><span>);
-</span><span>                  </span><span style="color:#569cd6;">return </span><span>Some(Frame {
-</span><span>                      number: start_frame.number + page.p1_index()
-</span><span>                  });
-</span><span>              }
-</span><span>          }
-</span><span>      }
-</span><span>      None
-</span><span>  })
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9CDCFE;">p3</span><span>.</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p3</span><span>| {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">      let</span><span style="color: #9CDCFE;"> p3_entry</span><span> = &amp;</span><span style="color: #9CDCFE;">p3</span><span>[</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p3_index</span><span>()];</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">      // 1GiB page?</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">      if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">start_frame</span><span>) =</span><span style="color: #9CDCFE;"> p3_entry</span><span>.</span><span style="color: #DCDCAA;">pointed_frame</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">          if</span><span style="color: #9CDCFE;"> p3_entry</span><span>.</span><span style="color: #DCDCAA;">flags</span><span>().</span><span style="color: #DCDCAA;">contains</span><span>(HUGE_PAGE) {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">              // address must be 1GiB aligned</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">              assert!</span><span>(</span><span style="color: #9CDCFE;">start_frame</span><span>.number % (ENTRY_COUNT * ENTRY_COUNT) ==</span><span style="color: #B5CEA8;"> 0</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">              return</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #4EC9B0;">Frame</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                  number</span><span>:</span><span style="color: #9CDCFE;"> start_frame</span><span>.number +</span><span style="color: #9CDCFE;"> page</span><span>.</span><span style="color: #DCDCAA;">p2_index</span><span>() *</span></span>
+<span class="giallo-l"><span>                          ENTRY_COUNT +</span><span style="color: #9CDCFE;"> page</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>(),</span></span>
+<span class="giallo-l"><span>              });</span></span>
+<span class="giallo-l"><span>          }</span></span>
+<span class="giallo-l"><span>      }</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">      if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">p2</span><span>) =</span><span style="color: #9CDCFE;"> p3</span><span>.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p3_index</span><span>()) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">          let</span><span style="color: #9CDCFE;"> p2_entry</span><span> = &amp;</span><span style="color: #9CDCFE;">p2</span><span>[</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p2_index</span><span>()];</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">          // 2MiB page?</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">          if</span><span style="color: #569CD6;"> let</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #9CDCFE;">start_frame</span><span>) =</span><span style="color: #9CDCFE;"> p2_entry</span><span>.</span><span style="color: #DCDCAA;">pointed_frame</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">              if</span><span style="color: #9CDCFE;"> p2_entry</span><span>.</span><span style="color: #DCDCAA;">flags</span><span>().</span><span style="color: #DCDCAA;">contains</span><span>(HUGE_PAGE) {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">                  // address must be 2MiB aligned</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">                  assert!</span><span>(</span><span style="color: #9CDCFE;">start_frame</span><span>.number % ENTRY_COUNT ==</span><span style="color: #B5CEA8;"> 0</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">                  return</span><span style="color: #4EC9B0;"> Some</span><span>(</span><span style="color: #4EC9B0;">Frame</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                      number</span><span>:</span><span style="color: #9CDCFE;"> start_frame</span><span>.number +</span><span style="color: #9CDCFE;"> page</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>()</span></span>
+<span class="giallo-l"><span>                  });</span></span>
+<span class="giallo-l"><span>              }</span></span>
+<span class="giallo-l"><span>          }</span></span>
+<span class="giallo-l"><span>      }</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">      None</span></span>
+<span class="giallo-l"><span>  })</span></span></code></pre>
 <p>This function is much longer and more complex than the <code>translate_page</code> function itself. To avoid this complexity in the future, we will only work with standard 4KiB pages from now on.</p>
 <h2 id="mapping-pages"><a class="zola-anchor" href="#mapping-pages" aria-label="Anchor link for: mapping-pages">🔗</a>Mapping Pages</h2>
 <p>Let’s add a function that modifies the page tables to map a <code>Page</code> to a <code>Frame</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub use </span><span>self::entry::*;
-</span><span style="color:#569cd6;">use </span><span>memory::FrameAllocator;
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>map_to&lt;A&gt;(page: Page, frame: Frame, flags: EntryFlags,
-</span><span>                 allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> A)
-</span><span>    </span><span style="color:#569cd6;">where</span><span> A: FrameAllocator
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> p4 = </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*</span><span style="color:#b4cea8;">P4 </span><span>};
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> p3 = p4.next_table_create(page.p4_index(), allocator);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> p2 = p3.next_table_create(page.p3_index(), allocator);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> p1 = p2.next_table_create(page.p2_index(), allocator);
-</span><span>
-</span><span>    assert!(p1[page.p1_index()].is_unused());
-</span><span>    p1[page.p1_index()].set(frame, flags </span><span style="color:#569cd6;">| </span><span style="color:#b4cea8;">PRESENT</span><span>);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub use self</span><span>::</span><span style="color: #4EC9B0;">entry</span><span>::*;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">FrameAllocator</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> map_to</span><span>&lt;</span><span style="color: #4EC9B0;">A</span><span>&gt;(</span><span style="color: #9CDCFE;">page</span><span>:</span><span style="color: #4EC9B0;"> Page</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>:</span><span style="color: #4EC9B0;"> Frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>:</span><span style="color: #4EC9B0;"> EntryFlags</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                 allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> A</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    where</span><span style="color: #4EC9B0;"> A</span><span>:</span><span style="color: #4EC9B0;"> FrameAllocator</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> p4</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> { &amp;</span><span style="color: #569CD6;">mut</span><span> *</span><span style="color: #4EC9B0;">P4</span><span> };</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> p3</span><span> =</span><span style="color: #9CDCFE;"> p4</span><span>.</span><span style="color: #DCDCAA;">next_table_create</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p4_index</span><span>(),</span><span style="color: #9CDCFE;"> allocator</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> p2</span><span> =</span><span style="color: #9CDCFE;"> p3</span><span>.</span><span style="color: #DCDCAA;">next_table_create</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p3_index</span><span>(),</span><span style="color: #9CDCFE;"> allocator</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> p1</span><span> =</span><span style="color: #9CDCFE;"> p2</span><span>.</span><span style="color: #DCDCAA;">next_table_create</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p2_index</span><span>(),</span><span style="color: #9CDCFE;"> allocator</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert!</span><span>(</span><span style="color: #9CDCFE;">p1</span><span>[</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>()].</span><span style="color: #DCDCAA;">is_unused</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    p1</span><span>[</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>()].</span><span style="color: #DCDCAA;">set</span><span>(</span><span style="color: #9CDCFE;">frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span> | PRESENT);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We add an re-export for all <code>entry</code> types since they are required to call the function. We assert that the page is unmapped and always set the present flag (since it wouldn’t make sense to map a page without setting it).</p>
 <p>The <code>Table::next_table_create</code> method doesn’t exist yet. It should return the next table if it exists, or create a new one. For the implementation we need the <code>FrameAllocator</code> from the <a href="https://os.phil-opp.com/allocating-frames/#a-memory-module">previous post</a> and the <code>Table::zero</code> method:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>memory::FrameAllocator;
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>next_table_create&lt;A&gt;(</span><span style="color:#569cd6;">&amp;mut </span><span>self,
-</span><span>                            index: </span><span style="color:#569cd6;">usize</span><span>,
-</span><span>                            allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> A)
-</span><span>                            -&gt; </span><span style="color:#569cd6;">&amp;mut </span><span>Table&lt;</span><span style="color:#569cd6;">L::</span><span>NextLevel&gt;
-</span><span>    </span><span style="color:#569cd6;">where</span><span> A: FrameAllocator
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">if </span><span>self.next_table(index).is_none() {
-</span><span>        assert!(</span><span style="color:#569cd6;">!</span><span>self.entries[index].flags().contains(</span><span style="color:#b4cea8;">HUGE_PAGE</span><span>),
-</span><span>                </span><span style="color:#d69d85;">&quot;mapping code does not support huge pages&quot;</span><span>);
-</span><span>        </span><span style="color:#569cd6;">let</span><span> frame = allocator.allocate_frame().expect(</span><span style="color:#d69d85;">&quot;no frames available&quot;</span><span>);
-</span><span>        self.entries[index].set(frame, </span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span style="color:#b4cea8;">WRITABLE</span><span>);
-</span><span>        self.next_table_mut(index).unwrap().zero();
-</span><span>    }
-</span><span>    self.next_table_mut(index).unwrap()
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">FrameAllocator</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> next_table_create</span><span>&lt;</span><span style="color: #4EC9B0;">A</span><span>&gt;(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                            index</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                            allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> A</span><span>)</span></span>
+<span class="giallo-l"><span>                            -&gt; &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">L</span><span>::</span><span style="color: #4EC9B0;">NextLevel</span><span>&gt;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    where</span><span style="color: #4EC9B0;"> A</span><span>:</span><span style="color: #4EC9B0;"> FrameAllocator</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    if</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">next_table</span><span>(</span><span style="color: #9CDCFE;">index</span><span>).</span><span style="color: #DCDCAA;">is_none</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        assert!</span><span>(!</span><span style="color: #569CD6;">self</span><span>.entries[</span><span style="color: #9CDCFE;">index</span><span>].</span><span style="color: #DCDCAA;">flags</span><span>().</span><span style="color: #DCDCAA;">contains</span><span>(HUGE_PAGE),</span></span>
+<span class="giallo-l"><span style="color: #CE9178;">                &quot;mapping code does not support huge pages&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> allocator</span><span>.</span><span style="color: #DCDCAA;">allocate_frame</span><span>().</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;no frames available&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.entries[</span><span style="color: #9CDCFE;">index</span><span>].</span><span style="color: #DCDCAA;">set</span><span>(</span><span style="color: #9CDCFE;">frame</span><span>, PRESENT | WRITABLE);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #DCDCAA;">next_table_mut</span><span>(</span><span style="color: #9CDCFE;">index</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>().</span><span style="color: #DCDCAA;">zero</span><span>();</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    self</span><span>.</span><span style="color: #DCDCAA;">next_table_mut</span><span>(</span><span style="color: #9CDCFE;">index</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>()</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We can use <code>unwrap()</code> here since the next table definitely exists.</p>
 <h3 id="safety-2"><a class="zola-anchor" href="#safety-2" aria-label="Anchor link for: safety-2">🔗</a>Safety</h3>
 <p>We used an <code>unsafe</code> block in <code>map_to</code> to convert the raw <code>P4</code> pointer to a <code>&amp;mut</code> reference. That’s bad. It’s now possible that the <code>&amp;mut</code> reference is not exclusive, which breaks Rust’s guarantees. It’s only a matter time before we run into a data race. For example, imagine that one thread maps an entry to <code>frame_A</code> and another thread (on the same core) tries to map the same entry to <code>frame_B</code>.</p>
@@ -584,176 +548,159 @@
 </blockquote>
 <p>We just defined some random owner for the P4 table. But it will solve our problems. And it will also provide the interface to other modules.</p>
 <p>So let’s create the struct:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>self::table::{Table, Level4};
-</span><span style="color:#569cd6;">use </span><span>core::ptr::Unique;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>ActivePageTable {
-</span><span>    p4: Unique&lt;Table&lt;Level4&gt;&gt;,
-</span><span>}
-</span></code></pre>
-<p>We can’t store the <code>Table&lt;Level4&gt;</code> directly because it needs to be at a special memory location (like the <a href="https://os.phil-opp.com/printing-to-screen/#the-text-buffer">VGA text buffer</a>). We could use a raw pointer or <code>&amp;mut</code> instead of <a href="https://doc.rust-lang.org/1.10.0/core/ptr/struct.Unique.html">Unique</a>, but Unique indicates ownership better.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use self</span><span>::</span><span style="color: #4EC9B0;">table</span><span>::{</span><span style="color: #4EC9B0;">Table</span><span>,</span><span style="color: #4EC9B0;"> Level4</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">ptr</span><span>::</span><span style="color: #4EC9B0;">Unique</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> ActivePageTable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    p4</span><span>:</span><span style="color: #4EC9B0;"> Unique</span><span>&lt;</span><span style="color: #4EC9B0;">Table</span><span>&lt;</span><span style="color: #4EC9B0;">Level4</span><span>&gt;&gt;,</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>We can’t store the <code>Table&lt;Level4&gt;</code> directly because it needs to be at a special memory location (like the <a href="https://os.phil-opp.com/printing-to-screen/#the-text-buffer">VGA text buffer</a>). We could use a raw pointer or <code>&amp;mut</code> instead of <a rel="external" href="https://doc.rust-lang.org/1.10.0/core/ptr/struct.Unique.html">Unique</a>, but Unique indicates ownership better.</p>
 <p>Because the <code>ActivePageTable</code> owns the unique recursive mapped P4 table, there must be only one <code>ActivePageTable</code> instance. Thus we make the constructor function unsafe:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>ActivePageTable {
-</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>new() -&gt; ActivePageTable {
-</span><span>        ActivePageTable {
-</span><span>            p4: Unique::new_unchecked(table::</span><span style="color:#b4cea8;">P4</span><span>),
-</span><span>        }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> ActivePageTable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub unsafe fn</span><span style="color: #DCDCAA;"> new</span><span>() -&gt;</span><span style="color: #4EC9B0;"> ActivePageTable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        ActivePageTable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            p4</span><span>:</span><span style="color: #4EC9B0;"> Unique</span><span>::</span><span style="color: #DCDCAA;">new_unchecked</span><span>(</span><span style="color: #4EC9B0;">table</span><span>::</span><span style="color: #4EC9B0;">P4</span><span>),</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We add some methods to get P4 references:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>p4(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;</span><span>Table&lt;Level4&gt; {
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ self.p4.as_ref() }
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>p4_mut(</span><span style="color:#569cd6;">&amp;mut </span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;mut </span><span>Table&lt;Level4&gt; {
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ self.p4.as_mut() }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> p4</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt; &amp;</span><span style="color: #4EC9B0;">Table</span><span>&lt;</span><span style="color: #4EC9B0;">Level4</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #569CD6;"> self</span><span>.p4.</span><span style="color: #DCDCAA;">as_ref</span><span>() }</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> p4_mut</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>) -&gt; &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">Level4</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #569CD6;"> self</span><span>.p4.</span><span style="color: #DCDCAA;">as_mut</span><span>() }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Since we will only create valid P4 pointers, the <code>unsafe</code> blocks are safe. However, we don’t make these functions public since they can be used to make page tables invalid. Only the higher level functions (such as <code>translate</code> or <code>map_to</code>) should be usable from other modules.</p>
 <p>Now we can make the <code>map_to</code> and <code>translate</code> functions safe by making them methods of <code>ActivePageTable</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">impl </span><span>ActivePageTable {
-</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>new() -&gt; ActivePageTable {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>p4(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;</span><span>Table&lt;Level4&gt; {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>p4_mut(</span><span style="color:#569cd6;">&amp;mut </span><span>self) -&gt; </span><span style="color:#569cd6;">&amp;mut </span><span>Table&lt;Level4&gt; {</span><span style="color:#569cd6;">...</span><span>}
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>translate(</span><span style="color:#569cd6;">&amp;</span><span>self, virtual_address: VirtualAddress)
-</span><span>        -&gt; Option&lt;PhysicalAddress&gt;
-</span><span>    {
-</span><span>        </span><span style="color:#569cd6;">...
-</span><span>        self.translate_page(</span><span style="color:#569cd6;">...</span><span>).map(</span><span style="color:#569cd6;">...</span><span>)
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>translate_page(</span><span style="color:#569cd6;">&amp;</span><span>self, page: Page) -&gt; Option&lt;Frame&gt; {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> p3 = self.p4().next_table(</span><span style="color:#569cd6;">...</span><span>);
-</span><span>        </span><span style="color:#569cd6;">...
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">pub fn </span><span>map_to&lt;A&gt;(</span><span style="color:#569cd6;">&amp;mut </span><span>self,
-</span><span>                     page: Page,
-</span><span>                     frame: Frame,
-</span><span>                     flags: EntryFlags,
-</span><span>                     allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> A)
-</span><span>        </span><span style="color:#569cd6;">where</span><span> A: FrameAllocator
-</span><span>    {
-</span><span>        </span><span style="color:#569cd6;">let mut</span><span> p3 = self.p4_mut().next_table_create(</span><span style="color:#569cd6;">...</span><span>);
-</span><span>        </span><span style="color:#569cd6;">...
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> ActivePageTable</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub unsafe fn</span><span style="color: #DCDCAA;"> new</span><span>() -&gt;</span><span style="color: #4EC9B0;"> ActivePageTable</span><span> {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> p4</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt; &amp;</span><span style="color: #4EC9B0;">Table</span><span>&lt;</span><span style="color: #4EC9B0;">Level4</span><span>&gt; {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> p4_mut</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>) -&gt; &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> Table</span><span>&lt;</span><span style="color: #4EC9B0;">Level4</span><span>&gt; {...}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> translate</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> virtual_address</span><span>:</span><span style="color: #4EC9B0;"> VirtualAddress</span><span>)</span></span>
+<span class="giallo-l"><span>        -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">PhysicalAddress</span><span>&gt;</span></span>
+<span class="giallo-l"><span>    {</span></span>
+<span class="giallo-l"><span>        ...</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.</span><span style="color: #DCDCAA;">translate_page</span><span>(...).</span><span style="color: #DCDCAA;">map</span><span>(...)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> translate_page</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> page</span><span>:</span><span style="color: #4EC9B0;"> Page</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">Frame</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> p3</span><span> =</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">p4</span><span>().</span><span style="color: #DCDCAA;">next_table</span><span>(...);</span></span>
+<span class="giallo-l"><span>        ...</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub fn</span><span style="color: #DCDCAA;"> map_to</span><span>&lt;</span><span style="color: #4EC9B0;">A</span><span>&gt;(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                     page</span><span>:</span><span style="color: #4EC9B0;"> Page</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                     frame</span><span>:</span><span style="color: #4EC9B0;"> Frame</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                     flags</span><span>:</span><span style="color: #4EC9B0;"> EntryFlags</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                     allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> A</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        where</span><span style="color: #4EC9B0;"> A</span><span>:</span><span style="color: #4EC9B0;"> FrameAllocator</span></span>
+<span class="giallo-l"><span>    {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> p3</span><span> =</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">p4_mut</span><span>().</span><span style="color: #DCDCAA;">next_table_create</span><span>(...);</span></span>
+<span class="giallo-l"><span>        ...</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Now the <code>p4()</code> and <code>p4_mut()</code> methods should be the only methods containing an <code>unsafe</code> block in the <code>paging/mod.rs</code> file.</p>
 <h3 id="more-mapping-functions"><a class="zola-anchor" href="#more-mapping-functions" aria-label="Anchor link for: more-mapping-functions">🔗</a>More Mapping Functions</h3>
 <p>For convenience, we add a <code>map</code> method that just picks a free frame for us:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>map&lt;A&gt;(</span><span style="color:#569cd6;">&amp;mut </span><span>self, page: Page, flags: EntryFlags, allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> A)
-</span><span>    </span><span style="color:#569cd6;">where</span><span> A: FrameAllocator
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> frame = allocator.allocate_frame().expect(</span><span style="color:#d69d85;">&quot;out of memory&quot;</span><span>);
-</span><span>    self.map_to(page, frame, flags, allocator)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> map</span><span>&lt;</span><span style="color: #4EC9B0;">A</span><span>&gt;(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> page</span><span>:</span><span style="color: #4EC9B0;"> Page</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>:</span><span style="color: #4EC9B0;"> EntryFlags</span><span>,</span><span style="color: #9CDCFE;"> allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> A</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    where</span><span style="color: #4EC9B0;"> A</span><span>:</span><span style="color: #4EC9B0;"> FrameAllocator</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> allocator</span><span>.</span><span style="color: #DCDCAA;">allocate_frame</span><span>().</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;out of memory&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    self</span><span>.</span><span style="color: #DCDCAA;">map_to</span><span>(</span><span style="color: #9CDCFE;">page</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>,</span><span style="color: #9CDCFE;"> allocator</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We also add a <code>identity_map</code> function to make it easier to remap the kernel in the next post:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>identity_map&lt;A&gt;(</span><span style="color:#569cd6;">&amp;mut </span><span>self,
-</span><span>                       frame: Frame,
-</span><span>                       flags: EntryFlags,
-</span><span>                       allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> A)
-</span><span>    </span><span style="color:#569cd6;">where</span><span> A: FrameAllocator
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> page = Page::containing_address(frame.start_address());
-</span><span>    self.map_to(page, frame, flags, allocator)
-</span><span>}
-</span></code></pre>
-<h3 id="unmapping-pages"><a class="zola-anchor" href="#unmapping-pages" aria-label="Anchor link for: unmapping-pages">🔗</a>Unmapping Pages</h3>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> identity_map</span><span>&lt;</span><span style="color: #4EC9B0;">A</span><span>&gt;(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                       frame</span><span>:</span><span style="color: #4EC9B0;"> Frame</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                       flags</span><span>:</span><span style="color: #4EC9B0;"> EntryFlags</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                       allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> A</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    where</span><span style="color: #4EC9B0;"> A</span><span>:</span><span style="color: #4EC9B0;"> FrameAllocator</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">frame</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    self</span><span>.</span><span style="color: #DCDCAA;">map_to</span><span>(</span><span style="color: #9CDCFE;">page</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>,</span><span style="color: #9CDCFE;"> allocator</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre><h3 id="unmapping-pages"><a class="zola-anchor" href="#unmapping-pages" aria-label="Anchor link for: unmapping-pages">🔗</a>Unmapping Pages</h3>
 <p>To unmap a page, we set the corresponding P1 entry to unused:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>unmap&lt;A&gt;(</span><span style="color:#569cd6;">&amp;mut </span><span>self, page: Page, allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> A)
-</span><span>    </span><span style="color:#569cd6;">where</span><span> A: FrameAllocator
-</span><span>{
-</span><span>    assert!(self.translate(page.start_address()).is_some());
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> p1 = self.p4_mut()
-</span><span>                 .next_table_mut(page.p4_index())
-</span><span>                 .and_then(|p3| p3.next_table_mut(page.p3_index()))
-</span><span>                 .and_then(|p2| p2.next_table_mut(page.p2_index()))
-</span><span>                 .expect(</span><span style="color:#d69d85;">&quot;mapping code does not support huge pages&quot;</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> frame = p1[page.p1_index()].pointed_frame().unwrap();
-</span><span>    p1[page.p1_index()].set_unused();
-</span><span>    </span><span style="color:#608b4e;">// TODO free p(1,2,3) table if empty
-</span><span>    allocator.deallocate_frame(frame);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> unmap</span><span>&lt;</span><span style="color: #4EC9B0;">A</span><span>&gt;(&amp;</span><span style="color: #569CD6;">mut self</span><span>,</span><span style="color: #9CDCFE;"> page</span><span>:</span><span style="color: #4EC9B0;"> Page</span><span>,</span><span style="color: #9CDCFE;"> allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> A</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    where</span><span style="color: #4EC9B0;"> A</span><span>:</span><span style="color: #4EC9B0;"> FrameAllocator</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert!</span><span>(</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #DCDCAA;">translate</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>()).</span><span style="color: #DCDCAA;">is_some</span><span>());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> p1</span><span> =</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">p4_mut</span><span>()</span></span>
+<span class="giallo-l"><span>                 .</span><span style="color: #DCDCAA;">next_table_mut</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p4_index</span><span>())</span></span>
+<span class="giallo-l"><span>                 .</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p3</span><span>|</span><span style="color: #9CDCFE;"> p3</span><span>.</span><span style="color: #DCDCAA;">next_table_mut</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p3_index</span><span>()))</span></span>
+<span class="giallo-l"><span>                 .</span><span style="color: #DCDCAA;">and_then</span><span>(|</span><span style="color: #9CDCFE;">p2</span><span>|</span><span style="color: #9CDCFE;"> p2</span><span>.</span><span style="color: #DCDCAA;">next_table_mut</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p2_index</span><span>()))</span></span>
+<span class="giallo-l"><span>                 .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;mapping code does not support huge pages&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> p1</span><span>[</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>()].</span><span style="color: #DCDCAA;">pointed_frame</span><span>().</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    p1</span><span>[</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>()].</span><span style="color: #DCDCAA;">set_unused</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // TODO free p(1,2,3) table if empty</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    allocator</span><span>.</span><span style="color: #DCDCAA;">deallocate_frame</span><span>(</span><span style="color: #9CDCFE;">frame</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>The assertion ensures that the page is mapped. Thus the corresponding P1 table and frame must exist for a standard 4KiB page. We set the entry to unused and free the associated frame in the supplied frame allocator.</p>
 <p>We can also free the P1, P2, or even P3 table when the last entry is freed. But checking the whole table on every <code>unmap</code> would be very expensive. So we leave the <code>TODO</code> in place until we find a good solution. I’m open for suggestions :).</p>
 <p><em>Spoiler</em>: There is an ugly bug in this function, which we will find in the next section.</p>
 <h2 id="testing-and-bugfixing"><a class="zola-anchor" href="#testing-and-bugfixing" aria-label="Anchor link for: testing-and-bugfixing">🔗</a>Testing and Bugfixing</h2>
 <p>To test it, we add a <code>test_paging</code> function in <code>memory/paging/mod.rs</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub fn </span><span>test_paging&lt;A&gt;(allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> A)
-</span><span>    </span><span style="color:#569cd6;">where</span><span> A: FrameAllocator
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> page_table = </span><span style="color:#569cd6;">unsafe </span><span>{ ActivePageTable::new() };
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// test it
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_paging</span><span>&lt;</span><span style="color: #4EC9B0;">A</span><span>&gt;(</span><span style="color: #9CDCFE;">allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> A</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    where</span><span style="color: #4EC9B0;"> A</span><span>:</span><span style="color: #4EC9B0;"> FrameAllocator</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> page_table</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> ActivePageTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>() };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // test it</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>We borrow the frame allocator since we will need it for the mapping functions. To be able to call that function from main, we need to re-export it in <code>memory/mod.rs</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in memory/mod.rs
-</span><span style="color:#569cd6;">pub use </span><span>self::paging::test_paging;
-</span><span>
-</span><span style="color:#608b4e;">// lib.rs
-</span><span style="color:#569cd6;">let mut</span><span> frame_allocator = </span><span style="color:#569cd6;">...</span><span>;
-</span><span>memory::test_paging(</span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator);
-</span></code></pre>
-<h3 id="map-to"><a class="zola-anchor" href="#map-to" aria-label="Anchor link for: map-to">🔗</a>map_to</h3>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in memory/mod.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub use self</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::test_paging;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// lib.rs</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> = ...;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">memory</span><span>::</span><span style="color: #DCDCAA;">test_paging</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>);</span></span></code></pre><h3 id="map-to"><a class="zola-anchor" href="#map-to" aria-label="Anchor link for: map-to">🔗</a>map_to</h3>
 <p>Let’s test the <code>map_to</code> function:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> addr = </span><span style="color:#b5cea8;">42 </span><span>* </span><span style="color:#b5cea8;">512 </span><span>* </span><span style="color:#b5cea8;">512 </span><span>* </span><span style="color:#b5cea8;">4096</span><span>; </span><span style="color:#608b4e;">// 42th P3 entry
-</span><span style="color:#569cd6;">let</span><span> page = Page::containing_address(addr);
-</span><span style="color:#569cd6;">let</span><span> frame = allocator.allocate_frame().expect(</span><span style="color:#d69d85;">&quot;no more frames&quot;</span><span>);
-</span><span>println!(</span><span style="color:#d69d85;">&quot;None = </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">, map to </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>,
-</span><span>         page_table.translate(addr),
-</span><span>         frame);
-</span><span>page_table.map_to(page, frame, EntryFlags::empty(), allocator);
-</span><span>println!(</span><span style="color:#d69d85;">&quot;Some = </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, page_table.translate(addr));
-</span><span>println!(</span><span style="color:#d69d85;">&quot;next free frame: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, allocator.allocate_frame());
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> addr</span><span> =</span><span style="color: #B5CEA8;"> 42</span><span> *</span><span style="color: #B5CEA8;"> 512</span><span> *</span><span style="color: #B5CEA8;"> 512</span><span> *</span><span style="color: #B5CEA8;"> 4096</span><span>;</span><span style="color: #6A9955;"> // 42th P3 entry</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> allocator</span><span>.</span><span style="color: #DCDCAA;">allocate_frame</span><span>().</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;no more frames&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;None = {:?}, map to {:?}&quot;</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">         page_table</span><span>.</span><span style="color: #DCDCAA;">translate</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>),</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">         frame</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">page_table</span><span>.</span><span style="color: #DCDCAA;">map_to</span><span>(</span><span style="color: #9CDCFE;">page</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>,</span><span style="color: #4EC9B0;"> EntryFlags</span><span>::</span><span style="color: #DCDCAA;">empty</span><span>(),</span><span style="color: #9CDCFE;"> allocator</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;Some = {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> page_table</span><span>.</span><span style="color: #DCDCAA;">translate</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;next free frame: {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> allocator</span><span>.</span><span style="color: #DCDCAA;">allocate_frame</span><span>());</span></span></code></pre>
 <p>We just map some random page to a free frame. To be able to borrow the page table as <code>&amp;mut</code>, we need to make it mutable.</p>
 <p>You should see output similar to this:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>None = None, map to Frame { number: 0 }
-</span><span>Some = Some(0)
-</span><span>next free frame: Some(Frame { number: 3 })
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>None = None, map to Frame { number: 0 }</span></span>
+<span class="giallo-l"><span>Some = Some(0)</span></span>
+<span class="giallo-l"><span>next free frame: Some(Frame { number: 3 })</span></span></code></pre>
 <p>It’s frame 0 because it’s the first frame returned by the frame allocator. Since we map the 42th P3 entry, the mapping code needs to create a P2 and a P1 table. So the next free frame returned by the allocator is frame 3.</p>
 <h3 id="unmap"><a class="zola-anchor" href="#unmap" aria-label="Anchor link for: unmap">🔗</a>unmap</h3>
 <p>To test the <code>unmap</code> function, we unmap the test page so that it translates to <code>None</code> again:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>page_table.unmap(Page::containing_address(addr), allocator);
-</span><span>println!(</span><span style="color:#d69d85;">&quot;None = </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, page_table.translate(addr));
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9CDCFE;">page_table</span><span>.</span><span style="color: #DCDCAA;">unmap</span><span>(</span><span style="color: #4EC9B0;">Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>),</span><span style="color: #9CDCFE;"> allocator</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;None = {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> page_table</span><span>.</span><span style="color: #DCDCAA;">translate</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>));</span></span></code></pre>
 <p>It causes a panic since we call the unimplemented <code>deallocate_frame</code> method in <code>unmap</code>. If we comment this call out, it works without problems. But there is some bug in this function nevertheless.</p>
 <p>Let’s read something from the mapped page (of course before we unmap it again):</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:#x}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>    *(Page::containing_address(addr).start_address() </span><span style="color:#569cd6;">as *const u64</span><span>)
-</span><span>});
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;{:#x}&quot;</span><span>,</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>    *(</span><span style="color: #4EC9B0;">Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>).</span><span style="color: #DCDCAA;">start_address</span><span>()</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">const</span><span style="color: #4EC9B0;"> u64</span><span>)</span></span>
+<span class="giallo-l"><span>});</span></span></code></pre>
 <p>Since we don’t zero the mapped pages, the output is random. For me, it’s <code>0xf000ff53f000ff53</code>.</p>
 <p>If <code>unmap</code> worked correctly, reading it again after unmapping should cause a page fault. But it doesn’t. Instead, it just prints the same number again. When we remove the first read, we get the desired page fault (i.e. QEMU reboots again and again). So this seems to be some cache issue.</p>
 <p>An x86 processor has many different caches because always accessing the main memory would be very slow. Most of these caches are completely <em>transparent</em>. That means everything works exactly the same as without them, it’s just much faster. But there is one cache, that needs to be updated manually: the <em>translation lookaside buffer</em>.</p>
 <p>The translation lookaside buffer, or TLB, caches the translation of virtual to physical addresses. It’s filled automatically when a page is accessed. But it’s not updated transparently when the mapping of a page changes. This is the reason that we still can access the page even through we unmapped it in the page table.</p>
-<p>So to fix our <code>unmap</code> function, we need to remove the cached translation from the TLB. We can use the <a href="https://docs.rs/x86_64">x86_64</a> crate to do this easily. To add it, we append the following to our <code>Cargo.toml</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#ff3333;">...
-</span><span style="color:#569cd6;">x86_64 </span><span>= </span><span style="color:#d69d85;">&quot;0.1.2&quot;
-</span></code></pre>
+<p>So to fix our <code>unmap</code> function, we need to remove the cached translation from the TLB. We can use the <a rel="external" href="https://docs.rs/x86_64">x86_64</a> crate to do this easily. To add it, we append the following to our <code>Cargo.toml</code>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #F44747;">...</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">x86_64</span><span> =</span><span style="color: #CE9178;"> &quot;0.1.2&quot;</span></span></code></pre>
 <p>Now we can use it to fix <code>unmap</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">...
-</span><span>    p1[page.p1_index()].set_unused();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::instructions::tlb;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::VirtualAddress;
-</span><span>    tlb::flush(VirtualAddress(page.start_address()));
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// TODO free p(1,2,3) table if empty
-</span><span>    </span><span style="color:#608b4e;">//allocator.deallocate_frame(frame);
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>...</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    p1</span><span>[</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>()].</span><span style="color: #DCDCAA;">set_unused</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::tlb;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">VirtualAddress</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    tlb</span><span>::</span><span style="color: #DCDCAA;">flush</span><span>(</span><span style="color: #DCDCAA;">VirtualAddress</span><span>(</span><span style="color: #9CDCFE;">page</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>()));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // TODO free p(1,2,3) table if empty</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    //allocator.deallocate_frame(frame);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Now the desired page fault occurs even when we access the page before.</p>
 <h2 id="conclusion"><a class="zola-anchor" href="#conclusion" aria-label="Anchor link for: conclusion">🔗</a>Conclusion</h2>
 <p>This post has become pretty long. So let’s summarize what we’ve done:</p>
@@ -774,7 +721,7 @@
 <p>If the <code>XXX</code> part of the address is smaller than <code>0o400</code>, it’s binary representation doesn’t start with <code>1</code>. But the sign extension bits, which should be a copy of that bit, are <code>1</code> instead of <code>0</code>. Thus the address is not valid.</p>
 </div>
 <div class="footnote-definition" id="virtual_physical_translation_source"><sup class="footnote-definition-label">2</sup>
-<p>Image sources: Modified versions of an image from  <a href="https://commons.wikimedia.org/wiki/File:X86_Paging_64bit.svg">Wikipedia</a>. The modified files are licensed under the Creative Commons Attribution-Share Alike 3.0 Unported license.</p>
+<p>Image sources: Modified versions of an image from  <a rel="external" href="https://commons.wikimedia.org/wiki/File:X86_Paging_64bit.svg">Wikipedia</a>. The modified files are licensed under the Creative Commons Attribution-Share Alike 3.0 Unported license.</p>
 </div>
 
 </main>

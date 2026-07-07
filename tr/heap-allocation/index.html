@@ -129,7 +129,7 @@
     <div class="">
     <p>Bu yazı, kernel’imize heap ayırma desteği ekler. İlk olarak, dinamik belleğe bir giriş yapar ve borrow checker’ın yaygın ayırma hatalarını nasıl önlediğini gösterir. Ardından Rust’ın temel ayırma arayüzünü uygular, bir heap bellek bölgesi oluşturur ve bir allocator crate’i kurar. Bu yazının sonunda, yerleşik <code>alloc</code> crate’inin tüm ayırma ve koleksiyon tipleri kernel’imiz için kullanılabilir olacak.</p>
 <span id="continue-reading"></span>
-<p>Bu blog <a href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/heap-allocation/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a href="https://github.com/phil-opp/blog_os/tree/post-10"><code>post-10</code></a> dalında bulunabilir.</p>
+<p>Bu blog <a rel="external" href="https://github.com/phil-opp/blog_os">GitHub</a> üzerinde açık biçimde geliştirilmektedir. Herhangi bir sorun veya sorunuz varsa lütfen orada bir issue açın. Ayrıca <a href="https://os.phil-opp.com/tr/heap-allocation/#comments">sayfanın en altına</a> yorum bırakabilirsiniz. Bu yazının eksiksiz kaynak kodu <a rel="external" href="https://github.com/phil-opp/blog_os/tree/post-10"><code>post-10</code></a> dalında bulunabilir.</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -187,38 +187,37 @@
     </details>
 
 <h2 id="yerel-ve-statik-degiskenler"><a class="zola-anchor" href="#yerel-ve-statik-degiskenler" aria-label="Anchor link for: yerel-ve-statik-degiskenler">🔗</a>Yerel ve Statik Değişkenler</h2>
-<p>Şu anda kernel’imizde iki tür değişken kullanıyoruz: yerel değişkenler ve <code>static</code> değişkenler. Yerel değişkenler <a href="https://en.wikipedia.org/wiki/Call_stack">çağrı stack’inde (call stack)</a> saklanır ve yalnızca çevreleyen fonksiyon geri dönene kadar geçerlidir. Statik değişkenler sabit bir bellek konumunda saklanır ve her zaman programın tüm yaşam süresi boyunca var olur.</p>
+<p>Şu anda kernel’imizde iki tür değişken kullanıyoruz: yerel değişkenler ve <code>static</code> değişkenler. Yerel değişkenler <a rel="external" href="https://en.wikipedia.org/wiki/Call_stack">çağrı stack’inde (call stack)</a> saklanır ve yalnızca çevreleyen fonksiyon geri dönene kadar geçerlidir. Statik değişkenler sabit bir bellek konumunda saklanır ve her zaman programın tüm yaşam süresi boyunca var olur.</p>
 <h3 id="yerel-degiskenler"><a class="zola-anchor" href="#yerel-degiskenler" aria-label="Anchor link for: yerel-degiskenler">🔗</a>Yerel Değişkenler</h3>
-<p>Yerel değişkenler, <code>push</code> ve <code>pop</code> işlemlerini destekleyen bir <a href="https://en.wikipedia.org/wiki/Stack_(abstract_data_type)">stack veri yapısı</a> olan <a href="https://en.wikipedia.org/wiki/Call_stack">çağrı stack’inde</a> saklanır. Her fonksiyon girişinde, çağrılan fonksiyonun parametreleri, dönüş adresi ve yerel değişkenleri derleyici tarafından push’lanır:</p>
+<p>Yerel değişkenler, <code>push</code> ve <code>pop</code> işlemlerini destekleyen bir <a rel="external" href="https://en.wikipedia.org/wiki/Stack_(abstract_data_type)">stack veri yapısı</a> olan <a rel="external" href="https://en.wikipedia.org/wiki/Call_stack">çağrı stack’inde</a> saklanır. Her fonksiyon girişinde, çağrılan fonksiyonun parametreleri, dönüş adresi ve yerel değişkenleri derleyici tarafından push’lanır:</p>
 <p><img src="https://os.phil-opp.com/tr/heap-allocation/call-stack.svg" alt="Bir outer() ve bir inner(i: usize) fonksiyonu; outer, inner(1)’i çağırır. Her ikisinin de bazı yerel değişkenleri var. Çağrı stack’i şu yuvaları içerir: önce outer’ın yerel değişkenleri, ardından i = 1 argümanı, ardından dönüş adresi, ardından inner’ın yerel değişkenleri." /></p>
 <p>Yukarıdaki örnek, <code>outer</code> fonksiyonu <code>inner</code> fonksiyonunu çağırdıktan sonraki çağrı stack’ini gösterir. Çağrı stack’inin önce <code>outer</code>’ın yerel değişkenlerini içerdiğini görüyoruz. <code>inner</code> çağrısında, <code>1</code> parametresi ve fonksiyon için dönüş adresi push’landı. Ardından kontrol <code>inner</code>’a aktarıldı; o da kendi yerel değişkenlerini push’ladı.</p>
 <p><code>inner</code> fonksiyonu geri döndükten sonra, çağrı stack’inin onun kısmı tekrar pop’lanır ve yalnızca <code>outer</code>’ın yerel değişkenleri kalır:</p>
 <p><img src="https://os.phil-opp.com/tr/heap-allocation/call-stack-return.svg" alt="Yalnızca outer’ın yerel değişkenlerini içeren çağrı stack’i" /></p>
 <p><code>inner</code>’ın yerel değişkenlerinin yalnızca fonksiyon geri dönene kadar var olduğunu görüyoruz. Rust derleyicisi bu yaşam sürelerini zorunlu kılar ve bir değeri çok uzun süre kullandığımızda bir hata fırlatır; örneğin bir yerel değişkene bir referans döndürmeye çalıştığımızda:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">fn </span><span>inner(i: </span><span style="color:#569cd6;">usize</span><span>) -&gt; </span><span style="color:#569cd6;">&amp;&#39;static u32 </span><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = [</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">2</span><span>, </span><span style="color:#b5cea8;">3</span><span>];
-</span><span>    </span><span style="color:#569cd6;">&amp;</span><span>z[i]
-</span><span>}
-</span></code></pre>
-<p>(<a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=6186a0f3a54f468e1de8894996d12819">örneği playground’da çalıştır</a>)</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> inner</span><span>(</span><span style="color: #9CDCFE;">i</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>) -&gt; &amp;&#39;</span><span style="color: #4EC9B0;">static u32</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> = [</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 2</span><span>,</span><span style="color: #B5CEA8;"> 3</span><span>];</span></span>
+<span class="giallo-l"><span>    &amp;</span><span style="color: #9CDCFE;">z</span><span>[</span><span style="color: #9CDCFE;">i</span><span>]</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>(<a rel="external" href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=6186a0f3a54f468e1de8894996d12819">örneği playground’da çalıştır</a>)</p>
 <p>Bu örnekte bir referans döndürmek anlamsız olsa da, bir değişkenin fonksiyondan daha uzun süre var olmasını istediğimiz durumlar vardır. Kernel’imizde böyle bir durumu, <a href="https://os.phil-opp.com/tr/cpu-exceptions/#loading-the-idt">bir interrupt descriptor table yüklemeye</a> çalıştığımızda ve yaşam süresini uzatmak için bir <code>static</code> değişken kullanmak zorunda kaldığımızda zaten gördük.</p>
 <h3 id="statik-degiskenler"><a class="zola-anchor" href="#statik-degiskenler" aria-label="Anchor link for: statik-degiskenler">🔗</a>Statik Değişkenler</h3>
 <p>Statik değişkenler, stack’ten ayrı, sabit bir bellek konumunda saklanır. Bu bellek konumu, derleme zamanında linker tarafından atanır ve çalıştırılabilir dosyada kodlanır. Statics, programın tüm çalışma süresi boyunca var olur, bu yüzden <code>'static</code> yaşam süresine sahiptirler ve her zaman yerel değişkenlerden referans alınabilirler:</p>
 <p><img src="https://os.phil-opp.com/tr/heap-allocation/call-stack-static.svg" alt="Aynı outer/inner örneği; tek fark, inner’ın bir static Z: [u32; 3] = [1,2,3]; içermesi ve bir &amp;Z[i] referansı döndürmesi" /></p>
 <p>Yukarıdaki örnekte <code>inner</code> fonksiyonu geri döndüğünde, çağrı stack’inin onun kısmı yok edilir. Statik değişkenler asla yok edilmeyen ayrı bir bellek aralığında var olur, bu yüzden <code>&amp;Z[1]</code> referansı dönüşten sonra hâlâ geçerlidir.</p>
 <p><code>'static</code> yaşam süresinin yanı sıra, statik değişkenlerin ayrıca konumlarının derleme zamanında bilinmesi gibi yararlı bir özelliği vardır; böylece onlara erişmek için bir referans gerekmez. Bu özellikten <code>println</code> makromuz için yararlandık: Dahili olarak <a href="https://os.phil-opp.com/tr/vga-text-mode/#a-global-interface">statik bir <code>Writer</code></a> kullanarak, makroyu çağırmak için bir <code>&amp;mut Writer</code> referansı gerekmez; bu da ek değişkenlere erişimimiz olmayan <a href="https://os.phil-opp.com/tr/cpu-exceptions/#implementation">exception handler’larda</a> çok yararlıdır.</p>
-<p>Ancak statik değişkenlerin bu özelliği önemli bir dezavantaj getirir: varsayılan olarak salt okunurdurlar. Rust bunu zorunlu kılar, çünkü örneğin iki thread bir statik değişkeni aynı anda değiştirseydi bir <a href="https://doc.rust-lang.org/nomicon/races.html">veri yarışı (data race)</a> meydana gelirdi. Bir statik değişkeni değiştirmenin tek yolu, onu bir <a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a> tipinde kapsüllemektir; bu da herhangi bir zamanda yalnızca tek bir <code>&amp;mut</code> referansının var olmasını sağlar. <a href="https://os.phil-opp.com/tr/vga-text-mode/#spinlocks">Statik VGA arabelleği <code>Writer</code>’ımız</a> için zaten bir <code>Mutex</code> kullandık.</p>
+<p>Ancak statik değişkenlerin bu özelliği önemli bir dezavantaj getirir: varsayılan olarak salt okunurdurlar. Rust bunu zorunlu kılar, çünkü örneğin iki thread bir statik değişkeni aynı anda değiştirseydi bir <a rel="external" href="https://doc.rust-lang.org/nomicon/races.html">veri yarışı (data race)</a> meydana gelirdi. Bir statik değişkeni değiştirmenin tek yolu, onu bir <a rel="external" href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a> tipinde kapsüllemektir; bu da herhangi bir zamanda yalnızca tek bir <code>&amp;mut</code> referansının var olmasını sağlar. <a href="https://os.phil-opp.com/tr/vga-text-mode/#spinlocks">Statik VGA arabelleği <code>Writer</code>’ımız</a> için zaten bir <code>Mutex</code> kullandık.</p>
 <h2 id="dynamic-memory"><a class="zola-anchor" href="#dynamic-memory" aria-label="Anchor link for: dynamic-memory">🔗</a>Dinamik Bellek</h2>
 <p>Yerel ve statik değişkenler birlikte zaten çok güçlüdür ve çoğu kullanım senaryosunu mümkün kılar. Ancak, her ikisinin de sınırlamaları olduğunu gördük:</p>
 <ul>
 <li>Yerel değişkenler yalnızca çevreleyen fonksiyonun veya bloğun sonuna kadar var olur. Bunun nedeni, çağrı stack’inde var olmaları ve çevreleyen fonksiyon geri döndükten sonra yok edilmeleridir.</li>
-<li>Statik değişkenler her zaman programın tüm çalışma süresi boyunca var olur, bu yüzden artık ihtiyaç duyulmadıklarında belleklerini geri alıp yeniden kullanmanın bir yolu yoktur. Ayrıca, belirsiz sahiplik semantiğine sahiptirler ve tüm fonksiyonlardan erişilebilirler, bu yüzden onları değiştirmek istediğimizde bir <a href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a> ile korunmaları gerekir.</li>
+<li>Statik değişkenler her zaman programın tüm çalışma süresi boyunca var olur, bu yüzden artık ihtiyaç duyulmadıklarında belleklerini geri alıp yeniden kullanmanın bir yolu yoktur. Ayrıca, belirsiz sahiplik semantiğine sahiptirler ve tüm fonksiyonlardan erişilebilirler, bu yüzden onları değiştirmek istediğimizde bir <a rel="external" href="https://docs.rs/spin/0.5.2/spin/struct.Mutex.html"><code>Mutex</code></a> ile korunmaları gerekir.</li>
 </ul>
-<p>Yerel ve statik değişkenlerin bir başka sınırlaması da sabit bir boyuta sahip olmalarıdır. Bu yüzden, daha fazla eleman eklendiğinde dinamik olarak büyüyen bir koleksiyon saklayamazlar. (Rust’ta dinamik boyutlu yerel değişkenlere izin verecek <a href="https://github.com/rust-lang/rust/issues/48055">unsized rvalue’ler</a> için öneriler vardır, ancak bunlar yalnızca bazı belirli durumlarda çalışır.)</p>
+<p>Yerel ve statik değişkenlerin bir başka sınırlaması da sabit bir boyuta sahip olmalarıdır. Bu yüzden, daha fazla eleman eklendiğinde dinamik olarak büyüyen bir koleksiyon saklayamazlar. (Rust’ta dinamik boyutlu yerel değişkenlere izin verecek <a rel="external" href="https://github.com/rust-lang/rust/issues/48055">unsized rvalue’ler</a> için öneriler vardır, ancak bunlar yalnızca bazı belirli durumlarda çalışır.)</p>
 <p>Bu dezavantajları aşmak için, programlama dilleri değişkenleri saklamak amacıyla genellikle <strong>heap</strong> adı verilen üçüncü bir bellek bölgesini destekler. Heap, çalışma zamanında <code>allocate</code> ve <code>deallocate</code> adı verilen iki fonksiyon aracılığıyla <em>dinamik bellek ayırmayı (dynamic memory allocation)</em> destekler. Şu şekilde çalışır: <code>allocate</code> fonksiyonu, belirtilen boyutta, bir değişkeni saklamak için kullanılabilecek boş bir bellek parçası döndürür. Bu değişken daha sonra, değişkene bir referansla <code>deallocate</code> fonksiyonu çağrılarak serbest bırakılana kadar var olur.</p>
 <p>Bir örnek üzerinden gidelim:</p>
 <p><img src="https://os.phil-opp.com/tr/heap-allocation/call-stack-heap.svg" alt="inner fonksiyonu allocate(size_of([u32; 3])) çağırır, z.write([1,2,3]); yazar ve (z as *mut u32).offset(i) döndürür. Döndürülen değer y üzerinde, outer fonksiyonu deallocate(y, size_of(u32)) gerçekleştirir." /></p>
-<p>Burada <code>inner</code> fonksiyonu, <code>z</code>’yi saklamak için statik değişkenler yerine heap belleği kullanır. Önce gereken boyutta bir bellek bloğu ayırır; bu da bir <code>*mut u32</code> <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">ham işaretçisi (raw pointer)</a> döndürür. Ardından <code>[1,2,3]</code> dizisini ona yazmak için <a href="https://doc.rust-lang.org/core/ptr/fn.write.html"><code>ptr::write</code></a> metodunu kullanır. Son adımda, <code>i</code>. elemana bir işaretçi hesaplamak için <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a> fonksiyonunu kullanır ve sonra onu döndürür. (Bu örnek fonksiyonda kısalık adına bazı gereken dönüşümleri ve unsafe blokları atladığımızı unutmayın.)</p>
+<p>Burada <code>inner</code> fonksiyonu, <code>z</code>’yi saklamak için statik değişkenler yerine heap belleği kullanır. Önce gereken boyutta bir bellek bloğu ayırır; bu da bir <code>*mut u32</code> <a rel="external" href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">ham işaretçisi (raw pointer)</a> döndürür. Ardından <code>[1,2,3]</code> dizisini ona yazmak için <a rel="external" href="https://doc.rust-lang.org/core/ptr/fn.write.html"><code>ptr::write</code></a> metodunu kullanır. Son adımda, <code>i</code>. elemana bir işaretçi hesaplamak için <a rel="external" href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a> fonksiyonunu kullanır ve sonra onu döndürür. (Bu örnek fonksiyonda kısalık adına bazı gereken dönüşümleri ve unsafe blokları atladığımızı unutmayın.)</p>
 <p>Ayrılan bellek, <code>deallocate</code> çağrısıyla açıkça serbest bırakılana kadar var olur. Böylece, döndürülen işaretçi <code>inner</code> geri döndükten ve çağrı stack’inin onun kısmı yok edildikten sonra bile hâlâ geçerlidir. Heap belleği kullanmanın statik belleğe kıyasla avantajı, belleğin serbest bırakıldıktan sonra yeniden kullanılabilmesidir; bunu <code>outer</code>’daki <code>deallocate</code> çağrısıyla yaparız. O çağrıdan sonra durum şöyle görünür:</p>
 <p><img src="https://os.phil-opp.com/tr/heap-allocation/call-stack-heap-freed.svg" alt="Çağrı stack’i outer’ın yerel değişkenlerini içerir, heap z[0] ve z[2]’yi içerir, ancak artık z[1]’i içermez." /></p>
 <p><code>z[1]</code> yuvasının tekrar boş olduğunu ve bir sonraki <code>allocate</code> çağrısı için yeniden kullanılabileceğini görüyoruz. Ancak, <code>z[0]</code> ve <code>z[2]</code>’nin asla serbest bırakılmadığını da görüyoruz, çünkü onları hiç deallocate etmiyoruz. Böyle bir hataya <em>bellek sızıntısı (memory leak)</em> denir ve genellikle programların aşırı bellek tüketiminin nedenidir (sadece <code>inner</code>’ı bir döngüde tekrar tekrar çağırdığımızda ne olacağını hayal edin). Bu kötü görünebilir, ancak dinamik ayırmayla meydana gelebilecek çok daha tehlikeli hata türleri vardır.</p>
@@ -228,88 +227,81 @@
 <li>Bir değişken üzerinde <code>deallocate</code> çağırdıktan sonra yanlışlıkla onu kullanmaya devam ettiğimizde, <strong>use-after-free</strong> (serbest bırakma sonrası kullanım) adı verilen bir güvenlik açığımız olur. Böyle bir hata tanımsız davranışa neden olur ve genellikle saldırganlar tarafından keyfi kod çalıştırmak için sömürülebilir.</li>
 <li>Bir değişkeni yanlışlıkla iki kez serbest bıraktığımızda, bir <strong>double-free</strong> (çifte serbest bırakma) güvenlik açığımız olur. Bu sorunludur, çünkü ilk <code>deallocate</code> çağrısından sonra aynı yere ayrılmış farklı bir ayırmayı serbest bırakabilir. Böylece, yine bir use-after-free güvenlik açığına yol açabilir.</li>
 </ul>
-<p>Bu tür güvenlik açıkları yaygın olarak bilinir, bu yüzden insanların artık onlardan nasıl kaçınılacağını öğrenmiş olmaları beklenebilir. Ama hayır, bu tür güvenlik açıkları hâlâ düzenli olarak bulunuyor; örneğin keyfi kod çalıştırmaya izin veren bu <a href="https://securityboulevard.com/2019/02/linux-use-after-free-vulnerability-found-in-linux-2-6-through-4-20-11/">Linux’taki use-after-free güvenlik açığı</a> (2019). <code>use-after-free linux {bu yıl}</code> gibi bir web araması muhtemelen her zaman sonuç verecektir. Bu, en iyi programcıların bile karmaşık projelerde dinamik belleği her zaman doğru şekilde ele alamadığını gösterir.</p>
-<p>Bu sorunlardan kaçınmak için, Java veya Python gibi pek çok dil, <a href="https://en.wikipedia.org/wiki/Garbage_collection_(computer_science)"><em>çöp toplama (garbage collection)</em></a> adı verilen bir teknik kullanarak dinamik belleği otomatik olarak yönetir. Fikir, programcının <code>deallocate</code>’i asla elle çağırmamasıdır. Bunun yerine, program düzenli olarak duraklatılır ve kullanılmayan heap değişkenleri için taranır; bunlar daha sonra otomatik olarak deallocate edilir. Böylece, yukarıdaki güvenlik açıkları asla meydana gelemez. Dezavantajları, düzenli taramanın performans yükü ve muhtemelen uzun duraklama süreleridir.</p>
-<p>Rust soruna farklı bir yaklaşım benimser: Dinamik bellek işlemlerinin doğruluğunu derleme zamanında kontrol edebilen <a href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"><em>sahiplik (ownership)</em></a> adı verilen bir kavram kullanır. Böylece, bahsedilen güvenlik açıklarından kaçınmak için çöp toplamaya gerek yoktur; bu da hiçbir performans yükü olmadığı anlamına gelir. Bu yaklaşımın bir başka avantajı, programcının tıpkı C veya C++’ta olduğu gibi dinamik bellek kullanımı üzerinde hâlâ ince taneli kontrole sahip olmasıdır.</p>
+<p>Bu tür güvenlik açıkları yaygın olarak bilinir, bu yüzden insanların artık onlardan nasıl kaçınılacağını öğrenmiş olmaları beklenebilir. Ama hayır, bu tür güvenlik açıkları hâlâ düzenli olarak bulunuyor; örneğin keyfi kod çalıştırmaya izin veren bu <a rel="external" href="https://securityboulevard.com/2019/02/linux-use-after-free-vulnerability-found-in-linux-2-6-through-4-20-11/">Linux’taki use-after-free güvenlik açığı</a> (2019). <code>use-after-free linux {bu yıl}</code> gibi bir web araması muhtemelen her zaman sonuç verecektir. Bu, en iyi programcıların bile karmaşık projelerde dinamik belleği her zaman doğru şekilde ele alamadığını gösterir.</p>
+<p>Bu sorunlardan kaçınmak için, Java veya Python gibi pek çok dil, <a rel="external" href="https://en.wikipedia.org/wiki/Garbage_collection_(computer_science)"><em>çöp toplama (garbage collection)</em></a> adı verilen bir teknik kullanarak dinamik belleği otomatik olarak yönetir. Fikir, programcının <code>deallocate</code>’i asla elle çağırmamasıdır. Bunun yerine, program düzenli olarak duraklatılır ve kullanılmayan heap değişkenleri için taranır; bunlar daha sonra otomatik olarak deallocate edilir. Böylece, yukarıdaki güvenlik açıkları asla meydana gelemez. Dezavantajları, düzenli taramanın performans yükü ve muhtemelen uzun duraklama süreleridir.</p>
+<p>Rust soruna farklı bir yaklaşım benimser: Dinamik bellek işlemlerinin doğruluğunu derleme zamanında kontrol edebilen <a rel="external" href="https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"><em>sahiplik (ownership)</em></a> adı verilen bir kavram kullanır. Böylece, bahsedilen güvenlik açıklarından kaçınmak için çöp toplamaya gerek yoktur; bu da hiçbir performans yükü olmadığı anlamına gelir. Bu yaklaşımın bir başka avantajı, programcının tıpkı C veya C++’ta olduğu gibi dinamik bellek kullanımı üzerinde hâlâ ince taneli kontrole sahip olmasıdır.</p>
 <h3 id="rust-ta-ayirmalar-allocations"><a class="zola-anchor" href="#rust-ta-ayirmalar-allocations" aria-label="Anchor link for: rust-ta-ayirmalar-allocations">🔗</a>Rust’ta Ayırmalar (Allocations)</h3>
-<p>Programcının <code>allocate</code> ve <code>deallocate</code>’i elle çağırmasına izin vermek yerine, Rust standart kütüphanesi bu fonksiyonları örtük olarak çağıran soyutlama tipleri sağlar. En önemli tip, heap’te ayrılmış bir değer için bir soyutlama olan <a href="https://doc.rust-lang.org/std/boxed/index.html"><strong><code>Box</code></strong></a>’tır. Bir değer alan, değerin boyutuyla <code>allocate</code>’i çağıran ve ardından değeri heap’teki yeni ayrılan yuvaya taşıyan bir <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a> yapıcı (constructor) fonksiyonu sağlar. Heap belleğini tekrar serbest bırakmak için, <code>Box</code> tipi kapsam dışına çıktığında <code>deallocate</code>’i çağırmak üzere <a href="https://doc.rust-lang.org/book/ch15-03-drop.html"><code>Drop</code> trait’ini</a> uygular:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = Box::new([</span><span style="color:#b5cea8;">1</span><span>,</span><span style="color:#b5cea8;">2</span><span>,</span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    […]
-</span><span>} </span><span style="color:#608b4e;">// z kapsam dışına çıkar ve `deallocate` çağrılır
-</span></code></pre>
-<p>Bu örüntünün <a href="https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization"><em>kaynak edinme başlatmadır (resource acquisition is initialization)</em></a> (ya da kısaca <em>RAII</em>) gibi tuhaf bir adı vardır. C++’ta ortaya çıkmıştır; orada <a href="https://en.cppreference.com/w/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a> adı verilen benzer bir soyutlama tipini uygulamak için kullanılır.</p>
+<p>Programcının <code>allocate</code> ve <code>deallocate</code>’i elle çağırmasına izin vermek yerine, Rust standart kütüphanesi bu fonksiyonları örtük olarak çağıran soyutlama tipleri sağlar. En önemli tip, heap’te ayrılmış bir değer için bir soyutlama olan <a rel="external" href="https://doc.rust-lang.org/std/boxed/index.html"><strong><code>Box</code></strong></a>’tır. Bir değer alan, değerin boyutuyla <code>allocate</code>’i çağıran ve ardından değeri heap’teki yeni ayrılan yuvaya taşıyan bir <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html#method.new"><code>Box::new</code></a> yapıcı (constructor) fonksiyonu sağlar. Heap belleğini tekrar serbest bırakmak için, <code>Box</code> tipi kapsam dışına çıktığında <code>deallocate</code>’i çağırmak üzere <a rel="external" href="https://doc.rust-lang.org/book/ch15-03-drop.html"><code>Drop</code> trait’ini</a> uygular:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>([</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;">2</span><span>,</span><span style="color: #B5CEA8;">3</span><span>]);</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #6A9955;"> // z kapsam dışına çıkar ve `deallocate` çağrılır</span></span></code></pre>
+<p>Bu örüntünün <a rel="external" href="https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization"><em>kaynak edinme başlatmadır (resource acquisition is initialization)</em></a> (ya da kısaca <em>RAII</em>) gibi tuhaf bir adı vardır. C++’ta ortaya çıkmıştır; orada <a rel="external" href="https://en.cppreference.com/w/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a> adı verilen benzer bir soyutlama tipini uygulamak için kullanılır.</p>
 <p>Böyle bir tip tek başına tüm use-after-free hatalarını önlemeye yetmez, çünkü programcılar <code>Box</code> kapsam dışına çıktıktan ve karşılık gelen heap bellek yuvası deallocate edildikten sonra hâlâ referanslara tutunabilir:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">let</span><span> x = {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> z = Box::new([</span><span style="color:#b5cea8;">1</span><span>,</span><span style="color:#b5cea8;">2</span><span>,</span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    </span><span style="color:#569cd6;">&amp;</span><span>z[</span><span style="color:#b5cea8;">1</span><span>]
-</span><span>}; </span><span style="color:#608b4e;">// z kapsam dışına çıkar ve `deallocate` çağrılır
-</span><span>println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, x);
-</span></code></pre>
-<p>İşte Rust’ın sahipliği burada devreye girer. Her referansa, referansın geçerli olduğu kapsam olan soyut bir <a href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">yaşam süresi (lifetime)</a> atar. Yukarıdaki örnekte, <code>x</code> referansı <code>z</code> dizisinden alınır, bu yüzden <code>z</code> kapsam dışına çıktıktan sonra geçersiz hale gelir. <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">Yukarıdaki örneği playground’da çalıştırdığınızda</a>, Rust derleyicisinin gerçekten bir hata fırlattığını görürsünüz:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error[E0597]: `z[_]` does not live long enough
-</span><span> --&gt; src/main.rs:4:9
-</span><span>  |
-</span><span>2 |     let x = {
-</span><span>  |         - borrow later stored here
-</span><span>3 |         let z = Box::new([1,2,3]);
-</span><span>  |             - binding `z` declared here
-</span><span>4 |         &amp;z[1]
-</span><span>  |         ^^^^^ borrowed value does not live long enough
-</span><span>5 |     }; // z goes out of scope and `deallocate` is called
-</span><span>  |     - `z[_]` dropped here while still borrowed
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> x</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> z</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>([</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;">2</span><span>,</span><span style="color: #B5CEA8;">3</span><span>]);</span></span>
+<span class="giallo-l"><span>    &amp;</span><span style="color: #9CDCFE;">z</span><span>[</span><span style="color: #B5CEA8;">1</span><span>]</span></span>
+<span class="giallo-l"><span>};</span><span style="color: #6A9955;"> // z kapsam dışına çıkar ve `deallocate` çağrılır</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">println!</span><span>(</span><span style="color: #CE9178;">&quot;{}&quot;</span><span>,</span><span style="color: #9CDCFE;"> x</span><span>);</span></span></code></pre>
+<p>İşte Rust’ın sahipliği burada devreye girer. Her referansa, referansın geçerli olduğu kapsam olan soyut bir <a rel="external" href="https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html">yaşam süresi (lifetime)</a> atar. Yukarıdaki örnekte, <code>x</code> referansı <code>z</code> dizisinden alınır, bu yüzden <code>z</code> kapsam dışına çıktıktan sonra geçersiz hale gelir. <a rel="external" href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=28180d8de7b62c6b4a681a7b1f745a48">Yukarıdaki örneği playground’da çalıştırdığınızda</a>, Rust derleyicisinin gerçekten bir hata fırlattığını görürsünüz:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error[E0597]: `z[_]` does not live long enough</span></span>
+<span class="giallo-l"><span> --&gt; src/main.rs:4:9</span></span>
+<span class="giallo-l"><span>  |</span></span>
+<span class="giallo-l"><span>2 |     let x = {</span></span>
+<span class="giallo-l"><span>  |         - borrow later stored here</span></span>
+<span class="giallo-l"><span>3 |         let z = Box::new([1,2,3]);</span></span>
+<span class="giallo-l"><span>  |             - binding `z` declared here</span></span>
+<span class="giallo-l"><span>4 |         &amp;z[1]</span></span>
+<span class="giallo-l"><span>  |         ^^^^^ borrowed value does not live long enough</span></span>
+<span class="giallo-l"><span>5 |     }; // z goes out of scope and `deallocate` is called</span></span>
+<span class="giallo-l"><span>  |     - `z[_]` dropped here while still borrowed</span></span></code></pre>
 <p>Terminoloji ilk başta biraz kafa karıştırıcı olabilir. Bir değere referans almaya, o değeri <em>ödünç almak (borrowing)</em> denir; çünkü gerçek hayattaki bir ödünç almaya benzer: Bir nesneye geçici erişiminiz vardır ancak onu bir ara geri vermeniz gerekir ve onu yok etmemelisiniz. Bir nesne yok edilmeden önce tüm ödünç almaların sona erdiğini kontrol ederek, Rust derleyicisi hiçbir use-after-free durumunun meydana gelemeyeceğini garanti edebilir.</p>
-<p>Rust’ın sahiplik sistemi daha da ileri gider; yalnızca use-after-free hatalarını önlemekle kalmaz, aynı zamanda Java veya Python gibi çöp toplamalı dillerin yaptığı gibi tam <a href="https://en.wikipedia.org/wiki/Memory_safety"><em>bellek güvenliği (memory safety)</em></a> de sağlar. Buna ek olarak, <a href="https://en.wikipedia.org/wiki/Thread_safety"><em>thread güvenliği (thread safety)</em></a> garanti eder ve böylece çok thread’li kodda o dillerden bile daha güvenlidir. Ve en önemlisi, tüm bu kontroller derleme zamanında gerçekleşir, bu yüzden C’deki elle yazılmış bellek yönetimine kıyasla hiçbir çalışma zamanı yükü yoktur.</p>
+<p>Rust’ın sahiplik sistemi daha da ileri gider; yalnızca use-after-free hatalarını önlemekle kalmaz, aynı zamanda Java veya Python gibi çöp toplamalı dillerin yaptığı gibi tam <a rel="external" href="https://en.wikipedia.org/wiki/Memory_safety"><em>bellek güvenliği (memory safety)</em></a> de sağlar. Buna ek olarak, <a rel="external" href="https://en.wikipedia.org/wiki/Thread_safety"><em>thread güvenliği (thread safety)</em></a> garanti eder ve böylece çok thread’li kodda o dillerden bile daha güvenlidir. Ve en önemlisi, tüm bu kontroller derleme zamanında gerçekleşir, bu yüzden C’deki elle yazılmış bellek yönetimine kıyasla hiçbir çalışma zamanı yükü yoktur.</p>
 <h3 id="kullanim-senaryolari"><a class="zola-anchor" href="#kullanim-senaryolari" aria-label="Anchor link for: kullanim-senaryolari">🔗</a>Kullanım Senaryoları</h3>
 <p>Artık Rust’ta dinamik bellek ayırmanın temellerini biliyoruz, ama onu ne zaman kullanmalıyız? Kernel’imizle dinamik bellek ayırma olmadan gerçekten çok yol kat ettik, peki şimdi neden ona ihtiyacımız var?</p>
 <p>İlk olarak, dinamik bellek ayırma her zaman biraz performans yüküyle gelir, çünkü her ayırma için heap’te boş bir yuva bulmamız gerekir. Bu nedenle, özellikle performansa duyarlı kernel kodunda yerel değişkenler genellikle tercih edilir. Ancak, dinamik bellek ayırmanın en iyi seçim olduğu durumlar vardır.</p>
-<p>Temel bir kural olarak, dinamik bir yaşam süresine veya değişken bir boyuta sahip değişkenler için dinamik bellek gereklidir. Dinamik yaşam süresine sahip en önemli tip, sarmaladığı değere yapılan referansları sayan ve tüm referanslar kapsam dışına çıktıktan sonra onu deallocate eden <a href="https://doc.rust-lang.org/alloc/rc/index.html"><strong><code>Rc</code></strong></a>’dir. Değişken boyuta sahip tiplere örnekler <a href="https://doc.rust-lang.org/alloc/vec/index.html"><strong><code>Vec</code></strong></a>, <a href="https://doc.rust-lang.org/alloc/string/index.html"><strong><code>String</code></strong></a> ve daha fazla eleman eklendiğinde dinamik olarak büyüyen diğer <a href="https://doc.rust-lang.org/alloc/collections/index.html">koleksiyon tipleridir</a>. Bu tipler, dolduklarında daha büyük miktarda bellek ayırarak, tüm elemanları kopyalayarak ve ardından eski ayırmayı deallocate ederek çalışır.</p>
+<p>Temel bir kural olarak, dinamik bir yaşam süresine veya değişken bir boyuta sahip değişkenler için dinamik bellek gereklidir. Dinamik yaşam süresine sahip en önemli tip, sarmaladığı değere yapılan referansları sayan ve tüm referanslar kapsam dışına çıktıktan sonra onu deallocate eden <a rel="external" href="https://doc.rust-lang.org/alloc/rc/index.html"><strong><code>Rc</code></strong></a>’dir. Değişken boyuta sahip tiplere örnekler <a rel="external" href="https://doc.rust-lang.org/alloc/vec/index.html"><strong><code>Vec</code></strong></a>, <a rel="external" href="https://doc.rust-lang.org/alloc/string/index.html"><strong><code>String</code></strong></a> ve daha fazla eleman eklendiğinde dinamik olarak büyüyen diğer <a rel="external" href="https://doc.rust-lang.org/alloc/collections/index.html">koleksiyon tipleridir</a>. Bu tipler, dolduklarında daha büyük miktarda bellek ayırarak, tüm elemanları kopyalayarak ve ardından eski ayırmayı deallocate ederek çalışır.</p>
 <p>Kernel’imiz için çoğunlukla koleksiyon tiplerine ihtiyaç duyacağız; örneğin gelecekteki yazılarda çoklu görev (multitasking) uygularken aktif görevlerin bir listesini saklamak için.</p>
 <h2 id="the-allocator-interface"><a class="zola-anchor" href="#the-allocator-interface" aria-label="Anchor link for: the-allocator-interface">🔗</a>Allocator Arayüzü</h2>
-<p>Bir heap allocator’ı uygulamanın ilk adımı, yerleşik <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> crate’ine bir bağımlılık eklemektir. <a href="https://doc.rust-lang.org/core/"><code>core</code></a> crate’i gibi, o da standart kütüphanenin bir alt kümesidir ve buna ek olarak ayırma ve koleksiyon tiplerini içerir. <code>alloc</code>’a bağımlılık eklemek için, <code>lib.rs</code>’imize aşağıdakini ekliyoruz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span></code></pre>
+<p>Bir heap allocator’ı uygulamanın ilk adımı, yerleşik <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> crate’ine bir bağımlılık eklemektir. <a rel="external" href="https://doc.rust-lang.org/core/"><code>core</code></a> crate’i gibi, o da standart kütüphanenin bir alt kümesidir ve buna ek olarak ayırma ve koleksiyon tiplerini içerir. <code>alloc</code>’a bağımlılık eklemek için, <code>lib.rs</code>’imize aşağıdakini ekliyoruz:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/lib.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span></code></pre>
 <p>Normal bağımlılıkların aksine, <code>Cargo.toml</code>’u değiştirmemize gerek yok. Bunun nedeni, <code>alloc</code> crate’inin standart kütüphanenin bir parçası olarak Rust derleyicisiyle birlikte gelmesidir, bu yüzden derleyici crate’i zaten bilir. Bu <code>extern crate</code> ifadesini ekleyerek, derleyicinin onu dahil etmeye çalışması gerektiğini belirtiriz. (Tarihsel olarak, tüm bağımlılıkların bir <code>extern crate</code> ifadesine ihtiyacı vardı; bu artık isteğe bağlıdır.)</p>
 <p>Özel bir hedef için derleme yaptığımız için, Rust kurulumuyla gelen <code>alloc</code>’un önceden derlenmiş sürümünü kullanamayız. Bunun yerine, cargo’ya crate’i kaynaktan yeniden derlemesini söylememiz gerekir. Bunu, <code>.cargo/config.toml</code> dosyamızdaki <code>unstable.build-std</code> dizisine onu ekleyerek yapabiliriz:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># .cargo/config.toml içinde
-</span><span>
-</span><span>[</span><span style="color:#808080;">unstable</span><span>]
-</span><span style="color:#569cd6;">build-std </span><span>= [</span><span style="color:#d69d85;">&quot;core&quot;</span><span>, </span><span style="color:#d69d85;">&quot;compiler_builtins&quot;</span><span>, </span><span style="color:#d69d85;">&quot;alloc&quot;</span><span>]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># .cargo/config.toml içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[unstable]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">build-std</span><span> = [</span><span style="color: #CE9178;">&quot;core&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;compiler_builtins&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;alloc&quot;</span><span>]</span></span></code></pre>
 <p>Artık derleyici <code>alloc</code> crate’ini yeniden derleyip kernel’imize dahil edecek.</p>
 <p><code>alloc</code> crate’inin <code>#[no_std]</code> crate’lerinde varsayılan olarak devre dışı olmasının nedeni, ek gereksinimlere sahip olmasıdır. Projemizi şimdi derlemeye çalıştığımızda, bu gereksinimleri hatalar olarak göreceğiz:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>error: no global memory allocator found but one is required; link to std or add
-</span><span>       #[global_allocator] to a static item that implements the GlobalAlloc trait.
-</span></code></pre>
-<p>Hata, <code>alloc</code> crate’inin <code>allocate</code> ve <code>deallocate</code> fonksiyonlarını sağlayan bir nesne olan bir heap allocator gerektirmesi nedeniyle oluşur. Rust’ta, heap allocator’lar hata mesajında bahsedilen <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait’i ile tanımlanır. Crate için heap allocator’ı belirlemek üzere, <code>#[global_allocator]</code> özniteliği <code>GlobalAlloc</code> trait’ini uygulayan bir <code>static</code> değişkene uygulanmalıdır.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: no global memory allocator found but one is required; link to std or add</span></span>
+<span class="giallo-l"><span>       #[global_allocator] to a static item that implements the GlobalAlloc trait.</span></span></code></pre>
+<p>Hata, <code>alloc</code> crate’inin <code>allocate</code> ve <code>deallocate</code> fonksiyonlarını sağlayan bir nesne olan bir heap allocator gerektirmesi nedeniyle oluşur. Rust’ta, heap allocator’lar hata mesajında bahsedilen <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait’i ile tanımlanır. Crate için heap allocator’ı belirlemek üzere, <code>#[global_allocator]</code> özniteliği <code>GlobalAlloc</code> trait’ini uygulayan bir <code>static</code> değişkene uygulanmalıdır.</p>
 <h3 id="globalalloc-trait-i"><a class="zola-anchor" href="#globalalloc-trait-i" aria-label="Anchor link for: globalalloc-trait-i">🔗</a><code>GlobalAlloc</code> Trait’i</h3>
-<p><a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait’i, bir heap allocator’ın sağlaması gereken fonksiyonları tanımlar. Trait özeldir, çünkü neredeyse hiçbir zaman programcı tarafından doğrudan kullanılmaz. Bunun yerine, <code>alloc</code>’un ayırma ve koleksiyon tiplerini kullanırken derleyici trait metotlarına uygun çağrıları otomatik olarak ekler.</p>
+<p><a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a> trait’i, bir heap allocator’ın sağlaması gereken fonksiyonları tanımlar. Trait özeldir, çünkü neredeyse hiçbir zaman programcı tarafından doğrudan kullanılmaz. Bunun yerine, <code>alloc</code>’un ayırma ve koleksiyon tiplerini kullanırken derleyici trait metotlarına uygun çağrıları otomatik olarak ekler.</p>
 <p>Trait’i tüm allocator tiplerimiz için uygulamamız gerekeceğinden, bildirimine daha yakından bakmaya değer:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">pub unsafe trait </span><span>GlobalAlloc {
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8</span><span>;
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, layout: Layout);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc_zeroed(</span><span style="color:#569cd6;">&amp;</span><span>self, layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>realloc(
-</span><span>        </span><span style="color:#569cd6;">&amp;</span><span>self,
-</span><span>        ptr: </span><span style="color:#569cd6;">*mut u8</span><span>,
-</span><span>        layout: Layout,
-</span><span>        new_size: </span><span style="color:#569cd6;">usize
-</span><span>    ) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{ </span><span style="color:#569cd6;">... </span><span>}
-</span><span>}
-</span></code></pre>
-<p>Örneklerimizde kullandığımız <code>allocate</code> ve <code>deallocate</code> fonksiyonlarına karşılık gelen, gerekli iki metot olan <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> ve <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>’u tanımlar:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">pub unsafe trait</span><span style="color: #4EC9B0;"> GlobalAlloc</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> dealloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc_zeroed</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> { ... }</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> realloc</span><span>(</span></span>
+<span class="giallo-l"><span>        &amp;</span><span style="color: #569CD6;">self</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        new_size</span><span>:</span><span style="color: #4EC9B0;"> usize</span></span>
+<span class="giallo-l"><span>    ) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> { ... }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Örneklerimizde kullandığımız <code>allocate</code> ve <code>deallocate</code> fonksiyonlarına karşılık gelen, gerekli iki metot olan <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> ve <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>’u tanımlar:</p>
 <ul>
-<li><a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> metodu, argüman olarak ayrılan belleğin sahip olması gereken istenen boyutu ve hizalamayı (alignment) açıklayan bir <a href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> örneği alır. Ayrılan bellek bloğunun ilk baytına bir <a href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">ham işaretçi</a> döndürür. Açık bir hata değeri yerine, <code>alloc</code> metodu bir ayırma hatasını bildirmek için null bir işaretçi döndürür. Bu biraz deyimsel olmayan (non-idiomatic) bir durumdur, ancak mevcut sistem allocator’larını sarmalamayı kolaylaştırma avantajı vardır; çünkü onlar da aynı kuralı kullanır.</li>
-<li><a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> metodu karşılığıdır ve bir bellek bloğunu tekrar serbest bırakmaktan sorumludur. İki argüman alır: <code>alloc</code> tarafından döndürülen işaretçi ve ayırma için kullanılan <code>Layout</code>.</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> metodu, argüman olarak ayrılan belleğin sahip olması gereken istenen boyutu ve hizalamayı (alignment) açıklayan bir <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a> örneği alır. Ayrılan bellek bloğunun ilk baytına bir <a rel="external" href="https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html#dereferencing-a-raw-pointer">ham işaretçi</a> döndürür. Açık bir hata değeri yerine, <code>alloc</code> metodu bir ayırma hatasını bildirmek için null bir işaretçi döndürür. Bu biraz deyimsel olmayan (non-idiomatic) bir durumdur, ancak mevcut sistem allocator’larını sarmalamayı kolaylaştırma avantajı vardır; çünkü onlar da aynı kuralı kullanır.</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a> metodu karşılığıdır ve bir bellek bloğunu tekrar serbest bırakmaktan sorumludur. İki argüman alır: <code>alloc</code> tarafından döndürülen işaretçi ve ayırma için kullanılan <code>Layout</code>.</li>
 </ul>
-<p>Trait buna ek olarak, varsayılan uygulamalara sahip <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a> ve <a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a> olmak üzere iki metot daha tanımlar:</p>
+<p>Trait buna ek olarak, varsayılan uygulamalara sahip <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a> ve <a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a> olmak üzere iki metot daha tanımlar:</p>
 <ul>
-<li><a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a> metodu, <code>alloc</code>’u çağırmaya ve ardından ayrılan bellek bloğunu sıfıra ayarlamaya eşdeğerdir; ki sağlanan varsayılan uygulamanın tam olarak yaptığı şey budur. Bir allocator uygulaması, mümkünse varsayılan uygulamaları daha verimli özel bir uygulamayla geçersiz kılabilir.</li>
-<li><a href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a> metodu, bir ayırmayı büyütmeye veya küçültmeye olanak tanır. Varsayılan uygulama, istenen boyutta yeni bir bellek bloğu ayırır ve önceki ayırmadan tüm içeriği kopyalar. Yine, bir allocator uygulaması muhtemelen bu metodun daha verimli bir uygulamasını sağlayabilir; örneğin mümkünse ayırmayı yerinde büyütüp/küçülterek.</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a> metodu, <code>alloc</code>’u çağırmaya ve ardından ayrılan bellek bloğunu sıfıra ayarlamaya eşdeğerdir; ki sağlanan varsayılan uygulamanın tam olarak yaptığı şey budur. Bir allocator uygulaması, mümkünse varsayılan uygulamaları daha verimli özel bir uygulamayla geçersiz kılabilir.</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a> metodu, bir ayırmayı büyütmeye veya küçültmeye olanak tanır. Varsayılan uygulama, istenen boyutta yeni bir bellek bloğu ayırır ve önceki ayırmadan tüm içeriği kopyalar. Yine, bir allocator uygulaması muhtemelen bu metodun daha verimli bir uygulamasını sağlayabilir; örneğin mümkünse ayırmayı yerinde büyütüp/küçülterek.</li>
 </ul>
 <h4 id="guvensizlik-unsafety"><a class="zola-anchor" href="#guvensizlik-unsafety" aria-label="Anchor link for: guvensizlik-unsafety">🔗</a>Güvensizlik (Unsafety)</h4>
 <p>Dikkat edilmesi gereken bir nokta, hem trait’in kendisinin hem de tüm trait metotlarının <code>unsafe</code> olarak bildirilmesidir:</p>
@@ -319,57 +311,53 @@
 </ul>
 <h3 id="bir-dummyallocator"><a class="zola-anchor" href="#bir-dummyallocator" aria-label="Anchor link for: bir-dummyallocator">🔗</a>Bir <code>DummyAllocator</code></h3>
 <p>Artık bir allocator tipinin neyi sağlaması gerektiğini bildiğimize göre, basit bir sahte (dummy) allocator oluşturabiliriz. Bunun için yeni bir <code>allocator</code> modülü oluşturuyoruz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/lib.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">pub mod </span><span>allocator;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/lib.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub mod</span><span> allocator;</span></span></code></pre>
 <p>Sahte allocator’ımız, trait’i uygulamak için kesinlikle minimum olanı yapar ve <code>alloc</code> çağrıldığında her zaman bir hata döndürür. Şöyle görünür:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::alloc::{GlobalAlloc, Layout};
-</span><span style="color:#569cd6;">use </span><span>core::ptr::null_mut;
-</span><span>
-</span><span style="color:#569cd6;">pub struct </span><span>Dummy;
-</span><span>
-</span><span style="color:#569cd6;">unsafe impl </span><span>GlobalAlloc </span><span style="color:#569cd6;">for </span><span>Dummy {
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>alloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _layout: Layout) -&gt; </span><span style="color:#569cd6;">*mut u8 </span><span>{
-</span><span>        null_mut()
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe fn </span><span>dealloc(</span><span style="color:#569cd6;">&amp;</span><span>self, _ptr: </span><span style="color:#569cd6;">*mut u8</span><span>, _layout: Layout) {
-</span><span>        panic!(</span><span style="color:#d69d85;">&quot;dealloc should be never called&quot;</span><span>)
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>Struct’ın herhangi bir alana ihtiyacı yok, bu yüzden onu bir <a href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">sıfır boyutlu tip (zero-sized type)</a> olarak oluşturuyoruz. Yukarıda belirtildiği gibi, <code>alloc</code>’tan her zaman bir ayırma hatasına karşılık gelen null işaretçiyi döndürüyoruz. Allocator asla bellek döndürmediğinden, <code>dealloc</code>’a bir çağrı asla meydana gelmemelidir. Bu nedenle, <code>dealloc</code> metodunda yalnızca panic yapıyoruz. <code>alloc_zeroed</code> ve <code>realloc</code> metotlarının varsayılan uygulamaları var, bu yüzden onlar için uygulama sağlamamıza gerek yok.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">alloc</span><span>::{</span><span style="color: #4EC9B0;">GlobalAlloc</span><span>,</span><span style="color: #4EC9B0;"> Layout</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">ptr</span><span>::null_mut;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> Dummy</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe impl</span><span style="color: #4EC9B0;"> GlobalAlloc</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> Dummy</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> alloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> _layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) -&gt; *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        null_mut</span><span>()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe fn</span><span style="color: #DCDCAA;"> dealloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> _ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span><span style="color: #9CDCFE;"> _layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        panic!</span><span>(</span><span style="color: #CE9178;">&quot;dealloc should be never called&quot;</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Struct’ın herhangi bir alana ihtiyacı yok, bu yüzden onu bir <a rel="external" href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">sıfır boyutlu tip (zero-sized type)</a> olarak oluşturuyoruz. Yukarıda belirtildiği gibi, <code>alloc</code>’tan her zaman bir ayırma hatasına karşılık gelen null işaretçiyi döndürüyoruz. Allocator asla bellek döndürmediğinden, <code>dealloc</code>’a bir çağrı asla meydana gelmemelidir. Bu nedenle, <code>dealloc</code> metodunda yalnızca panic yapıyoruz. <code>alloc_zeroed</code> ve <code>realloc</code> metotlarının varsayılan uygulamaları var, bu yüzden onlar için uygulama sağlamamıza gerek yok.</p>
 <p>Artık basit bir allocator’ımız var, ancak hâlâ Rust derleyicisine bu allocator’ı kullanması gerektiğini söylememiz gerekiyor. İşte <code>#[global_allocator]</code> özniteliği burada devreye girer.</p>
 <h3 id="the-global-allocator-attribute"><a class="zola-anchor" href="#the-global-allocator-attribute" aria-label="Anchor link for: the-global-allocator-attribute">🔗</a><code>#[global_allocator]</code> Özniteliği</h3>
 <p><code>#[global_allocator]</code> özniteliği, Rust derleyicisine global heap allocator olarak hangi allocator örneğini kullanması gerektiğini söyler. Öznitelik yalnızca <code>GlobalAlloc</code> trait’ini uygulayan bir <code>static</code>’e uygulanabilir. <code>Dummy</code> allocator’ımızın bir örneğini global allocator olarak kaydedelim:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
-</span><span>
-</span><span>#[global_allocator]
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: Dummy = Dummy;
-</span></code></pre>
-<p><code>Dummy</code> allocator bir <a href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">sıfır boyutlu tip</a> olduğundan, başlatma ifadesinde herhangi bir alan belirtmemize gerek yok.</p>
-<p>Bu static ile, derleme hataları düzeltilmiş olmalı. Artık <code>alloc</code>’un ayırma ve koleksiyon tiplerini kullanabiliriz. Örneğin, heap’te bir değer ayırmak için bir <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> kullanabiliriz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::boxed::Box;
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// […] &quot;Hello World!&quot; yazdır, `init` çağır, `mapper` ve `frame_allocator` oluştur
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> x = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] test modunda `test_main` çağır
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span><span>
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[global_allocator]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> ALLOCATOR:</span><span style="color: #4EC9B0;"> Dummy</span><span> =</span><span style="color: #4EC9B0;"> Dummy</span><span>;</span></span></code></pre>
+<p><code>Dummy</code> allocator bir <a rel="external" href="https://doc.rust-lang.org/nomicon/exotic-sizes.html#zero-sized-types-zsts">sıfır boyutlu tip</a> olduğundan, başlatma ifadesinde herhangi bir alan belirtmemize gerek yok.</p>
+<p>Bu static ile, derleme hataları düzeltilmiş olmalı. Artık <code>alloc</code>’un ayırma ve koleksiyon tiplerini kullanabiliriz. Örneğin, heap’te bir değer ayırmak için bir <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> kullanabiliriz:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/main.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] &quot;Hello World!&quot; yazdır, `init` çağır, `mapper` ve `frame_allocator` oluştur</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] test modunda `test_main` çağır</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span></code></pre>
 <p><code>extern crate alloc</code> ifadesini <code>main.rs</code>’imizde de belirtmemiz gerektiğine dikkat edin. Bu gereklidir, çünkü <code>lib.rs</code> ve <code>main.rs</code> kısımları ayrı crate’ler olarak ele alınır. Ancak, başka bir <code>#[global_allocator]</code> static’i oluşturmamıza gerek yok, çünkü global allocator projedeki tüm crate’lere uygulanır. Aslında, başka bir crate’te ek bir allocator belirtmek bir hata olurdu.</p>
 <p>Yukarıdaki kodu çalıştırdığımızda, bir panic’in meydana geldiğini görüyoruz:</p>
 <p><img src="https://os.phil-opp.com/tr/heap-allocation/qemu-dummy-output.png" alt="QEMU “panicked at allocation error: Layout { size_: 4, align_: 4 }, src/lib.rs:89:5” yazdırıyor" /></p>
@@ -377,280 +365,267 @@
 <h2 id="creating-a-kernel-heap"><a class="zola-anchor" href="#creating-a-kernel-heap" aria-label="Anchor link for: creating-a-kernel-heap">🔗</a>Bir Kernel Heap’i Oluşturmak</h2>
 <p>Düzgün bir allocator oluşturmadan önce, ilk olarak allocator’ın bellek ayırabileceği bir heap bellek bölgesi oluşturmamız gerekir. Bunu yapmak için, heap bölgesi için bir sanal bellek aralığı tanımlamamız ve ardından bu bölgeyi fiziksel frame’lere eşlememiz gerekir. Sanal bellek ve sayfa tablolarına genel bir bakış için <a href="https://os.phil-opp.com/tr/paging-introduction/"><em>“Paging’e Giriş”</em></a> yazısına bakın.</p>
 <p>İlk adım, heap için bir sanal bellek bölgesi tanımlamaktır. Henüz farklı bir bellek bölgesi için kullanılmadığı sürece, sevdiğimiz herhangi bir sanal adres aralığını seçebiliriz. Bir heap işaretçisini daha sonra kolayca tanıyabilmemiz için, onu <code>0x_4444_4444_0000</code> adresinden başlayan bellek olarak tanımlayalım:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_START</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">0x_4444_4444_0000</span><span>;
-</span><span style="color:#569cd6;">pub const </span><span style="color:#b4cea8;">HEAP_SIZE</span><span>: </span><span style="color:#569cd6;">usize </span><span>= </span><span style="color:#b5cea8;">100 </span><span>* </span><span style="color:#b5cea8;">1024</span><span>; </span><span style="color:#608b4e;">// 100 KiB
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> HEAP_START:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 0x_4444_4444_0000</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> HEAP_SIZE:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 100</span><span> *</span><span style="color: #B5CEA8;"> 1024</span><span>;</span><span style="color: #6A9955;"> // 100 KiB</span></span></code></pre>
 <p>Heap boyutunu şimdilik 100 KiB olarak ayarlıyoruz. Gelecekte daha fazla alana ihtiyacımız olursa, onu basitçe artırabiliriz.</p>
 <p>Bu heap bölgesini şimdi kullanmaya çalışsaydık, sanal bellek bölgesi henüz fiziksel belleğe eşlenmediği için bir page fault meydana gelirdi. Bunu çözmek için, <a href="https://os.phil-opp.com/tr/paging-implementation/"><em>“Paging Uygulaması”</em></a> yazısında tanıttığımız <a href="https://os.phil-opp.com/tr/paging-implementation/#using-offsetpagetable"><code>Mapper</code> API’sini</a> kullanarak heap sayfalarını eşleyen bir <code>init_heap</code> fonksiyonu oluşturuyoruz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::{
-</span><span>    structures::paging::{
-</span><span>        mapper::MapToError, FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB,
-</span><span>    },
-</span><span>    VirtAddr,
-</span><span>};
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init_heap(
-</span><span>    mapper: </span><span style="color:#569cd6;">&amp;mut</span><span> impl Mapper&lt;Size4KiB&gt;,
-</span><span>    frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> impl FrameAllocator&lt;Size4KiB&gt;,
-</span><span>) -&gt; Result&lt;(), MapToError&lt;Size4KiB&gt;&gt; {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> page_range = {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_start = VirtAddr::new(</span><span style="color:#b4cea8;">HEAP_START </span><span style="color:#569cd6;">as u64</span><span>);
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_end = heap_start + </span><span style="color:#b4cea8;">HEAP_SIZE </span><span>- </span><span style="color:#b5cea8;">1</span><span style="color:#569cd6;">u64</span><span>;
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_start_page = Page::containing_address(heap_start);
-</span><span>        </span><span style="color:#569cd6;">let</span><span> heap_end_page = Page::containing_address(heap_end);
-</span><span>        Page::range_inclusive(heap_start_page, heap_end_page)
-</span><span>    };
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">for</span><span> page </span><span style="color:#569cd6;">in</span><span> page_range {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> frame = frame_allocator
-</span><span>            .allocate_frame()
-</span><span>            .ok_or(MapToError::FrameAllocationFailed)</span><span style="color:#569cd6;">?</span><span>;
-</span><span>        </span><span style="color:#569cd6;">let</span><span> flags = PageTableFlags::</span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span>PageTableFlags::</span><span style="color:#b4cea8;">WRITABLE</span><span>;
-</span><span>        </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>            mapper.map_to(page, frame, flags, frame_allocator)</span><span style="color:#569cd6;">?</span><span>.flush()
-</span><span>        };
-</span><span>    }
-</span><span>
-</span><span>    Ok(())
-</span><span>}
-</span></code></pre>
-<p>Fonksiyon, generic parametre olarak <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a> kullanılarak her ikisi de 4 KiB sayfalarla sınırlanmış bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> ve bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a> örneğine değiştirilebilir referanslar alır. Fonksiyonun dönüş değeri, başarı varyantı olarak birim tipi <code>()</code> ve hata varyantı olarak bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a> içeren bir <a href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a>’tur; bu da <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> metodunun döndürdüğü hata tipidir. Hata tipini yeniden kullanmak burada mantıklıdır, çünkü <code>map_to</code> metodu bu fonksiyondaki ana hata kaynağıdır.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::{</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::{</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        mapper</span><span>::</span><span style="color: #4EC9B0;">MapToError</span><span>,</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>,</span><span style="color: #4EC9B0;"> Mapper</span><span>,</span><span style="color: #4EC9B0;"> Page</span><span>,</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>,</span><span style="color: #4EC9B0;"> Size4KiB</span><span>,</span></span>
+<span class="giallo-l"><span>    },</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    VirtAddr</span><span>,</span></span>
+<span class="giallo-l"><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init_heap</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    mapper</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> Mapper</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    frame_allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span>) -&gt;</span><span style="color: #4EC9B0;"> Result</span><span>&lt;(),</span><span style="color: #4EC9B0;"> MapToError</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page_range</span><span> = {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_start</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(HEAP_START</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end</span><span> =</span><span style="color: #9CDCFE;"> heap_start</span><span> + HEAP_SIZE -</span><span style="color: #B5CEA8;"> 1</span><span style="color: #4EC9B0;">u64</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_start_page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">heap_start</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end_page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">heap_end</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Page</span><span>::</span><span style="color: #DCDCAA;">range_inclusive</span><span>(</span><span style="color: #9CDCFE;">heap_start_page</span><span>,</span><span style="color: #9CDCFE;"> heap_end_page</span><span>)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> page</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> page_range</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> frame_allocator</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">allocate_frame</span><span>()</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">ok_or</span><span>(</span><span style="color: #4EC9B0;">MapToError</span><span>::</span><span style="color: #4EC9B0;">FrameAllocationFailed</span><span>)?;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> flags</span><span> =</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>::PRESENT |</span><span style="color: #4EC9B0;"> PageTableFlags</span><span>::WRITABLE;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            mapper</span><span>.</span><span style="color: #DCDCAA;">map_to</span><span>(</span><span style="color: #9CDCFE;">page</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>,</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)?.</span><span style="color: #DCDCAA;">flush</span><span>()</span></span>
+<span class="giallo-l"><span>        };</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Ok</span><span>(())</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Fonksiyon, generic parametre olarak <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a> kullanılarak her ikisi de 4 KiB sayfalarla sınırlanmış bir <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> ve bir <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a> örneğine değiştirilebilir referanslar alır. Fonksiyonun dönüş değeri, başarı varyantı olarak birim tipi <code>()</code> ve hata varyantı olarak bir <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a> içeren bir <a rel="external" href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a>’tur; bu da <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> metodunun döndürdüğü hata tipidir. Hata tipini yeniden kullanmak burada mantıklıdır, çünkü <code>map_to</code> metodu bu fonksiyondaki ana hata kaynağıdır.</p>
 <p>Uygulama iki kısma ayrılabilir:</p>
 <ul>
 <li>
-<p><strong>Sayfa aralığını oluşturmak:</strong> Eşlemek istediğimiz sayfaların bir aralığını oluşturmak için, <code>HEAP_START</code> işaretçisini bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a> tipine dönüştürüyoruz. Ardından <code>HEAP_SIZE</code>’ı ekleyerek ondan heap bitiş adresini hesaplıyoruz. Dahil edici (inclusive) bir sınır istiyoruz (heap’in son baytının adresi), bu yüzden 1 çıkarıyoruz. Sonra, <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.containing_address"><code>containing_address</code></a> fonksiyonunu kullanarak adresleri <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html"><code>Page</code></a> tiplerine dönüştürüyoruz. Son olarak, <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.range_inclusive"><code>Page::range_inclusive</code></a> fonksiyonunu kullanarak başlangıç ve bitiş sayfalarından bir sayfa aralığı oluşturuyoruz.</p>
+<p><strong>Sayfa aralığını oluşturmak:</strong> Eşlemek istediğimiz sayfaların bir aralığını oluşturmak için, <code>HEAP_START</code> işaretçisini bir <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a> tipine dönüştürüyoruz. Ardından <code>HEAP_SIZE</code>’ı ekleyerek ondan heap bitiş adresini hesaplıyoruz. Dahil edici (inclusive) bir sınır istiyoruz (heap’in son baytının adresi), bu yüzden 1 çıkarıyoruz. Sonra, <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.containing_address"><code>containing_address</code></a> fonksiyonunu kullanarak adresleri <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html"><code>Page</code></a> tiplerine dönüştürüyoruz. Son olarak, <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.range_inclusive"><code>Page::range_inclusive</code></a> fonksiyonunu kullanarak başlangıç ve bitiş sayfalarından bir sayfa aralığı oluşturuyoruz.</p>
 </li>
 <li>
 <p><strong>Sayfaları eşlemek:</strong> İkinci adım, az önce oluşturduğumuz sayfa aralığının tüm sayfalarını eşlemektir. Bunun için, bir <code>for</code> döngüsü kullanarak bu sayfalar üzerinde iterasyon yapıyoruz. Her sayfa için şunları yapıyoruz:</p>
 <ul>
 <li>
-<p>Sayfanın eşlenmesi gereken bir fiziksel frame’i <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a> metodunu kullanarak ayırıyoruz. Bu metot, geriye frame kalmadığında <a href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a> döndürür. Bu durumu, <a href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a> metodu aracılığıyla onu bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a> hatasına eşleyerek ve ardından bir hata durumunda erken dönmek için <a href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">soru işareti operatörünü</a> uygulayarak ele alıyoruz.</p>
+<p>Sayfanın eşlenmesi gereken bir fiziksel frame’i <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a> metodunu kullanarak ayırıyoruz. Bu metot, geriye frame kalmadığında <a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a> döndürür. Bu durumu, <a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a> metodu aracılığıyla onu bir <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a> hatasına eşleyerek ve ardından bir hata durumunda erken dönmek için <a rel="external" href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">soru işareti operatörünü</a> uygulayarak ele alıyoruz.</p>
 </li>
 <li>
 <p>Sayfa için gereken <code>PRESENT</code> bayrağını ve <code>WRITABLE</code> bayrağını ayarlıyoruz. Bu bayraklarla, hem okuma hem yazma erişimlerine izin verilir; ki bu heap belleği için mantıklıdır.</p>
 </li>
 <li>
-<p>Aktif sayfa tablosunda eşlemeyi oluşturmak için <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> metodunu kullanıyoruz. Metot başarısız olabilir, bu yüzden hatayı çağırana iletmek için yine <a href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">soru işareti operatörünü</a> kullanıyoruz. Başarı durumunda, metot bir <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a> örneği döndürür; bunu <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a> metodunu kullanarak <a href="https://os.phil-opp.com/tr/paging-introduction/#the-translation-lookaside-buffer"><em>translation lookaside buffer</em></a>’ı güncellemek için kullanabiliriz.</p>
+<p>Aktif sayfa tablosunda eşlemeyi oluşturmak için <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a> metodunu kullanıyoruz. Metot başarısız olabilir, bu yüzden hatayı çağırana iletmek için yine <a rel="external" href="https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html">soru işareti operatörünü</a> kullanıyoruz. Başarı durumunda, metot bir <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a> örneği döndürür; bunu <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a> metodunu kullanarak <a href="https://os.phil-opp.com/tr/paging-introduction/#the-translation-lookaside-buffer"><em>translation lookaside buffer</em></a>’ı güncellemek için kullanabiliriz.</p>
 </li>
 </ul>
 </li>
 </ul>
 <p>Son adım, bu fonksiyonu <code>kernel_main</code>’imizden çağırmaktır:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::allocator; </span><span style="color:#608b4e;">// yeni içe aktarma
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::{self, BootInfoFrameAllocator};
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
-</span><span>    blog_os::init();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span>boot_info.memory_map)
-</span><span>    };
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// yeni
-</span><span>    allocator::init_heap(</span><span style="color:#569cd6;">&amp;mut</span><span> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;heap initialization failed&quot;</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> x = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] test modunda `test_main` çağır
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span></code></pre>
-<p>Bağlam için burada fonksiyonun tamamını gösteriyoruz. Tek yeni satırlar <code>blog_os::allocator</code> içe aktarması ve <code>allocator::init_heap</code> fonksiyonuna yapılan çağrıdır. <code>init_heap</code> fonksiyonu bir hata döndürmesi durumunda, bu hatayı ele almak için şu anda mantıklı bir yolumuz olmadığından <a href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>Result::expect</code></a> metodunu kullanarak panic yapıyoruz.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/main.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::allocator;</span><span style="color: #6A9955;"> // yeni içe aktarma</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::{</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Hello World{}&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> mapper</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        BootInfoFrameAllocator</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(&amp;</span><span style="color: #9CDCFE;">boot_info</span><span>.memory_map)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // yeni</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    allocator</span><span>::</span><span style="color: #DCDCAA;">init_heap</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> mapper</span><span>, &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;heap initialization failed&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] test modunda `test_main` çağır</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Bağlam için burada fonksiyonun tamamını gösteriyoruz. Tek yeni satırlar <code>blog_os::allocator</code> içe aktarması ve <code>allocator::init_heap</code> fonksiyonuna yapılan çağrıdır. <code>init_heap</code> fonksiyonu bir hata döndürmesi durumunda, bu hatayı ele almak için şu anda mantıklı bir yolumuz olmadığından <a rel="external" href="https://doc.rust-lang.org/core/result/enum.Result.html#method.expect"><code>Result::expect</code></a> metodunu kullanarak panic yapıyoruz.</p>
 <p>Artık kullanılmaya hazır, eşlenmiş bir heap bellek bölgemiz var. <code>Box::new</code> çağrısı hâlâ eski <code>Dummy</code> allocator’ımızı kullanır, bu yüzden onu çalıştırdığınızda hâlâ “out of memory” hatasını göreceksiniz. Düzgün bir allocator kullanarak bunu düzeltelim.</p>
 <h2 id="using-an-allocator-crate"><a class="zola-anchor" href="#using-an-allocator-crate" aria-label="Anchor link for: using-an-allocator-crate">🔗</a>Bir Allocator Crate’i Kullanmak</h2>
 <p>Bir allocator uygulamak biraz karmaşık olduğundan, harici bir allocator crate’i kullanarak başlıyoruz. Kendi allocator’ımızı nasıl uygulayacağımızı bir sonraki yazıda öğreneceğiz.</p>
-<p><code>no_std</code> uygulamaları için basit bir allocator crate’i <a href="https://github.com/phil-opp/linked-list-allocator/"><code>linked_list_allocator</code></a> crate’idir. Adı, deallocate edilmiş bellek bölgelerini takip etmek için bağlı liste (linked list) veri yapısı kullanmasından gelir. Bu yaklaşımın daha ayrıntılı bir açıklaması için bir sonraki yazıya bakın.</p>
+<p><code>no_std</code> uygulamaları için basit bir allocator crate’i <a rel="external" href="https://github.com/phil-opp/linked-list-allocator/"><code>linked_list_allocator</code></a> crate’idir. Adı, deallocate edilmiş bellek bölgelerini takip etmek için bağlı liste (linked list) veri yapısı kullanmasından gelir. Bu yaklaşımın daha ayrıntılı bir açıklaması için bir sonraki yazıya bakın.</p>
 <p>Crate’i kullanmak için, önce <code>Cargo.toml</code>’umuzda ona bir bağımlılık eklememiz gerekir:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span style="color:#608b4e;"># Cargo.toml içinde
-</span><span>
-</span><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">linked_list_allocator </span><span>= </span><span style="color:#d69d85;">&quot;0.9.0&quot;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># Cargo.toml içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">linked_list_allocator</span><span> =</span><span style="color: #CE9178;"> &quot;0.9.0&quot;</span></span></code></pre>
 <p>Ardından sahte allocator’ımızı crate’in sağladığı allocator ile değiştirebiliriz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>linked_list_allocator::LockedHeap;
-</span><span>
-</span><span>#[global_allocator]
-</span><span style="color:#569cd6;">static </span><span style="color:#b4cea8;">ALLOCATOR</span><span>: LockedHeap = LockedHeap::empty();
-</span></code></pre>
-<p>Struct’ın adı <code>LockedHeap</code>’tir, çünkü senkronizasyon için <a href="https://docs.rs/spinning_top/0.1.0/spinning_top/type.Spinlock.html"><code>spinning_top::Spinlock</code></a> tipini kullanır. Bu gereklidir, çünkü birden çok thread <code>ALLOCATOR</code> static’ine aynı anda erişebilir. Her zaman olduğu gibi, bir spinlock veya mutex kullanırken yanlışlıkla bir deadlock’a neden olmamaya dikkat etmemiz gerekir. Bu, interrupt handler’larda herhangi bir ayırma yapmamamız gerektiği anlamına gelir; çünkü onlar keyfi bir zamanda çalışabilir ve devam etmekte olan bir ayırmayı kesebilir.</p>
-<p><code>LockedHeap</code>’i global allocator olarak ayarlamak yeterli değildir. Bunun nedeni, herhangi bir destek belleği olmadan bir allocator oluşturan <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.LockedHeap.html#method.empty"><code>empty</code></a> yapıcı fonksiyonunu kullanmamızdır. Sahte allocator’ımız gibi, o da <code>alloc</code>’ta her zaman bir hata döndürür. Bunu düzeltmek için, allocator’ı heap’i oluşturduktan sonra başlatmamız gerekir:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/allocator.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">pub fn </span><span>init_heap(
-</span><span>    mapper: </span><span style="color:#569cd6;">&amp;mut</span><span> impl Mapper&lt;Size4KiB&gt;,
-</span><span>    frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> impl FrameAllocator&lt;Size4KiB&gt;,
-</span><span>) -&gt; Result&lt;(), MapToError&lt;Size4KiB&gt;&gt; {
-</span><span>    </span><span style="color:#608b4e;">// […] tüm heap sayfalarını fiziksel frame&#39;lere eşle
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// yeni
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#b4cea8;">ALLOCATOR</span><span>.lock().init(</span><span style="color:#b4cea8;">HEAP_START</span><span>, </span><span style="color:#b4cea8;">HEAP_SIZE</span><span>);
-</span><span>    }
-</span><span>
-</span><span>    Ok(())
-</span><span>}
-</span></code></pre>
-<p>Sarmalanmış <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a> örneğine özel bir referans almak için <code>LockedHeap</code> tipinin iç spinlock’undaki <a href="https://docs.rs/lock_api/0.3.3/lock_api/struct.Mutex.html#method.lock"><code>lock</code></a> metodunu kullanıyoruz; ardından onun üzerinde heap sınırlarını argüman olarak alan <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> metodunu çağırıyoruz. <a href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> fonksiyonu zaten heap belleğine yazmaya çalıştığından, heap’i yalnızca heap sayfalarını eşledikten <em>sonra</em> başlatmalıyız.</p>
-<p>Heap’i başlattıktan sonra, artık yerleşik <a href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> crate’inin tüm ayırma ve koleksiyon tiplerini hatasız kullanabiliriz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// src/main.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::{boxed::Box, vec, vec::Vec, rc::Rc};
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// […] interrupt&#39;ları, mapper&#39;ı, frame_allocator&#39;ı, heap&#39;i başlat
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// heap&#39;te bir sayı ayır
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;heap_value at </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, heap_value);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// dinamik boyutlu bir vektör oluştur
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> vec = Vec::new();
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b5cea8;">500 </span><span>{
-</span><span>        vec.push(i);
-</span><span>    }
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;vec at </span><span style="color:#b4cea8;">{:p}</span><span style="color:#d69d85;">&quot;</span><span>, vec.as_slice());
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// referans sayımlı bir vektör oluştur -&gt; sayım 0&#39;a ulaştığında serbest bırakılır
-</span><span>    </span><span style="color:#569cd6;">let</span><span> reference_counted = Rc::new(vec![</span><span style="color:#b5cea8;">1</span><span>, </span><span style="color:#b5cea8;">2</span><span>, </span><span style="color:#b5cea8;">3</span><span>]);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> cloned_reference = reference_counted.clone();
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;current reference count is </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, Rc::strong_count(</span><span style="color:#569cd6;">&amp;</span><span>cloned_reference));
-</span><span>    core::mem::drop(reference_counted);
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;reference count is </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;"> now&quot;</span><span>, Rc::strong_count(</span><span style="color:#569cd6;">&amp;</span><span>cloned_reference));
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// […] test bağlamında `test_main` çağır
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span></code></pre>
-<p>Bu kod örneği <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>, <a href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a> ve <a href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a> tiplerinin bazı kullanımlarını gösterir. <code>Box</code> ve <code>Vec</code> tipleri için, alttaki heap işaretçilerini <a href="https://doc.rust-lang.org/core/fmt/trait.Pointer.html"><code>{:p}</code> biçimlendirme belirteci</a> kullanarak yazdırıyoruz. <code>Rc</code>’yi sergilemek için, referans sayımlı bir heap değeri oluşturuyor ve bir örneği drop etmeden önce ve sonra (<a href="https://doc.rust-lang.org/core/mem/fn.drop.html"><code>core::mem::drop</code></a> kullanarak) mevcut referans sayısını yazdırmak için <a href="https://doc.rust-lang.org/alloc/rc/struct.Rc.html#method.strong_count"><code>Rc::strong_count</code></a> fonksiyonunu kullanıyoruz.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> linked_list_allocator</span><span>::</span><span style="color: #4EC9B0;">LockedHeap</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[global_allocator]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> ALLOCATOR:</span><span style="color: #4EC9B0;"> LockedHeap</span><span> =</span><span style="color: #4EC9B0;"> LockedHeap</span><span>::</span><span style="color: #DCDCAA;">empty</span><span>();</span></span></code></pre>
+<p>Struct’ın adı <code>LockedHeap</code>’tir, çünkü senkronizasyon için <a rel="external" href="https://docs.rs/spinning_top/0.1.0/spinning_top/type.Spinlock.html"><code>spinning_top::Spinlock</code></a> tipini kullanır. Bu gereklidir, çünkü birden çok thread <code>ALLOCATOR</code> static’ine aynı anda erişebilir. Her zaman olduğu gibi, bir spinlock veya mutex kullanırken yanlışlıkla bir deadlock’a neden olmamaya dikkat etmemiz gerekir. Bu, interrupt handler’larda herhangi bir ayırma yapmamamız gerektiği anlamına gelir; çünkü onlar keyfi bir zamanda çalışabilir ve devam etmekte olan bir ayırmayı kesebilir.</p>
+<p><code>LockedHeap</code>’i global allocator olarak ayarlamak yeterli değildir. Bunun nedeni, herhangi bir destek belleği olmadan bir allocator oluşturan <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.LockedHeap.html#method.empty"><code>empty</code></a> yapıcı fonksiyonunu kullanmamızdır. Sahte allocator’ımız gibi, o da <code>alloc</code>’ta her zaman bir hata döndürür. Bunu düzeltmek için, allocator’ı heap’i oluşturduktan sonra başlatmamız gerekir:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/allocator.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init_heap</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    mapper</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> Mapper</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    frame_allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span>) -&gt;</span><span style="color: #4EC9B0;"> Result</span><span>&lt;(),</span><span style="color: #4EC9B0;"> MapToError</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;&gt; {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] tüm heap sayfalarını fiziksel frame&#39;lere eşle</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // yeni</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span>        ALLOCATOR.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">init</span><span>(HEAP_START, HEAP_SIZE);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Ok</span><span>(())</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Sarmalanmış <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html"><code>Heap</code></a> örneğine özel bir referans almak için <code>LockedHeap</code> tipinin iç spinlock’undaki <a rel="external" href="https://docs.rs/lock_api/0.3.3/lock_api/struct.Mutex.html#method.lock"><code>lock</code></a> metodunu kullanıyoruz; ardından onun üzerinde heap sınırlarını argüman olarak alan <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> metodunu çağırıyoruz. <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.init"><code>init</code></a> fonksiyonu zaten heap belleğine yazmaya çalıştığından, heap’i yalnızca heap sayfalarını eşledikten <em>sonra</em> başlatmalıyız.</p>
+<p>Heap’i başlattıktan sonra, artık yerleşik <a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a> crate’inin tüm ayırma ve koleksiyon tiplerini hatasız kullanabiliriz:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/main.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::{</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>, vec,</span><span style="color: #4EC9B0;"> vec</span><span>::</span><span style="color: #4EC9B0;">Vec</span><span>,</span><span style="color: #4EC9B0;"> rc</span><span>::</span><span style="color: #4EC9B0;">Rc</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] interrupt&#39;ları, mapper&#39;ı, frame_allocator&#39;ı, heap&#39;i başlat</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // heap&#39;te bir sayı ayır</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;heap_value at {:p}&quot;</span><span>,</span><span style="color: #9CDCFE;"> heap_value</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // dinamik boyutlu bir vektör oluştur</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> vec</span><span> =</span><span style="color: #4EC9B0;"> Vec</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..</span><span style="color: #B5CEA8;">500</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        vec</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;vec at {:p}&quot;</span><span>,</span><span style="color: #9CDCFE;"> vec</span><span>.</span><span style="color: #DCDCAA;">as_slice</span><span>());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // referans sayımlı bir vektör oluştur -&gt; sayım 0&#39;a ulaştığında serbest bırakılır</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> reference_counted</span><span> =</span><span style="color: #4EC9B0;"> Rc</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #DCDCAA;">vec!</span><span>[</span><span style="color: #B5CEA8;">1</span><span>,</span><span style="color: #B5CEA8;"> 2</span><span>,</span><span style="color: #B5CEA8;"> 3</span><span>]);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> cloned_reference</span><span> =</span><span style="color: #9CDCFE;"> reference_counted</span><span>.</span><span style="color: #DCDCAA;">clone</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;current reference count is {}&quot;</span><span>,</span><span style="color: #4EC9B0;"> Rc</span><span>::</span><span style="color: #DCDCAA;">strong_count</span><span>(&amp;</span><span style="color: #9CDCFE;">cloned_reference</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    core</span><span>::</span><span style="color: #4EC9B0;">mem</span><span>::</span><span style="color: #DCDCAA;">drop</span><span>(</span><span style="color: #9CDCFE;">reference_counted</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;reference count is {} now&quot;</span><span>,</span><span style="color: #4EC9B0;"> Rc</span><span>::</span><span style="color: #DCDCAA;">strong_count</span><span>(&amp;</span><span style="color: #9CDCFE;">cloned_reference</span><span>));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // […] test bağlamında `test_main` çağır</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Bu kod örneği <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>, <a rel="external" href="https://doc.rust-lang.org/alloc/vec/"><code>Vec</code></a> ve <a rel="external" href="https://doc.rust-lang.org/alloc/rc/"><code>Rc</code></a> tiplerinin bazı kullanımlarını gösterir. <code>Box</code> ve <code>Vec</code> tipleri için, alttaki heap işaretçilerini <a rel="external" href="https://doc.rust-lang.org/core/fmt/trait.Pointer.html"><code>{:p}</code> biçimlendirme belirteci</a> kullanarak yazdırıyoruz. <code>Rc</code>’yi sergilemek için, referans sayımlı bir heap değeri oluşturuyor ve bir örneği drop etmeden önce ve sonra (<a rel="external" href="https://doc.rust-lang.org/core/mem/fn.drop.html"><code>core::mem::drop</code></a> kullanarak) mevcut referans sayısını yazdırmak için <a rel="external" href="https://doc.rust-lang.org/alloc/rc/struct.Rc.html#method.strong_count"><code>Rc::strong_count</code></a> fonksiyonunu kullanıyoruz.</p>
 <p>Onu çalıştırdığımızda, aşağıdakini görüyoruz:</p>
 <p><img src="https://os.phil-opp.com/tr/heap-allocation/qemu-alloc-showcase.png" alt="QEMU heap_value at 0x444444440000, vec at 0x4444444408000, current reference count is 2, reference count is 1 now yazdırıyor" /></p>
 <p>Beklendiği gibi, <code>0x_4444_4444_*</code> önekiyle başlayan işaretçinin belirttiği gibi, <code>Box</code> ve <code>Vec</code> değerlerinin heap’te var olduğunu görüyoruz. Referans sayımlı değer de beklendiği gibi davranıyor; <code>clone</code> çağrısından sonra referans sayısı 2 ve örneklerden biri drop edildikten sonra tekrar 1.</p>
-<p>Vektörün <code>0x800</code> ofsetinde başlamasının nedeni, box’lanmış değerin <code>0x800</code> bayt büyüklüğünde olması değil, vektörün kapasitesini artırması gerektiğinde meydana gelen <a href="https://doc.rust-lang.org/alloc/vec/struct.Vec.html#capacity-and-reallocation">yeniden ayırmalardır (reallocations)</a>. Örneğin, vektörün kapasitesi 32 olduğunda ve bir sonraki elemanı eklemeye çalıştığımızda, vektör perde arkasında 64 kapasiteli yeni bir destek dizisi ayırır ve tüm elemanları kopyalar. Sonra eski ayırmayı serbest bırakır.</p>
+<p>Vektörün <code>0x800</code> ofsetinde başlamasının nedeni, box’lanmış değerin <code>0x800</code> bayt büyüklüğünde olması değil, vektörün kapasitesini artırması gerektiğinde meydana gelen <a rel="external" href="https://doc.rust-lang.org/alloc/vec/struct.Vec.html#capacity-and-reallocation">yeniden ayırmalardır (reallocations)</a>. Örneğin, vektörün kapasitesi 32 olduğunda ve bir sonraki elemanı eklemeye çalıştığımızda, vektör perde arkasında 64 kapasiteli yeni bir destek dizisi ayırır ve tüm elemanları kopyalar. Sonra eski ayırmayı serbest bırakır.</p>
 <p>Elbette, <code>alloc</code> crate’inde artık kernel’imizde kullanabileceğimiz çok daha fazla ayırma ve koleksiyon tipi var; bunlar arasında:</p>
 <ul>
-<li>thread güvenli referans sayımlı işaretçi <a href="https://doc.rust-lang.org/alloc/sync/struct.Arc.html"><code>Arc</code></a></li>
-<li>sahipli dize tipi <a href="https://doc.rust-lang.org/alloc/string/struct.String.html"><code>String</code></a> ve <a href="https://doc.rust-lang.org/alloc/macro.format.html"><code>format!</code></a> makrosu</li>
-<li><a href="https://doc.rust-lang.org/alloc/collections/linked_list/struct.LinkedList.html"><code>LinkedList</code></a></li>
-<li>büyüyebilir halka arabelleği (ring buffer) <a href="https://doc.rust-lang.org/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a></li>
-<li><a href="https://doc.rust-lang.org/alloc/collections/binary_heap/struct.BinaryHeap.html"><code>BinaryHeap</code></a> öncelik kuyruğu</li>
-<li><a href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a> ve <a href="https://doc.rust-lang.org/alloc/collections/btree_set/struct.BTreeSet.html"><code>BTreeSet</code></a></li>
+<li>thread güvenli referans sayımlı işaretçi <a rel="external" href="https://doc.rust-lang.org/alloc/sync/struct.Arc.html"><code>Arc</code></a></li>
+<li>sahipli dize tipi <a rel="external" href="https://doc.rust-lang.org/alloc/string/struct.String.html"><code>String</code></a> ve <a rel="external" href="https://doc.rust-lang.org/alloc/macro.format.html"><code>format!</code></a> makrosu</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/collections/linked_list/struct.LinkedList.html"><code>LinkedList</code></a></li>
+<li>büyüyebilir halka arabelleği (ring buffer) <a rel="external" href="https://doc.rust-lang.org/alloc/collections/vec_deque/struct.VecDeque.html"><code>VecDeque</code></a></li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/collections/binary_heap/struct.BinaryHeap.html"><code>BinaryHeap</code></a> öncelik kuyruğu</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/collections/btree_map/struct.BTreeMap.html"><code>BTreeMap</code></a> ve <a rel="external" href="https://doc.rust-lang.org/alloc/collections/btree_set/struct.BTreeSet.html"><code>BTreeSet</code></a></li>
 </ul>
 <p>Bu tipler, thread listeleri, zamanlama kuyrukları veya async/await desteği uygulamak istediğimizde çok yararlı olacak.</p>
 <h2 id="adding-a-test"><a class="zola-anchor" href="#adding-a-test" aria-label="Anchor link for: adding-a-test">🔗</a>Bir Test Eklemek</h2>
 <p>Yeni ayırma kodumuzu yanlışlıkla bozmadığımızdan emin olmak için, onun için bir entegrasyon testi eklemeliyiz. Aşağıdaki içerikle yeni bir <code>tests/heap_allocation.rs</code> dosyası oluşturarak başlıyoruz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs içinde
-</span><span>
-</span><span>#![no_std]
-</span><span>#![no_main]
-</span><span>#![feature(custom_test_frameworks)]
-</span><span>#![test_runner(blog_os::test_runner)]
-</span><span>#![reexport_test_harness_main </span><span style="color:#569cd6;">= </span><span style="color:#d69d85;">&quot;test_main&quot;</span><span>]
-</span><span>
-</span><span style="color:#569cd6;">extern crate</span><span> alloc;
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>bootloader::{entry_point, BootInfo};
-</span><span style="color:#569cd6;">use </span><span>core::panic::PanicInfo;
-</span><span>
-</span><span>entry_point!(main);
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    unimplemented!();
-</span><span>}
-</span><span>
-</span><span>#[panic_handler]
-</span><span style="color:#569cd6;">fn </span><span>panic(info: </span><span style="color:#569cd6;">&amp;</span><span>PanicInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    blog_os::test_panic_handler(info)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#![no_std]</span></span>
+<span class="giallo-l"><span>#![no_main]</span></span>
+<span class="giallo-l"><span>#![feature(custom_test_frameworks)]</span></span>
+<span class="giallo-l"><span>#![test_runner(blog_os::test_runner)]</span></span>
+<span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bootloader</span><span>::{entry_point,</span><span style="color: #4EC9B0;"> BootInfo</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">entry_point!</span><span>(</span><span style="color: #9CDCFE;">main</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    unimplemented!</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[panic_handler]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> panic</span><span>(</span><span style="color: #9CDCFE;">info</span><span>: &amp;</span><span style="color: #4EC9B0;">PanicInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">test_panic_handler</span><span>(</span><span style="color: #9CDCFE;">info</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p><code>lib.rs</code>’imizden <code>test_runner</code> ve <code>test_panic_handler</code> fonksiyonlarını yeniden kullanıyoruz. Ayırmaları test etmek istediğimiz için, <code>extern crate alloc</code> ifadesi aracılığıyla <code>alloc</code> crate’ini etkinleştiriyoruz. Test ön kalıbı (boilerplate) hakkında daha fazla bilgi için <a href="https://os.phil-opp.com/tr/testing/"><em>Test Etme</em></a> yazısına göz atın.</p>
 <p><code>main</code> fonksiyonunun uygulaması şöyle görünür:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::allocator;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::{self, BootInfoFrameAllocator};
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::VirtAddr;
-</span><span>
-</span><span>    blog_os::init();
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span>boot_info.memory_map)
-</span><span>    };
-</span><span>    allocator::init_heap(</span><span style="color:#569cd6;">&amp;mut</span><span> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator)
-</span><span>        .expect(</span><span style="color:#d69d85;">&quot;heap initialization failed&quot;</span><span>);
-</span><span>
-</span><span>    test_main();
-</span><span>    </span><span style="color:#569cd6;">loop </span><span>{}
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::allocator;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::{</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">VirtAddr</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> mapper</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        BootInfoFrameAllocator</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(&amp;</span><span style="color: #9CDCFE;">boot_info</span><span>.memory_map)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    allocator</span><span>::</span><span style="color: #DCDCAA;">init_heap</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> mapper</span><span>, &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)</span></span>
+<span class="giallo-l"><span>        .</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;heap initialization failed&quot;</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p><code>main.rs</code>’imizdeki <code>kernel_main</code> fonksiyonuna çok benzer; farkları, <code>println</code> çağırmamamız, herhangi bir örnek ayırma içermememiz ve <code>test_main</code>’i koşulsuz çağırmamızdır.</p>
-<p>Artık birkaç test senaryosu eklemeye hazırız. İlk olarak, <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> kullanarak bazı basit ayırmalar yapan ve temel ayırmaların çalıştığından emin olmak için ayrılan değerleri kontrol eden bir test ekliyoruz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs içinde
-</span><span style="color:#569cd6;">use </span><span>alloc::boxed::Box;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>simple_allocation() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value_1 = Box::new(</span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> heap_value_2 = Box::new(</span><span style="color:#b5cea8;">13</span><span>);
-</span><span>    assert_eq!(*heap_value_1, </span><span style="color:#b5cea8;">41</span><span>);
-</span><span>    assert_eq!(*heap_value_2, </span><span style="color:#b5cea8;">13</span><span>);
-</span><span>}
-</span></code></pre>
+<p>Artık birkaç test senaryosu eklemeye hazırız. İlk olarak, <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a> kullanarak bazı basit ayırmalar yapan ve temel ayırmaların çalıştığından emin olmak için ayrılan değerleri kontrol eden bir test ekliyoruz:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs içinde</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">boxed</span><span>::</span><span style="color: #4EC9B0;">Box</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> simple_allocation</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value_1</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> heap_value_2</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">13</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">heap_value_1</span><span>,</span><span style="color: #B5CEA8;"> 41</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">heap_value_2</span><span>,</span><span style="color: #B5CEA8;"> 13</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>En önemlisi, bu test hiçbir ayırma hatasının meydana gelmediğini doğrular.</p>
 <p>Ardından, hem büyük ayırmaları hem de (yeniden ayırmalar nedeniyle) birden çok ayırmayı test etmek için yinelemeli olarak büyük bir vektör oluşturuyoruz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>alloc::vec::Vec;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>large_vec() {
-</span><span>    </span><span style="color:#569cd6;">let</span><span> n = </span><span style="color:#b5cea8;">1000</span><span>;
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> vec = Vec::new();
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span>n {
-</span><span>        vec.push(i);
-</span><span>    }
-</span><span>    assert_eq!(vec.iter().sum::&lt;</span><span style="color:#569cd6;">u64</span><span>&gt;(), (n - </span><span style="color:#b5cea8;">1</span><span>) * n / </span><span style="color:#b5cea8;">2</span><span>);
-</span><span>}
-</span></code></pre>
-<p>Toplamı, <a href="https://en.wikipedia.org/wiki/1_%2B_2_%2B_3_%2B_4_%2B_%E2%8B%AF#Partial_sums">n. kısmi toplam</a> formülüyle karşılaştırarak doğruluyoruz. Bu bize, ayrılan değerlerin hepsinin doğru olduğuna dair biraz güven verir.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">vec</span><span>::</span><span style="color: #4EC9B0;">Vec</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> large_vec</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> n</span><span> =</span><span style="color: #B5CEA8;"> 1000</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> vec</span><span> =</span><span style="color: #4EC9B0;"> Vec</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..</span><span style="color: #9CDCFE;">n</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        vec</span><span>.</span><span style="color: #DCDCAA;">push</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    assert_eq!</span><span>(</span><span style="color: #9CDCFE;">vec</span><span>.</span><span style="color: #DCDCAA;">iter</span><span>().</span><span style="color: #DCDCAA;">sum</span><span>::&lt;</span><span style="color: #4EC9B0;">u64</span><span>&gt;(), (</span><span style="color: #9CDCFE;">n</span><span> -</span><span style="color: #B5CEA8;"> 1</span><span>) *</span><span style="color: #9CDCFE;"> n</span><span> /</span><span style="color: #B5CEA8;"> 2</span><span>);</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Toplamı, <a rel="external" href="https://en.wikipedia.org/wiki/1_%2B_2_%2B_3_%2B_4_%2B_%E2%8B%AF#Partial_sums">n. kısmi toplam</a> formülüyle karşılaştırarak doğruluyoruz. Bu bize, ayrılan değerlerin hepsinin doğru olduğuna dair biraz güven verir.</p>
 <p>Üçüncü test olarak, art arda on bin ayırma oluşturuyoruz:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// tests/heap_allocation.rs içinde
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>blog_os::allocator::</span><span style="color:#b4cea8;">HEAP_SIZE</span><span>;
-</span><span>
-</span><span>#[test_case]
-</span><span style="color:#569cd6;">fn </span><span>many_boxes() {
-</span><span>    </span><span style="color:#569cd6;">for</span><span> i </span><span style="color:#569cd6;">in </span><span style="color:#b5cea8;">0</span><span style="color:#569cd6;">..</span><span style="color:#b4cea8;">HEAP_SIZE </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let</span><span> x = Box::new(i);
-</span><span>        assert_eq!(*x, i);
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// tests/heap_allocation.rs içinde</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">allocator</span><span>::</span><span style="color: #4EC9B0;">HEAP_SIZE</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[test_case]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> many_boxes</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> i</span><span style="color: #569CD6;"> in</span><span style="color: #B5CEA8;"> 0</span><span>..HEAP_SIZE {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> x</span><span> =</span><span style="color: #4EC9B0;"> Box</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">i</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        assert_eq!</span><span>(*</span><span style="color: #9CDCFE;">x</span><span>,</span><span style="color: #9CDCFE;"> i</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>Bu test, allocator’ın serbest bırakılan belleği sonraki ayırmalar için yeniden kullandığından emin olur; çünkü aksi takdirde bellek tükenir. Bu, bir allocator için bariz bir gereksinim gibi görünebilir, ancak bunu yapmayan allocator tasarımları da vardır. Bir örnek, bir sonraki yazıda açıklanacak olan bump allocator tasarımıdır.</p>
 <p>Yeni entegrasyon testimizi çalıştıralım:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>&gt; cargo test --test heap_allocation
-</span><span>[…]
-</span><span>Running 3 tests
-</span><span>simple_allocation... [ok]
-</span><span>large_vec... [ok]
-</span><span>many_boxes... [ok]
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test --test heap_allocation</span></span>
+<span class="giallo-l"><span>[…]</span></span>
+<span class="giallo-l"><span>Running 3 tests</span></span>
+<span class="giallo-l"><span>simple_allocation... [ok]</span></span>
+<span class="giallo-l"><span>large_vec... [ok]</span></span>
+<span class="giallo-l"><span>many_boxes... [ok]</span></span></code></pre>
 <p>Üç testin de hepsi başarılı oldu! Tüm birim ve entegrasyon testlerini çalıştırmak için <code>cargo test</code>’i de (<code>--test</code> argümanı olmadan) çağırabilirsiniz.</p>
 <h2 id="ozet"><a class="zola-anchor" href="#ozet" aria-label="Anchor link for: ozet">🔗</a>Özet</h2>
 <p>Bu yazı dinamik belleğe bir giriş yaptı ve onun neden ve nerede gerekli olduğunu açıkladı. Rust’ın borrow checker’ının yaygın güvenlik açıklarını nasıl önlediğini gördük ve Rust’ın ayırma API’sinin nasıl çalıştığını öğrendik.</p>

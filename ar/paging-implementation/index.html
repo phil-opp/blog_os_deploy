@@ -131,7 +131,7 @@
     <div class="right-to-left">
     <p>يُظهر هذا المقال كيفية تنفيذ دعم paging في نواتنا. يستكشف أولاً تقنيات مختلفة لجعل physical page table frames قابلة للوصول من النواة ويناقش مزاياها وعيوبها. ثم ينفذ دالة ترجمة عنوان ودالة لإنشاء تعيين جديد.</p>
 <span id="continue-reading"></span>
-<p>هذا المدونة مطوّرة بشكل مفتوح على <a href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/paging-implementation/#comments">في الأسفل</a>. يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a href="https://github.com/phil-opp/blog_os/tree/post-09"><code>post-09</code></a>.</p>
+<p>هذا المدونة مطوّرة بشكل مفتوح على <a rel="external" href="https://github.com/phil-opp/blog_os">GitHub</a>. إذا كان لديك أي مشاكل أو أسئلة، يرجى فتح issue هناك. يمكنك أيضًا ترك تعليقات <a href="https://os.phil-opp.com/ar/paging-implementation/#comments">في الأسفل</a>. يمكن العثور على الكود المصدري الكامل لهذا المقال في فرع <a rel="external" href="https://github.com/phil-opp/blog_os/tree/post-09"><code>post-09</code></a>.</p>
 <!-- fix for zola anchor checker (target is in template): <a id="comments"> -->
 
     <details id = "toc-inline">
@@ -204,7 +204,7 @@
 <p>حل بسيط هو <strong>identity mapping لجميع page tables</strong>:</p>
 <p><img src="https://os.phil-opp.com/ar/paging-implementation/identity-mapped-page-tables.svg" alt="A virtual and a physical address space with various virtual pages mapped to the physical frame with the same address" /></p>
 <p>في هذا المثال، نرى عدة page table frames مُعيّنة بـ identity mapping. بهذه الطريقة، العناوين الفيزيائية لـ page tables هي أيضًا عناوين افتراضية صالحة حتى نتمكن بسهولة من الوصول إلى page tables لجميع المستويات بدءًا من register CR3.</p>
-<p>ومع ذلك، يُ clutter مساحة العنونة الافتراضية ويجعل من الصعب أكثر إيجاد مناطق ذاكرة متصلة بأحجام أكبر. على سبيل المثال، تخيل أننا نريد إنشاء منطقة ذاكرة افتراضية بحجم 1000 KiB في الرسم أعلاه، مثلًا لـ <a href="https://en.wikipedia.org/wiki/Memory-mapped_file">memory-mapping a file</a>. لا نستطيع بدء المنطقة في <code>28 KiB</code> لأنها ستتصادم مع الصفحة المُعيّنة بالفعل في <code>1004 KiB</code>. لذلك نحتاج للنظر أبعد حتى نجد منطقة غير مُعيّنة كبيرة بما يكفي، على سبيل المثال في <code>1008 KiB</code>. هذه مشكلة تجزئة مشابهة لـ <a href="https://os.phil-opp.com/paging-introduction/#fragmentation">segmentation</a>.</p>
+<p>ومع ذلك، يُ clutter مساحة العنونة الافتراضية ويجعل من الصعب أكثر إيجاد مناطق ذاكرة متصلة بأحجام أكبر. على سبيل المثال، تخيل أننا نريد إنشاء منطقة ذاكرة افتراضية بحجم 1000 KiB في الرسم أعلاه، مثلًا لـ <a rel="external" href="https://en.wikipedia.org/wiki/Memory-mapped_file">memory-mapping a file</a>. لا نستطيع بدء المنطقة في <code>28 KiB</code> لأنها ستتصادم مع الصفحة المُعيّنة بالفعل في <code>1004 KiB</code>. لذلك نحتاج للنظر أبعد حتى نجد منطقة غير مُعيّنة كبيرة بما يكفي، على سبيل المثال في <code>1008 KiB</code>. هذه مشكلة تجزئة مشابهة لـ <a href="https://os.phil-opp.com/paging-introduction/#fragmentation">segmentation</a>.</p>
 <p>بالمثل، يجعل إنشاء page tables جديدة أصعب بكثير لأننا نحتاج لإيجاد physical frames whose pages المقابلة غير مستخدمة بالفعل. على سبيل المثال، لنفترض أننا حجزنا الذاكرة الافتراضية <em>الافتراضية</em> 1000 KiB starting at <code>1008 KiB</code> لملف memory-mapped. الآن لا نستطيع استخدام أي frame بعنوان <em>فيزيائي</em> بين <code>1000 KiB</code> و <code>2008 KiB</code> بعد الآن، لأننا لا نستطيع identity map لها.</p>
 <h3 id="lt-yyn-nd-zh-thbt"><a class="zola-anchor" href="#lt-yyn-nd-zh-thbt" aria-label="Anchor link for: lt-yyn-nd-zh-thbt">🔗</a>التعيين عند إزاحة ثابتة</h3>
 <p>لتجنب مشكلة cluttering مساحة العنونة الافتراضية، يمكننا <strong>استخدام منطقة ذاكرة منفصلة لتعيينات page table</strong>. لذلك بدلاً من identity mapping لـ page table frames، نعيّنها بـ offset ثابت في مساحة العنونة الافتراضية. على سبيل المثال، يمكن أن يكون offset 10 TiB:</p>
@@ -216,7 +216,7 @@
 <p><img src="https://os.phil-opp.com/ar/paging-implementation/map-complete-physical-memory.svg" alt="The same figure as for the offset mapping, but every physical frame has a mapping (at 10 TiB + X) instead of only page table frames." /></p>
 <p>يسمح هذا النهج لنواتنا بالوصول إلى ذاكرة فيزيائية عشوائية، بما في ذلك page table frames لمساحات عنونة أخرى. نطاق الذاكرة الافتراضية المحجوزة له نفس الحجم كما قبل، مع أن الاختلاف أنه لم يعد يحتوي على صفحات غير مُعيّنة.</p>
 <p>عيب هذا النهج هو أن page tables إضافية مطلوبة لتخزين تعيين الذاكرة الفيزيائية. هذه page tables تحتاج للتخزين في مكان ما، لذلك تستهلك جزءًا من الذاكرة الفيزيائية، الذي يمكن أن يكون مشكلة على أجهزة ذات ذاكرة صغيرة.</p>
-<p>على x86_64، ومع ذلك، يمكننا استخدام <a href="https://en.wikipedia.org/wiki/Page_%28computer_memory%29#Multiple_page_sizes">huge pages</a> بحجم 2 MiB للتعيين، بدلاً من 4 KiB pages الافتراضية. بهذه الطريقة، تعيين 32 GiB من الذاكرة الفيزيائية يحتاج فقط 132 KiB لـ page tables لأن فقط level 3 table واحدة و 32 level 2 tables مطلوبة. huge pages أكثر كفاءة في cache أيضًا لأنها تستخدم entries أقل في translation lookaside buffer (TLB).</p>
+<p>على x86_64، ومع ذلك، يمكننا استخدام <a rel="external" href="https://en.wikipedia.org/wiki/Page_%28computer_memory%29#Multiple_page_sizes">huge pages</a> بحجم 2 MiB للتعيين، بدلاً من 4 KiB pages الافتراضية. بهذه الطريقة، تعيين 32 GiB من الذاكرة الفيزيائية يحتاج فقط 132 KiB لـ page tables لأن فقط level 3 table واحدة و 32 level 2 tables مطلوبة. huge pages أكثر كفاءة في cache أيضًا لأنها تستخدم entries أقل في translation lookaside buffer (TLB).</p>
 <h3 id="lt-yynt-lmw-qt"><a class="zola-anchor" href="#lt-yynt-lmw-qt" aria-label="Anchor link for: lt-yynt-lmw-qt">🔗</a>التعيينات المؤقتة</h3>
 <p>للأجهزة ذات كميات صغيرة جدًا من الذاكرة الفيزيائية، يمكننا <strong>تعيين page table frames مؤقتًا فقط</strong> عندما نحتاج للوصول إليها. لتمكين إنشاء التعيينات المؤقتة، نحتاج فقط إلى level 1 table واحدة مُعيّنة بشكل identity:</p>
 <p><img src="https://os.phil-opp.com/ar/paging-implementation/temporarily-mapped-page-tables.svg" alt="A virtual and a physical address space with an identity mapped level 1 table, which maps its 0th entry to the level 2 table frame, thereby mapping that frame to the page with address 0" /></p>
@@ -265,7 +265,7 @@
 <p><img src="https://os.phil-opp.com/ar/paging-implementation/table-indices-from-address-recursive-level-4.svg" alt="Bits 0–12 are the offset into the level l table frame and bits 12–21, bits 21–30, bits 30–39, and bits 39–48 are the index of the recursive entry" /></p>
 <p>الآن يمكننا حساب عناوين افتراضية لـ page tables لجميع المستويات الأربعة. يمكننا حتى حساب عنوان يشير بالضبط إلى page table entry محددة بضرب فهرسها بـ 8، حجم page table entry.</p>
 <p>الجدول أدناه يلخص بنية العنوان للوصول إلى الأنواع المختلفة من frames:</p>
-<table><thead><tr><th>Virtual Address for</th><th>Address Structure (<a href="https://en.wikipedia.org/wiki/Octal">octal</a>)</th></tr></thead><tbody>
+<table><thead><tr><th>Virtual Address for</th><th>Address Structure (<a rel="external" href="https://en.wikipedia.org/wiki/Octal">octal</a>)</th></tr></thead><tbody>
 <tr><td>Page</td><td><code>0o_SSSSSS_AAA_BBB_CCC_DDD_EEEE</code></td></tr>
 <tr><td>Level 1 Table Entry</td><td><code>0o_SSSSSS_RRR_AAA_BBB_CCC_DDDD</code></td></tr>
 <tr><td>Level 2 Table Entry</td><td><code>0o_SSSSSS_RRR_RRR_AAA_BBB_CCCC</code></td></tr>
@@ -274,57 +274,55 @@
 </tbody></table>
 <p>حيث <code>AAA</code> هو level 4 index، و <code>BBB</code> level 3 index، و <code>CCC</code> level 2 index، و <code>DDD</code> level 1 index لـ frame المُعيّنة، و <code>EEEE</code> offset إليها. <code>RRR</code> هو فهرس recursive entry. عندما يتحول index (ثلاثة أرقام) إلى offset (أربعة أرقام)، يتم بضربه بـ 8 (حجم page table entry). مع هذا offset، يشير العنوان الناتج مباشرة إلى page table entry المقابلة.</p>
 <p><code>SSSSSS</code> هي sign extension bits، مما يعني أنها جميعها نسخ من bit 47. هذا متطلب خاص للعناوين الصالحة على معمارية x86_64. شرحناه في <a href="https://os.phil-opp.com/paging-introduction/#paging-on-x86-64">المقال السابق</a>.</p>
-<p>نستخدم أرقام <a href="https://en.wikipedia.org/wiki/Octal">octal</a> لتمثيل العناوين لأن كل حرف octal يمثل ثلاثة bits، الذي يسمح لنا بفصل 9-bit indexes للمستويات المختلفة من page table بوضوح. هذا غير ممكن مع نظام hexadecimal، حيث كل حرف يمثل أربعة bits.</p>
+<p>نستخدم أرقام <a rel="external" href="https://en.wikipedia.org/wiki/Octal">octal</a> لتمثيل العناوين لأن كل حرف octal يمثل ثلاثة bits، الذي يسمح لنا بفصل 9-bit indexes للمستويات المختلفة من page table بوضوح. هذا غير ممكن مع نظام hexadecimal، حيث كل حرف يمثل أربعة bits.</p>
 <h5 id="fy-kwd-rust"><a class="zola-anchor" href="#fy-kwd-rust" aria-label="Anchor link for: fy-kwd-rust">🔗</a>في كود Rust</h5>
 <p>لبناء مثل هذه العناوين في كود Rust، يمكنك استخدام عمليات bitwise:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// the virtual address whose corresponding page tables you want to access
-</span><span style="color:#569cd6;">let</span><span> addr: </span><span style="color:#569cd6;">usize </span><span>= […]
-</span><span>
-</span><span style="color:#569cd6;">let</span><span> r = </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// recursive index
-</span><span style="color:#569cd6;">let</span><span> sign = </span><span style="color:#b5cea8;">0o177777 </span><span>&lt;&lt; </span><span style="color:#b5cea8;">48</span><span>; </span><span style="color:#608b4e;">// sign extension
-</span><span>
-</span><span style="color:#608b4e;">// retrieve the page table indices of the address that we want to translate
-</span><span style="color:#569cd6;">let</span><span> l4_idx = (addr &gt;&gt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// level 4 index
-</span><span style="color:#569cd6;">let</span><span> l3_idx = (addr &gt;&gt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// level 3 index
-</span><span style="color:#569cd6;">let</span><span> l2_idx = (addr &gt;&gt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// level 2 index
-</span><span style="color:#569cd6;">let</span><span> l1_idx = (addr &gt;&gt; </span><span style="color:#b5cea8;">12</span><span>) </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o777</span><span>; </span><span style="color:#608b4e;">// level 1 index
-</span><span style="color:#569cd6;">let</span><span> page_offset = addr </span><span style="color:#569cd6;">&amp; </span><span style="color:#b5cea8;">0o7777</span><span>;
-</span><span>
-</span><span style="color:#608b4e;">// calculate the table addresses
-</span><span style="color:#569cd6;">let</span><span> level_4_table_addr =
-</span><span>    sign </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>);
-</span><span style="color:#569cd6;">let</span><span> level_3_table_addr =
-</span><span>    sign </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">| </span><span>(l4_idx &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>);
-</span><span style="color:#569cd6;">let</span><span> level_2_table_addr =
-</span><span>    sign </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">| </span><span>(l4_idx &lt;&lt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">| </span><span>(l3_idx &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>);
-</span><span style="color:#569cd6;">let</span><span> level_1_table_addr =
-</span><span>    sign </span><span style="color:#569cd6;">| </span><span>(r &lt;&lt; </span><span style="color:#b5cea8;">39</span><span>) </span><span style="color:#569cd6;">| </span><span>(l4_idx &lt;&lt; </span><span style="color:#b5cea8;">30</span><span>) </span><span style="color:#569cd6;">| </span><span>(l3_idx &lt;&lt; </span><span style="color:#b5cea8;">21</span><span>) </span><span style="color:#569cd6;">| </span><span>(l2_idx &lt;&lt; </span><span style="color:#b5cea8;">12</span><span>);
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// the virtual address whose corresponding page tables you want to access</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> addr</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span> = […]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> r</span><span> =</span><span style="color: #B5CEA8;"> 0o777</span><span>;</span><span style="color: #6A9955;"> // recursive index</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> sign</span><span> =</span><span style="color: #B5CEA8;"> 0o177777</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 48</span><span>;</span><span style="color: #6A9955;"> // sign extension</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// retrieve the page table indices of the address that we want to translate</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> l4_idx</span><span> = (</span><span style="color: #9CDCFE;">addr</span><span> &gt;&gt;</span><span style="color: #B5CEA8;"> 39</span><span>) &amp;</span><span style="color: #B5CEA8;"> 0o777</span><span>;</span><span style="color: #6A9955;"> // level 4 index</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> l3_idx</span><span> = (</span><span style="color: #9CDCFE;">addr</span><span> &gt;&gt;</span><span style="color: #B5CEA8;"> 30</span><span>) &amp;</span><span style="color: #B5CEA8;"> 0o777</span><span>;</span><span style="color: #6A9955;"> // level 3 index</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> l2_idx</span><span> = (</span><span style="color: #9CDCFE;">addr</span><span> &gt;&gt;</span><span style="color: #B5CEA8;"> 21</span><span>) &amp;</span><span style="color: #B5CEA8;"> 0o777</span><span>;</span><span style="color: #6A9955;"> // level 2 index</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> l1_idx</span><span> = (</span><span style="color: #9CDCFE;">addr</span><span> &gt;&gt;</span><span style="color: #B5CEA8;"> 12</span><span>) &amp;</span><span style="color: #B5CEA8;"> 0o777</span><span>;</span><span style="color: #6A9955;"> // level 1 index</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> page_offset</span><span> =</span><span style="color: #9CDCFE;"> addr</span><span> &amp;</span><span style="color: #B5CEA8;"> 0o7777</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// calculate the table addresses</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> level_4_table_addr</span><span> =</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    sign</span><span> | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 39</span><span>) | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 30</span><span>) | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 21</span><span>) | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 12</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> level_3_table_addr</span><span> =</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    sign</span><span> | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 39</span><span>) | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 30</span><span>) | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 21</span><span>) | (</span><span style="color: #9CDCFE;">l4_idx</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 12</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> level_2_table_addr</span><span> =</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    sign</span><span> | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 39</span><span>) | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 30</span><span>) | (</span><span style="color: #9CDCFE;">l4_idx</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 21</span><span>) | (</span><span style="color: #9CDCFE;">l3_idx</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 12</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> level_1_table_addr</span><span> =</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    sign</span><span> | (</span><span style="color: #9CDCFE;">r</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 39</span><span>) | (</span><span style="color: #9CDCFE;">l4_idx</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 30</span><span>) | (</span><span style="color: #9CDCFE;">l3_idx</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 21</span><span>) | (</span><span style="color: #9CDCFE;">l2_idx</span><span> &lt;&lt;</span><span style="color: #B5CEA8;"> 12</span><span>);</span></span></code></pre>
 <p>الكود أعلاه يفترض أن level 4 entry الأخيرة برقم <code>0o777</code> (511) مُعيّنة بشكل recursive. هذا ليس الحالة حاليًا، لذلك لن يعمل الكود بعد. انظر أدناه لكيفية إخبار bootloader لإعداد recursive mapping.</p>
-<p>بدلاً من تنفيذ عمليات bitwise يدويًا، يمكنك استخدام نوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a> من مكتبة <code>x86_64</code>، الذي يوفر تجريدات آمنة لعمليات page table مختلفة. على سبيل المثال، الكود أدناه يُظهر كيفية ترجمة عنوان افتراضي إلى عنوانه الفزيائي المُعيّن:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::{Mapper, Page, PageTable, RecursivePageTable};
-</span><span style="color:#569cd6;">use </span><span>x86_64::{VirtAddr, PhysAddr};
-</span><span>
-</span><span style="color:#608b4e;">/// Creates a RecursivePageTable instance from the level 4 address.
-</span><span style="color:#569cd6;">let</span><span> level_4_table_addr = […];
-</span><span style="color:#569cd6;">let</span><span> level_4_table_ptr = level_4_table_addr </span><span style="color:#569cd6;">as *mut</span><span> PageTable;
-</span><span style="color:#569cd6;">let</span><span> recursive_page_table = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>    </span><span style="color:#569cd6;">let</span><span> level_4_table = </span><span style="color:#569cd6;">&amp;mut </span><span>*level_4_table_ptr;
-</span><span>    RecursivePageTable::new(level_4_table).unwrap();
-</span><span>}
-</span><span>
-</span><span>
-</span><span style="color:#608b4e;">/// Retrieve the physical address for the given virtual address
-</span><span style="color:#569cd6;">let</span><span> addr: </span><span style="color:#569cd6;">u64 </span><span>= […]
-</span><span style="color:#569cd6;">let</span><span> addr = VirtAddr::new(addr);
-</span><span style="color:#569cd6;">let</span><span> page: Page = Page::containing_address(addr);
-</span><span>
-</span><span style="color:#608b4e;">// perform the translation
-</span><span style="color:#569cd6;">let</span><span> frame = recursive_page_table.translate_page(page);
-</span><span>frame.map(|frame| frame.start_address() + </span><span style="color:#569cd6;">u64</span><span>::from(addr.page_offset()))
-</span></code></pre>
+<p>بدلاً من تنفيذ عمليات bitwise يدويًا، يمكنك استخدام نوع <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a> من مكتبة <code>x86_64</code>، الذي يوفر تجريدات آمنة لعمليات page table مختلفة. على سبيل المثال، الكود أدناه يُظهر كيفية ترجمة عنوان افتراضي إلى عنوانه الفزيائي المُعيّن:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::{</span><span style="color: #4EC9B0;">Mapper</span><span>,</span><span style="color: #4EC9B0;"> Page</span><span>,</span><span style="color: #4EC9B0;"> PageTable</span><span>,</span><span style="color: #4EC9B0;"> RecursivePageTable</span><span>};</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::{</span><span style="color: #4EC9B0;">VirtAddr</span><span>,</span><span style="color: #4EC9B0;"> PhysAddr</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Creates a RecursivePageTable instance from the level 4 address.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> level_4_table_addr</span><span> = […];</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> level_4_table_ptr</span><span> =</span><span style="color: #9CDCFE;"> level_4_table_addr</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> PageTable</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> recursive_page_table</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> level_4_table</span><span> = &amp;</span><span style="color: #569CD6;">mut</span><span> *</span><span style="color: #9CDCFE;">level_4_table_ptr</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    RecursivePageTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">level_4_table</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Retrieve the physical address for the given virtual address</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> addr</span><span>:</span><span style="color: #4EC9B0;"> u64</span><span> = […]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> addr</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> page</span><span>:</span><span style="color: #4EC9B0;"> Page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// perform the translation</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> recursive_page_table</span><span>.</span><span style="color: #DCDCAA;">translate_page</span><span>(</span><span style="color: #9CDCFE;">page</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">frame</span><span>.</span><span style="color: #DCDCAA;">map</span><span>(|</span><span style="color: #9CDCFE;">frame</span><span>|</span><span style="color: #9CDCFE;"> frame</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>() +</span><span style="color: #4EC9B0;"> u64</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>.</span><span style="color: #DCDCAA;">page_offset</span><span>()))</span></span></code></pre>
 <p>مرة أخرى، recursive mapping صالح مطلوب لهذا الكود. مع مثل هذا التعيين، يمكن حساب <code>level_4_table_addr</code> المفقود كما في مثال الكود الأول.</p>
 </details>
 <hr />
@@ -332,260 +330,249 @@
 <p>ومع ذلك، لها أيضًا بعض العيوب:</p>
 <ul>
 <li>تحتل مساحة كبيرة من الذاكرة الافتراضية (512 GiB). هذا ليس مشكلة كبيرة في مساحة العنونة 48-bit الكبيرة، لكنه قد يؤدي إلى سلوك cache غير مثالي.</li>
-<li>تسمح فقط بالوصول السهل إلى مساحة العنونة النشطة حاليًا. لا يزال الوصول إلى مساحات عنونة أخرى ممكنًا بتغيير recursive entry، لكن temporary mapping مطلوب للعودة. شرحنا كيفية فعل ذلك في مقال <a href="https://os.phil-opp.com/remap-the-kernel/#overview"><em>Remap The Kernel</em></a> (القديم).</li>
+<li>تسمح فقط بالوصول السهل إلى مساحة العنونة النشطة حاليًا. لا يزال الوصول إلى مساحات عنونة أخرى ممكنًا بتغيير recursive entry، لكن temporary mapping مطلوب للعودة. شرحنا كيفية فعل ذلك في مقال <a rel="external" href="https://os.phil-opp.com/remap-the-kernel/#overview"><em>Remap The Kernel</em></a> (القديم).</li>
 <li>تعتمد بشكل كبير على page table format لـ x86 وقد لا تعمل على معماريات أخرى.</li>
 </ul>
 <h2 id="d-m-bootloader"><a class="zola-anchor" href="#d-m-bootloader" aria-label="Anchor link for: d-m-bootloader">🔗</a>دعم bootloader</h2>
 <p>جميع هذه النهج تحتاج تعديلات page table لإعدادها. على سبيل المثال، تعيينات الذاكرة الفيزيائية تحتاج إلى الإنشاء أو entry من level 4 table تحتاج إلى التعيين بشكل recursive. المشكلة هي أننا لا نستطيع إنشاء هذه التعيينات المطلوبة بدون طريقة موجودة للوصول إلى page tables.</p>
-<p>هذا يعني أننا نحتاج إلى مساعدة bootloader، الذي يُنشئ page tables التي تعمل عليها نواتنا. لدى bootloader الوصول إلى page tables، لذلك يمكنه إنشاء أي تعيينات نحتاجها. في تنفيذه الحالي، مكتبة <code>bootloader</code> تدعم اثنين من النهج أعلاه، مُتحكم بها عبر <a href="https://doc.rust-lang.org/cargo/reference/features.html#the-features-section">cargo features</a>:</p>
+<p>هذا يعني أننا نحتاج إلى مساعدة bootloader، الذي يُنشئ page tables التي تعمل عليها نواتنا. لدى bootloader الوصول إلى page tables، لذلك يمكنه إنشاء أي تعيينات نحتاجها. في تنفيذه الحالي، مكتبة <code>bootloader</code> تدعم اثنين من النهج أعلاه، مُتحكم بها عبر <a rel="external" href="https://doc.rust-lang.org/cargo/reference/features.html#the-features-section">cargo features</a>:</p>
 <ul>
 <li>ميزة <code>map_physical_memory</code> تُعيّن الذاكرة الفيزيائية بالكامل في مكان ما في مساحة العنونة الافتراضية. بذلك، لدى النواة وصول إلى جميع الذاكرة الفيزيائية ويمكنها اتباع نهج <a href="https://os.phil-opp.com/ar/paging-implementation/#map-the-complete-physical-memory"><em>Map the Complete Physical Memory</em></a>.</li>
 <li>مع ميزة <code>recursive_page_table</code>، يُعيّن bootloader entry من level 4 page table بشكل recursive. هذا يسمح للنواة بالوصول إلى page tables كما هو موضح في قسم <a href="https://os.phil-opp.com/ar/paging-implementation/#recursive-page-tables"><em>Recursive Page Tables</em></a>.</li>
 </ul>
 <p>نختار النهج الأول لنواتنا لأنه بسيط ومستقل عن المنصة وأقوى (يسمح أيضًا بالوصول إلى non-page-table-frames). لتفعيل دعم bootloader المطلوب، نضيف ميزة <code>map_physical_memory</code> إلى dependency <code>bootloader</code>:</p>
-<pre data-lang="toml" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-toml "><code class="language-toml" data-lang="toml"><span>[</span><span style="color:#808080;">dependencies</span><span>]
-</span><span style="color:#569cd6;">bootloader </span><span>= { </span><span style="color:#569cd6;">version </span><span>= </span><span style="color:#d69d85;">&quot;0.9&quot;</span><span>, </span><span style="color:#569cd6;">features </span><span>= [</span><span style="color:#d69d85;">&quot;map_physical_memory&quot;</span><span>]}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span>[dependencies]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">bootloader</span><span> = {</span><span style="color: #9CDCFE;"> version</span><span> =</span><span style="color: #CE9178;"> &quot;0.9&quot;</span><span>,</span><span style="color: #9CDCFE;"> features</span><span> = [</span><span style="color: #CE9178;">&quot;map_physical_memory&quot;</span><span>]}</span></span></code></pre>
 <p>مع تفعيل هذه الميزة، يُعيّن bootloader الذاكرة الفيزيائية بالكامل إلى نطاق عنوان افتراضي غير مستخدم. لتوصيل نطاق العنوان الافتراضي لنواتنا، يمرر bootloader بنية <em>boot information</em>.</p>
 <h3 id="boot-information"><a class="zola-anchor" href="#boot-information" aria-label="Anchor link for: boot-information">🔗</a>معلومات الإقلاع</h3>
-<p>مكتبة <code>bootloader</code> تحدد struct <a href="https://docs.rs/bootloader/0.9/bootloader/bootinfo/struct.BootInfo.html"><code>BootInfo</code></a> يحتوي على جميع المعلومات التي يمررها لنواتنا. لا يزال struct في مرحلة مبكرة، لذلك توقع بعض التكسرات عند التحديث إلى إصدارات bootloader غير متوافقة semver. مع تفعيل ميزة <code>map_physical_memory</code>، حاليًا لها حقلان <code>memory_map</code> و <code>physical_memory_offset</code>:</p>
+<p>مكتبة <code>bootloader</code> تحدد struct <a rel="external" href="https://docs.rs/bootloader/0.9/bootloader/bootinfo/struct.BootInfo.html"><code>BootInfo</code></a> يحتوي على جميع المعلومات التي يمررها لنواتنا. لا يزال struct في مرحلة مبكرة، لذلك توقع بعض التكسرات عند التحديث إلى إصدارات bootloader غير متوافقة semver. مع تفعيل ميزة <code>map_physical_memory</code>، حاليًا لها حقلان <code>memory_map</code> و <code>physical_memory_offset</code>:</p>
 <ul>
 <li>حقل <code>memory_map</code> يحتوي على نظرة عامة على الذاكرة الفيزيائية المتاحة. يخبر نواتنا كم ذاكرة فيزيائية متاحة في النظام وأي مناطق ذاكرة محجوزة لأجهزة مثل VGA hardware. يمكن الاستعلام عن memory map من BIOS أو UEFI firmware، لكن فقط في وقت مبكر جدًا من عملية الإقلاع. لهذا السبب، يجب توفيره من قبل bootloader لأنه لا توجد طريقة للنواة لاستعادته لاحقًا. سنحتاج memory map لاحقًا في هذا المقال.</li>
 <li><code>physical_memory_offset</code> يخبرنا بالعنوان الافتراضي البداية لـ physical memory mapping. بإضافة هذا offset إلى عنوان فيزيائي، نحصل على العنوان الافتراضي المقابل. هذا يسمح لنا بالوصول إلى ذاكرة فيزيائية عشوائية من نواتنا.</li>
 <li>يمكن تخصيص physical memory offset بإضافة جدول <code>[package.metadata.bootloader]</code> في Cargo.toml وتعيين الحقل <code>physical-memory-offset = "0x0000f00000000000"</code> (أو أي قيمة أخرى). ومع ذلك، لاحظ أن bootloader قد يُ panic إذا وصل إلى قيم عناوين فيزيائية تبدأ بالتداخل مع المساحة خارج offset، أي مناطق كان قد عيّنها سابقًا إلى عناوين فيزيائية مبكرة أخرى. لذلك بشكل عام، كلما كانت القيمة أعلى (&gt; 1 TiB)، كان أفضل.</li>
 </ul>
 <p>يمرر bootloader struct <code>BootInfo</code> لنواتنا في شكل وسيطة <code>&amp;'static BootInfo</code> لدالة <code>_start</code>. ليس لدينا هذه الوسيطة معلنة في دالتنا بعد، لذلك لنضيفها:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>bootloader::BootInfo;
-</span><span>
-</span><span>#[unsafe(no_mangle)]
-</span><span style="color:#569cd6;">pub extern </span><span style="color:#d69d85;">&quot;C&quot; </span><span style="color:#569cd6;">fn </span><span>_start(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{ </span><span style="color:#608b4e;">// new argument
-</span><span>    […]
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bootloader</span><span>::</span><span style="color: #4EC9B0;">BootInfo</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span><span style="color: #6A9955;"> // new argument</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>لم تكن مشكلة ترك هذه الوسيطة قبل لأن x86_64 calling convention تمرر الوسيطة الأولى في register CPU. لذلك، تُتجاهل الوسيطة ببساطة عندما لا تُعلّن. ومع ذلك، ستكون مشكلة إذا استخدمنا عن طريق الخطأ نوع وسيطة خاطئ، لأن المترجم لا يعرف type signature الصحيح لدالة entry point.</p>
 <h3 id="lmkrw-entry-point"><a class="zola-anchor" href="#lmkrw-entry-point" aria-label="Anchor link for: lmkrw-entry-point">🔗</a>الماكرو <code>entry_point</code></h3>
 <p>بما أن دالة <code>_start</code> تُستدعى خارجيًا من bootloader، لا يحدث فحص لـ function signature. هذا يعني أننا يمكنها أن تأخذ وسيطات عشوائية دون أي أخطاء تجميع، لكنها ستفشل أو تسبب undefined behavior وقت التشغيل.</p>
-<p>للتأكد من أن دالة entry point لها دائمًا signature الصحيح الذي يتوقعه bootloader، توفر مكتبة <code>bootloader</code> macro <a href="https://docs.rs/bootloader/0.6.4/bootloader/macro.entry_point.html"><code>entry_point</code></a> يوفر طريقة type-checked لتحديد دالة Rust كـ entry point. لنعد كتابة دالة entry point لاستخدام هذا macro:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>bootloader::{BootInfo, entry_point};
-</span><span>
-</span><span>entry_point!(kernel_main);
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    […]
-</span><span>}
-</span></code></pre>
+<p>للتأكد من أن دالة entry point لها دائمًا signature الصحيح الذي يتوقعه bootloader، توفر مكتبة <code>bootloader</code> macro <a rel="external" href="https://docs.rs/bootloader/0.6.4/bootloader/macro.entry_point.html"><code>entry_point</code></a> يوفر طريقة type-checked لتحديد دالة Rust كـ entry point. لنعد كتابة دالة entry point لاستخدام هذا macro:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bootloader</span><span>::{</span><span style="color: #4EC9B0;">BootInfo</span><span>, entry_point};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">entry_point!</span><span>(</span><span style="color: #9CDCFE;">kernel_main</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>لم نعد بحاجة لاستخدام <code>extern "C"</code> أو <code>no_mangle</code> لـ entry point، لأن macro يحدد <code>_start</code> entry point منخفض المستوى الحقيقي لنا. دالة <code>kernel_main</code> الآن دالة Rust عادية completely، لذلك يمكننا اختيار اسم عشوائي لها. الشيء المهم أنها type-checked حتى يحدث خطأ تجميع عندما نستخدم signature خاطئ، على سبيل المثال بإضافة وسيطة أو تغيير نوع الوسيطة.</p>
 <p>لننفّذ نفس التغيير في <code>lib.rs</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span>#[cfg(test)]
-</span><span style="color:#569cd6;">use </span><span>bootloader::{entry_point, BootInfo};
-</span><span>
-</span><span>#[cfg(test)]
-</span><span>entry_point!(test_kernel_main);
-</span><span>
-</span><span style="color:#608b4e;">/// Entry point for `cargo test`
-</span><span>#[cfg(test)]
-</span><span style="color:#569cd6;">fn </span><span>test_kernel_main(_boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// like before
-</span><span>    init();
-</span><span>    test_main();
-</span><span>    hlt_loop();
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bootloader</span><span>::{entry_point,</span><span style="color: #4EC9B0;"> BootInfo</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">entry_point!</span><span>(</span><span style="color: #9CDCFE;">test_kernel_main</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Entry point for `cargo test`</span></span>
+<span class="giallo-l"><span>#[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_kernel_main</span><span>(</span><span style="color: #9CDCFE;">_boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // like before</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    init</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>بما أن entry point تُستخدم فقط في وضع الاختبار، نضيف السمة <code>#[cfg(test)]</code> لجميع العناصر. نعطي entry point الاختبار الاسم المميز <code>test_kernel_main</code> لتجنب الالتباس مع <code>kernel_main</code> في <code>main.rs</code>. لا نستخدم parameter <code>BootInfo</code> الآن، لذلك نضيف بادئة <code>_</code> إلى اسم parameter لكتم تحذير المتغير غير المستخدم.</p>
 <h2 id="ltnfydh"><a class="zola-anchor" href="#ltnfydh" aria-label="Anchor link for: ltnfydh">🔗</a>التنفيذ</h2>
 <p>الآن بعد أن لدينا وصول إلى الذاكرة الفيزيائية، يمكننا أخيرًا البدء بتنفيذ كود page table. أولاً، سنلقي نظرة على page tables النشطة حاليًا التي تعمل عليها نواتنا. في الخطوة الثانية، سننفذ دالة ترجمة تُعيد العنوان الفزيائي الذي يشير إليه العنوان الافتراضي. كخطوة أخيرة، سنحاول تعديل page tables لإنشاء تعيين جديد.</p>
 <p>قبل أن نبدأ، نُنشئ module <code>memory</code> جديدًا لكودنا:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/lib.rs
-</span><span>
-</span><span style="color:#569cd6;">pub mod </span><span>memory;
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub mod</span><span> memory;</span></span></code></pre>
 <p>لـ module، نُنشئ ملف <code>src/memory.rs</code> فارغ.</p>
 <h3 id="accessing-the-page-tables"><a class="zola-anchor" href="#accessing-the-page-tables" aria-label="Anchor link for: accessing-the-page-tables">🔗</a>Accessing the Page Tables</h3>
 <p>في <a href="https://os.phil-opp.com/paging-introduction/#accessing-the-page-tables">نهاية المقال السابق</a>، حاولنا إلقاء نظرة على page tables التي تعمل عليها نواتنا، لكننا فشلنا لأننا لم نتمكن من الوصول إلى physical frame التي يشير إليها register <code>CR3</code>. نحن الآن قادرون على المتابعة من هناك بإنشاء دالة <code>active_level_4_table</code> تُعيد مرجعًا إلى level 4 page table النشطة:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::{
-</span><span>    structures::paging::PageTable,
-</span><span>    VirtAddr,
-</span><span>};
-</span><span>
-</span><span style="color:#608b4e;">/// Returns a mutable reference to the active level 4 table.
-</span><span style="color:#608b4e;">///
-</span><span style="color:#608b4e;">/// This function is unsafe because the caller must guarantee that the
-</span><span style="color:#608b4e;">/// complete physical memory is mapped to virtual memory at the passed
-</span><span style="color:#608b4e;">/// `physical_memory_offset`. Also, this function must be only called once
-</span><span style="color:#608b4e;">/// to avoid aliasing `&amp;mut` references (which is undefined behavior).
-</span><span style="color:#569cd6;">pub unsafe fn </span><span>active_level_4_table(physical_memory_offset: VirtAddr)
-</span><span>    -&gt; </span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> PageTable
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr3;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let </span><span>(level_4_table_frame, </span><span style="color:#569cd6;">_</span><span>) = Cr3::read();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys = level_4_table_frame.start_address();
-</span><span>    </span><span style="color:#569cd6;">let</span><span> virt = physical_memory_offset + phys.as_u64();
-</span><span>    </span><span style="color:#569cd6;">let</span><span> page_table_ptr: </span><span style="color:#569cd6;">*mut</span><span> PageTable = virt.as_mut_ptr();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;mut </span><span>*page_table_ptr }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::{</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">PageTable</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    VirtAddr</span><span>,</span></span>
+<span class="giallo-l"><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Returns a mutable reference to the active level 4 table.</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">///</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// This function is unsafe because the caller must guarantee that the</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// complete physical memory is mapped to virtual memory at the passed</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// `physical_memory_offset`. Also, this function must be only called once</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// to avoid aliasing `&amp;mut` references (which is undefined behavior).</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub unsafe fn</span><span style="color: #DCDCAA;"> active_level_4_table</span><span>(</span><span style="color: #9CDCFE;">physical_memory_offset</span><span>:</span><span style="color: #4EC9B0;"> VirtAddr</span><span>)</span></span>
+<span class="giallo-l"><span>    -&gt; &amp;&#39;</span><span style="color: #4EC9B0;">static</span><span style="color: #569CD6;"> mut</span><span style="color: #4EC9B0;"> PageTable</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">registers</span><span>::</span><span style="color: #4EC9B0;">control</span><span>::</span><span style="color: #4EC9B0;">Cr3</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span> (</span><span style="color: #9CDCFE;">level_4_table_frame</span><span>,</span><span style="color: #9CDCFE;"> _</span><span>) =</span><span style="color: #4EC9B0;"> Cr3</span><span>::</span><span style="color: #DCDCAA;">read</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys</span><span> =</span><span style="color: #9CDCFE;"> level_4_table_frame</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> virt</span><span> =</span><span style="color: #9CDCFE;"> physical_memory_offset</span><span> +</span><span style="color: #9CDCFE;"> phys</span><span>.</span><span style="color: #DCDCAA;">as_u64</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page_table_ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> PageTable</span><span> =</span><span style="color: #9CDCFE;"> virt</span><span>.</span><span style="color: #DCDCAA;">as_mut_ptr</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> { &amp;</span><span style="color: #569CD6;">mut</span><span> *</span><span style="color: #9CDCFE;">page_table_ptr</span><span> }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>أولاً، نقرأ physical frame لـ level 4 table النشطة من register <code>CR3</code>. ثم نأخذ عنوانها الفزيائي البداية، نحوله إلى <code>u64</code>، ونضيفه إلى <code>physical_memory_offset</code> للحصول على العنوان الافتراضي حيث page table frame مُعيّنة. أخيرًا، نحول العنوان الافتراضي إلى <code>*mut PageTable</code> raw pointer عبر دالة <code>as_mut_ptr</code> ثم نُنشئ <code>&amp;mut PageTable</code> reference بشكل unsafe. نُنشئ <code>&amp;mut</code> reference بدلاً من <code>&amp;</code> reference لأننا سنعدّل page tables لاحقًا في هذا المقال.</p>
 <p>يمكننا الآن استخدام هذه الدالة لطباعة entries لـ level 4 table:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::active_level_4_table;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::VirtAddr;
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;Hello World</span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">&quot;</span><span>, </span><span style="color:#d69d85;">&quot;!&quot;</span><span>);
-</span><span>    blog_os::init();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#569cd6;">let</span><span> l4_table = </span><span style="color:#569cd6;">unsafe </span><span>{ active_level_4_table(phys_mem_offset) };
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, entry) </span><span style="color:#569cd6;">in</span><span> l4_table.iter().enumerate() {
-</span><span>        </span><span style="color:#569cd6;">if !</span><span>entry.is_unused() {
-</span><span>            println!(</span><span style="color:#d69d85;">&quot;L4 Entry </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, i, entry);
-</span><span>        }
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// as before
-</span><span>    #[cfg(test)]
-</span><span>    test_main();
-</span><span>
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;It did not crash!&quot;</span><span>);
-</span><span>    blog_os::hlt_loop();
-</span><span>}
-</span></code></pre>
-<p>أولاً، نحول <code>physical_memory_offset</code> من struct <code>BootInfo</code> إلى <a href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a> ونمررها إلى دالة <code>active_level_4_table</code>. ثم نستخدم دالة <code>iter</code> للمرور على page table entries و combinator <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a> لإضافة فهرس <code>i</code> إضافيًا لكل عنصر. نطبع فقط entries غير الفارغة لأن جميع 512 entries لن تتسع على الشاشة.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::active_level_4_table;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">VirtAddr</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Hello World{}&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">init</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> l4_table</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #DCDCAA;"> active_level_4_table</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span> (</span><span style="color: #9CDCFE;">i</span><span>,</span><span style="color: #9CDCFE;"> entry</span><span>)</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> l4_table</span><span>.</span><span style="color: #DCDCAA;">iter</span><span>().</span><span style="color: #DCDCAA;">enumerate</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">        if</span><span> !</span><span style="color: #9CDCFE;">entry</span><span>.</span><span style="color: #DCDCAA;">is_unused</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">            println!</span><span>(</span><span style="color: #CE9178;">&quot;L4 Entry {}: {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> i</span><span>,</span><span style="color: #9CDCFE;"> entry</span><span>);</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // as before</span></span>
+<span class="giallo-l"><span>    #[cfg(test)]</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;It did not crash!&quot;</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    blog_os</span><span>::</span><span style="color: #DCDCAA;">hlt_loop</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>أولاً، نحول <code>physical_memory_offset</code> من struct <code>BootInfo</code> إلى <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a> ونمررها إلى دالة <code>active_level_4_table</code>. ثم نستخدم دالة <code>iter</code> للمرور على page table entries و combinator <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.enumerate"><code>enumerate</code></a> لإضافة فهرس <code>i</code> إضافيًا لكل عنصر. نطبع فقط entries غير الفارغة لأن جميع 512 entries لن تتسع على الشاشة.</p>
 <p>عندما نشغّله، نرى الإخراج التالي:</p>
 <p><img src="https://os.phil-opp.com/ar/paging-implementation/qemu-print-level-4-table.png" alt="QEMU printing entry 0 (0x2000, PRESENT, WRITABLE, ACCESSED), entry 1 (0x894000, PRESENT, WRITABLE, ACCESSED, DIRTY), entry 31 (0x88e000, PRESENT, WRITABLE, ACCESSED, DIRTY), entry 175 (0x891000, PRESENT, WRITABLE, ACCESSED, DIRTY), and entry 504 (0x897000, PRESENT, WRITABLE, ACCESSED, DIRTY)" /></p>
 <p>نرى أن هناك عدة entries غير فارغة، جميعها تشير إلى level 3 tables مختلفة. هناك الكثير من المناطق لأن kernel code و kernel stack و physical memory mapping و boot information جميعها تستخدم مناطق ذاكرة منفصلة.</p>
 <p>للمتابعة عبر page tables وإلقاء نظرة على level 3 table، يمكننا أخذ frame المُعيّنة لـ entry وتحويلها إلى عنوان افتراضي مرة أخرى:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in the `for` loop in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::PageTable;
-</span><span>
-</span><span style="color:#569cd6;">if !</span><span>entry.is_unused() {
-</span><span>    println!(</span><span style="color:#d69d85;">&quot;L4 Entry </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, i, entry);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// get the physical address from the entry and convert it
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys = entry.frame().unwrap().start_address();
-</span><span>    </span><span style="color:#569cd6;">let</span><span> virt = phys.as_u64() + boot_info.physical_memory_offset;
-</span><span>    </span><span style="color:#569cd6;">let</span><span> ptr = VirtAddr::new(virt).as_mut_ptr();
-</span><span>    </span><span style="color:#569cd6;">let</span><span> l3_table: </span><span style="color:#569cd6;">&amp;</span><span>PageTable = </span><span style="color:#569cd6;">unsafe </span><span>{ </span><span style="color:#569cd6;">&amp;</span><span>*ptr };
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// print non-empty entries of the level 3 table
-</span><span>    </span><span style="color:#569cd6;">for </span><span>(i, entry) </span><span style="color:#569cd6;">in</span><span> l3_table.iter().enumerate() {
-</span><span>        </span><span style="color:#569cd6;">if !</span><span>entry.is_unused() {
-</span><span>            println!(</span><span style="color:#d69d85;">&quot;  L3 Entry </span><span style="color:#b4cea8;">{}</span><span style="color:#d69d85;">: </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, i, entry);
-</span><span>        }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in the `for` loop in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">PageTable</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">if</span><span> !</span><span style="color: #9CDCFE;">entry</span><span>.</span><span style="color: #DCDCAA;">is_unused</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;L4 Entry {}: {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> i</span><span>,</span><span style="color: #9CDCFE;"> entry</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // get the physical address from the entry and convert it</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys</span><span> =</span><span style="color: #9CDCFE;"> entry</span><span>.</span><span style="color: #DCDCAA;">frame</span><span>().</span><span style="color: #DCDCAA;">unwrap</span><span>().</span><span style="color: #DCDCAA;">start_address</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> virt</span><span> =</span><span style="color: #9CDCFE;"> phys</span><span>.</span><span style="color: #DCDCAA;">as_u64</span><span>() +</span><span style="color: #9CDCFE;"> boot_info</span><span>.physical_memory_offset;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> ptr</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">virt</span><span>).</span><span style="color: #DCDCAA;">as_mut_ptr</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> l3_table</span><span>: &amp;</span><span style="color: #4EC9B0;">PageTable</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> { &amp;*</span><span style="color: #9CDCFE;">ptr</span><span> };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // print non-empty entries of the level 3 table</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span> (</span><span style="color: #9CDCFE;">i</span><span>,</span><span style="color: #9CDCFE;"> entry</span><span>)</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> l3_table</span><span>.</span><span style="color: #DCDCAA;">iter</span><span>().</span><span style="color: #DCDCAA;">enumerate</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">        if</span><span> !</span><span style="color: #9CDCFE;">entry</span><span>.</span><span style="color: #DCDCAA;">is_unused</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">            println!</span><span>(</span><span style="color: #CE9178;">&quot;  L3 Entry {}: {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> i</span><span>,</span><span style="color: #9CDCFE;"> entry</span><span>);</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>للنظر في level 2 و level 1 tables، نكرر تلك العملية لـ level 3 و level 2 entries. كما يمكنك التخيل، هذا يصبح verbose جدًا بسرعة، لذلك لا نعرض الكود الكامل هنا.</p>
 <p>المرور عبر page tables يدويًا مثير لأنه يساعد في فهم كيف تنفذ وحدة المعالجة المركزية الترجمة. ومع ذلك، معظم الوقت، نحن مهتمون فقط بالعنوان الفزيائي المُعيّن لعنوان افتراضي معين، لذلك لنُنشئ دالة لذلك.</p>
 <h3 id="translating-addresses"><a class="zola-anchor" href="#translating-addresses" aria-label="Anchor link for: translating-addresses">🔗</a>Translating Addresses</h3>
 <p>لترجمة عنوان افتراضي إلى فيزيائي، نحتاج للمرور عبر four-level page table حتى نصل إلى frame المُعيّنة. لنُنشئ دالة تنفذ هذه الترجمة:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::PhysAddr;
-</span><span>
-</span><span style="color:#608b4e;">/// Translates the given virtual address to the mapped physical address, or
-</span><span style="color:#608b4e;">/// `None` if the address is not mapped.
-</span><span style="color:#608b4e;">///
-</span><span style="color:#608b4e;">/// This function is unsafe because the caller must guarantee that the
-</span><span style="color:#608b4e;">/// complete physical memory is mapped to virtual memory at the passed
-</span><span style="color:#608b4e;">/// `physical_memory_offset`.
-</span><span style="color:#569cd6;">pub unsafe fn </span><span>translate_addr(addr: VirtAddr, physical_memory_offset: VirtAddr)
-</span><span>    -&gt; Option&lt;PhysAddr&gt;
-</span><span>{
-</span><span>    translate_addr_inner(addr, physical_memory_offset)
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">PhysAddr</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Translates the given virtual address to the mapped physical address, or</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// `None` if the address is not mapped.</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">///</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// This function is unsafe because the caller must guarantee that the</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// complete physical memory is mapped to virtual memory at the passed</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// `physical_memory_offset`.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub unsafe fn</span><span style="color: #DCDCAA;"> translate_addr</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>:</span><span style="color: #4EC9B0;"> VirtAddr</span><span>,</span><span style="color: #9CDCFE;"> physical_memory_offset</span><span>:</span><span style="color: #4EC9B0;"> VirtAddr</span><span>)</span></span>
+<span class="giallo-l"><span>    -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">PhysAddr</span><span>&gt;</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">    translate_addr_inner</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>,</span><span style="color: #9CDCFE;"> physical_memory_offset</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>نحول الدالة إلى دالة <code>translate_addr_inner</code> آمنة لتقييد نطاق <code>unsafe</code>. كما لوحظ أعلاه، يتعامل Rust مع body الكامل لـ <code>unsafe fn</code> ككتلة unsafe كبيرة. بالاستدعاء إلى دالة خاصة آمنة، نجعل كل عملية <code>unsafe</code> صريحة مرة أخرى.</p>
 <p>الدالة الخاصة الداخلية تحتوي على التنفيذ الحقيقي:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#608b4e;">/// Private function that is called by `translate_addr`.
-</span><span style="color:#608b4e;">///
-</span><span style="color:#608b4e;">/// This function is safe to limit the scope of `unsafe` because Rust treats
-</span><span style="color:#608b4e;">/// the whole body of unsafe functions as an unsafe block. This function must
-</span><span style="color:#608b4e;">/// only be reachable through `unsafe fn` from outside of this module.
-</span><span style="color:#569cd6;">fn </span><span>translate_addr_inner(addr: VirtAddr, physical_memory_offset: VirtAddr)
-</span><span>    -&gt; Option&lt;PhysAddr&gt;
-</span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::page_table::FrameError;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::registers::control::Cr3;
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// read the active level 4 frame from the CR3 register
-</span><span>    </span><span style="color:#569cd6;">let </span><span>(level_4_table_frame, </span><span style="color:#569cd6;">_</span><span>) = Cr3::read();
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> table_indexes = [
-</span><span>        addr.p4_index(), addr.p3_index(), addr.p2_index(), addr.p1_index()
-</span><span>    ];
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame = level_4_table_frame;
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// traverse the multi-level page table
-</span><span>    </span><span style="color:#569cd6;">for &amp;</span><span>index </span><span style="color:#569cd6;">in &amp;</span><span>table_indexes {
-</span><span>        </span><span style="color:#608b4e;">// convert the frame into a page table reference
-</span><span>        </span><span style="color:#569cd6;">let</span><span> virt = physical_memory_offset + frame.start_address().as_u64();
-</span><span>        </span><span style="color:#569cd6;">let</span><span> table_ptr: </span><span style="color:#569cd6;">*const</span><span> PageTable = virt.as_ptr();
-</span><span>        </span><span style="color:#569cd6;">let</span><span> table = </span><span style="color:#569cd6;">unsafe </span><span>{</span><span style="color:#569cd6;">&amp;</span><span>*table_ptr};
-</span><span>
-</span><span>        </span><span style="color:#608b4e;">// read the page table entry and update `frame`
-</span><span>        </span><span style="color:#569cd6;">let</span><span> entry = </span><span style="color:#569cd6;">&amp;</span><span>table[index];
-</span><span>        frame = </span><span style="color:#569cd6;">match</span><span> entry.frame() {
-</span><span>            Ok(frame) </span><span style="color:#569cd6;">=&gt;</span><span> frame,
-</span><span>            Err(FrameError::FrameNotPresent) </span><span style="color:#569cd6;">=&gt; return </span><span>None,
-</span><span>            Err(FrameError::HugeFrame) </span><span style="color:#569cd6;">=&gt; </span><span>panic!(</span><span style="color:#d69d85;">&quot;huge pages not supported&quot;</span><span>),
-</span><span>        };
-</span><span>    }
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// calculate the physical address by adding the page offset
-</span><span>    Some(frame.start_address() + </span><span style="color:#569cd6;">u64</span><span>::from(addr.page_offset()))
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Private function that is called by `translate_addr`.</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">///</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// This function is safe to limit the scope of `unsafe` because Rust treats</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// the whole body of unsafe functions as an unsafe block. This function must</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// only be reachable through `unsafe fn` from outside of this module.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> translate_addr_inner</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>:</span><span style="color: #4EC9B0;"> VirtAddr</span><span>,</span><span style="color: #9CDCFE;"> physical_memory_offset</span><span>:</span><span style="color: #4EC9B0;"> VirtAddr</span><span>)</span></span>
+<span class="giallo-l"><span>    -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">PhysAddr</span><span>&gt;</span></span>
+<span class="giallo-l"><span>{</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">page_table</span><span>::</span><span style="color: #4EC9B0;">FrameError</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">registers</span><span>::</span><span style="color: #4EC9B0;">control</span><span>::</span><span style="color: #4EC9B0;">Cr3</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // read the active level 4 frame from the CR3 register</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span> (</span><span style="color: #9CDCFE;">level_4_table_frame</span><span>,</span><span style="color: #9CDCFE;"> _</span><span>) =</span><span style="color: #4EC9B0;"> Cr3</span><span>::</span><span style="color: #DCDCAA;">read</span><span>();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> table_indexes</span><span> = [</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        addr</span><span>.</span><span style="color: #DCDCAA;">p4_index</span><span>(),</span><span style="color: #9CDCFE;"> addr</span><span>.</span><span style="color: #DCDCAA;">p3_index</span><span>(),</span><span style="color: #9CDCFE;"> addr</span><span>.</span><span style="color: #DCDCAA;">p2_index</span><span>(),</span><span style="color: #9CDCFE;"> addr</span><span>.</span><span style="color: #DCDCAA;">p1_index</span><span>()</span></span>
+<span class="giallo-l"><span>    ];</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #9CDCFE;"> level_4_table_frame</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // traverse the multi-level page table</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span> &amp;</span><span style="color: #9CDCFE;">index</span><span style="color: #569CD6;"> in</span><span> &amp;</span><span style="color: #9CDCFE;">table_indexes</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // convert the frame into a page table reference</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> virt</span><span> =</span><span style="color: #9CDCFE;"> physical_memory_offset</span><span> +</span><span style="color: #9CDCFE;"> frame</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>().</span><span style="color: #DCDCAA;">as_u64</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> table_ptr</span><span>: *</span><span style="color: #569CD6;">const</span><span> PageTable =</span><span style="color: #9CDCFE;"> virt</span><span>.</span><span style="color: #DCDCAA;">as_ptr</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> table</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {&amp;*</span><span style="color: #9CDCFE;">table_ptr</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // read the page table entry and update `frame`</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> entry</span><span> = &amp;</span><span style="color: #9CDCFE;">table</span><span>[</span><span style="color: #9CDCFE;">index</span><span>];</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        frame</span><span> =</span><span style="color: #C586C0;"> match</span><span style="color: #9CDCFE;"> entry</span><span>.</span><span style="color: #DCDCAA;">frame</span><span>() {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            Ok</span><span>(</span><span style="color: #9CDCFE;">frame</span><span>) =&gt;</span><span style="color: #9CDCFE;"> frame</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            Err</span><span>(</span><span style="color: #4EC9B0;">FrameError</span><span>::</span><span style="color: #4EC9B0;">FrameNotPresent</span><span>) =&gt;</span><span style="color: #C586C0;"> return</span><span style="color: #4EC9B0;"> None</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">            Err</span><span>(</span><span style="color: #4EC9B0;">FrameError</span><span>::</span><span style="color: #4EC9B0;">HugeFrame</span><span>) =&gt;</span><span style="color: #DCDCAA;"> panic!</span><span>(</span><span style="color: #CE9178;">&quot;huge pages not supported&quot;</span><span>),</span></span>
+<span class="giallo-l"><span>        };</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // calculate the physical address by adding the page offset</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    Some</span><span>(</span><span style="color: #9CDCFE;">frame</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>() +</span><span style="color: #4EC9B0;"> u64</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>.</span><span style="color: #DCDCAA;">page_offset</span><span>()))</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>بدلاً من إعادة استخدام دالة <code>active_level_4_table</code>، نقرأ level 4 frame من register <code>CR3</code> مرة أخرى. نفعل هذا لأنه يبسّط هذا التنفيذ الأولي. لا تقلق، سنُنشئ حلًا أفضل بعد لحظة.</p>
 <p>struct <code>VirtAddr</code> يوفر بالفعل دوال لحساب الفهارس في page tables للمستويات الأربعة. نخزن هذه الفهارس في مصفوفة صغيرة لأنها تسمح لنا بالمرور عبر page tables باستخدام loop <code>for</code>. خارج loop، نتذكر آخر <code>frame</code> تمت زيارتها لحساب العنوان الفزيائي لاحقًا. يشير <code>frame</code> إلى page table frames أثناء التكرار وإلى frame المُعيّنة بعد آخر تكرار، أي بعد اتباع level 1 entry.</p>
-<p>داخل loop، نستخدم مرة أخرى <code>physical_memory_offset</code> لتحويل frame إلى page table reference. ثم نقرأ entry لـ page table الحالية ونستخدم دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html#method.frame"><code>PageTableEntry::frame</code></a> لاسترداد frame المُعيّنة. إذا لم تكن entry مُعيّنة إلى frame، نُعيد <code>None</code>. إذا كانت entry تُعيّن صفحة 2 MiB أو 1 GiB ضخمة، نُ panic الآن.</p>
+<p>داخل loop، نستخدم مرة أخرى <code>physical_memory_offset</code> لتحويل frame إلى page table reference. ثم نقرأ entry لـ page table الحالية ونستخدم دالة <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page_table/struct.PageTableEntry.html#method.frame"><code>PageTableEntry::frame</code></a> لاسترداد frame المُعيّنة. إذا لم تكن entry مُعيّنة إلى frame، نُعيد <code>None</code>. إذا كانت entry تُعيّن صفحة 2 MiB أو 1 GiB ضخمة، نُ panic الآن.</p>
 <p>لنختبر دالة الترجمة بترجمة بعض العناوين:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// new import
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::translate_addr;
-</span><span>
-</span><span>    […] </span><span style="color:#608b4e;">// hello world and blog_os::init
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> addresses = [
-</span><span>        </span><span style="color:#608b4e;">// the identity-mapped vga buffer page
-</span><span>        </span><span style="color:#b5cea8;">0xb8000</span><span>,
-</span><span>        </span><span style="color:#608b4e;">// some code page
-</span><span>        </span><span style="color:#b5cea8;">0x201008</span><span>,
-</span><span>        </span><span style="color:#608b4e;">// some stack page
-</span><span>        </span><span style="color:#b5cea8;">0x0100_0020_1a10</span><span>,
-</span><span>        </span><span style="color:#608b4e;">// virtual address mapped to physical address 0
-</span><span>        boot_info.physical_memory_offset,
-</span><span>    ];
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">for &amp;</span><span>address </span><span style="color:#569cd6;">in &amp;</span><span>addresses {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> virt = VirtAddr::new(address);
-</span><span>        </span><span style="color:#569cd6;">let</span><span> phys = </span><span style="color:#569cd6;">unsafe </span><span>{ translate_addr(virt, phys_mem_offset) };
-</span><span>        println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;"> -&gt; </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, virt, phys);
-</span><span>    }
-</span><span>
-</span><span>    […] </span><span style="color:#608b4e;">// test_main(), &quot;it did not crash&quot; printing, and hlt_loop()
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // new import</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::translate_addr;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    […]</span><span style="color: #6A9955;"> // hello world and blog_os::init</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> addresses</span><span> = [</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // the identity-mapped vga buffer page</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0xb8000</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // some code page</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x201008</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // some stack page</span></span>
+<span class="giallo-l"><span style="color: #B5CEA8;">        0x0100_0020_1a10</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // virtual address mapped to physical address 0</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        boot_info</span><span>.physical_memory_offset,</span></span>
+<span class="giallo-l"><span>    ];</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span> &amp;</span><span style="color: #9CDCFE;">address</span><span style="color: #569CD6;"> in</span><span> &amp;</span><span style="color: #9CDCFE;">addresses</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> virt</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">address</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> phys</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #DCDCAA;"> translate_addr</span><span>(</span><span style="color: #9CDCFE;">virt</span><span>,</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        println!</span><span>(</span><span style="color: #CE9178;">&quot;{:?} -&gt; {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> virt</span><span>,</span><span style="color: #9CDCFE;"> phys</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    […]</span><span style="color: #6A9955;"> // test_main(), &quot;it did not crash&quot; printing, and hlt_loop()</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>عندما نشغله، نرى الإخراج التالي:</p>
 <p><img src="https://os.phil-opp.com/ar/paging-implementation/qemu-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x201008 -&gt; 0x401008, 0x10000201a10 -&gt; 0x279a10, “panicked at ‘huge pages not supported’" /></p>
 <p>كما هو متوقع، العنوان المُعيّن بـ identity <code>0xb8000</code> يترجم إلى نفس العنوان الفيزيائي. code page و stack page يترجمان إلى عناوين فيزيائية عشوائية، تعتمد على كيفية إنشاء bootloader للتعيين الأولي لنواتنا. من الجدير بالملاحظة أن آخر 12 bit تبقى دائمًا نفسها بعد الترجمة، مما منطقي لأن هذه البتات هي <a href="https://os.phil-opp.com/paging-introduction/#paging-on-x86-64"><em>page offset</em></a> وليست جزءًا من الترجمة.</p>
@@ -594,60 +581,58 @@
 <p>ترجمة العناوين الافتراضية إلى فيزيائية مهمة شائعة في OS kernel، لذلك توفر مكتبة <code>x86_64</code> تجريدًا لها. التنفيذ يدعم بالفعل huge pages وعدة دوال page table أخرى بجانب <code>translate_addr</code>، لذلك سنستخدمه في ما يلي بدلاً من إضافة دعم huge page لتنفيذنا الخاص.</p>
 <p>في أساس التجريد هما traitان يحددان دوال تعيين page table مختلفة:</p>
 <ul>
-<li>trait <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> عام على حجم page ويوفر دوال تعمل على pages. أمثلة <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.translate_page"><code>translate_page</code></a>، التي تترجم page معينة إلى frame بنفس الحجم، و <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a>، التي تُنشئ تعيينًا جديدًا في page table.</li>
-<li>trait <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html"><code>Translate</code></a> يوفر دوال تعمل مع أحجام page متعددة، مثل <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html#method.translate_addr"><code>translate_addr</code></a> أو <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html"><code>translate</code></a> العام.</li>
+<li>trait <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> عام على حجم page ويوفر دوال تعمل على pages. أمثلة <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#tymethod.translate_page"><code>translate_page</code></a>، التي تترجم page معينة إلى frame بنفس الحجم، و <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a>، التي تُنشئ تعيينًا جديدًا في page table.</li>
+<li>trait <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html"><code>Translate</code></a> يوفر دوال تعمل مع أحجام page متعددة، مثل <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html#method.translate_addr"><code>translate_addr</code></a> أو <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html"><code>translate</code></a> العام.</li>
 </ul>
-<p>الـ traits تحدد فقط الواجهة، لا تقدم أي تنفيذ. توفر مكتبة <code>x86_64</code> حاليًا ثلاثة أنواع تنفذ الـ traits بمتطلبات مختلفة. نوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.OffsetPageTable.html"><code>OffsetPageTable</code></a> يفترض أن الذاكرة الفيزيائية بالكامل مُعيّنة إلى مساحة العنونة الافتراضية عند offset ما. <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MappedPageTable.html"><code>MappedPageTable</code></a> أكثر مرونة بعض الشيء: يحتاج فقط إلى أن كل page table frame مُعيّنة إلى مساحة العنونة الافتراضية عند عنوان قابل للحساب. أخيرًا، يمكن استخدام نوع <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a> للوصول إلى page table frames عبر <a href="https://os.phil-opp.com/ar/paging-implementation/#recursive-page-tables">recursive page tables</a>.</p>
+<p>الـ traits تحدد فقط الواجهة، لا تقدم أي تنفيذ. توفر مكتبة <code>x86_64</code> حاليًا ثلاثة أنواع تنفذ الـ traits بمتطلبات مختلفة. نوع <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.OffsetPageTable.html"><code>OffsetPageTable</code></a> يفترض أن الذاكرة الفيزيائية بالكامل مُعيّنة إلى مساحة العنونة الافتراضية عند offset ما. <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MappedPageTable.html"><code>MappedPageTable</code></a> أكثر مرونة بعض الشيء: يحتاج فقط إلى أن كل page table frame مُعيّنة إلى مساحة العنونة الافتراضية عند عنوان قابل للحساب. أخيرًا، يمكن استخدام نوع <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.RecursivePageTable.html"><code>RecursivePageTable</code></a> للوصول إلى page table frames عبر <a href="https://os.phil-opp.com/ar/paging-implementation/#recursive-page-tables">recursive page tables</a>.</p>
 <p>في حالتنا، يُعيّن bootloader الذاكرة الفيزيائية بالكامل عند عنوان افتراضي محدد بمتغير <code>physical_memory_offset</code>، لذلك يمكننا استخدام نوع <code>OffsetPageTable</code>. لتهيئته، نُنشئ دالة <code>init</code> جديدة في module <code>memory</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::OffsetPageTable;
-</span><span>
-</span><span style="color:#608b4e;">/// Initialize a new OffsetPageTable.
-</span><span style="color:#608b4e;">///
-</span><span style="color:#608b4e;">/// This function is unsafe because the caller must guarantee that the
-</span><span style="color:#608b4e;">/// complete physical memory is mapped to virtual memory at the passed
-</span><span style="color:#608b4e;">/// `physical_memory_offset`. Also, this function must be only called once
-</span><span style="color:#608b4e;">/// to avoid aliasing `&amp;mut` references (which is undefined behavior).
-</span><span style="color:#569cd6;">pub unsafe fn </span><span>init(physical_memory_offset: VirtAddr) -&gt; OffsetPageTable&lt;</span><span style="color:#569cd6;">&#39;static</span><span>&gt; {
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#569cd6;">let</span><span> level_4_table = active_level_4_table(physical_memory_offset);
-</span><span>        OffsetPageTable::new(level_4_table, physical_memory_offset)
-</span><span>    }
-</span><span>}
-</span><span>
-</span><span style="color:#608b4e;">// make private
-</span><span style="color:#569cd6;">unsafe fn </span><span>active_level_4_table(physical_memory_offset: VirtAddr)
-</span><span>    -&gt; </span><span style="color:#569cd6;">&amp;&#39;static mut</span><span> PageTable
-</span><span>{…}
-</span></code></pre>
-<p>الدالة تأخذ <code>physical_memory_offset</code> كوسيطة وتعيد instance <code>OffsetPageTable</code> جديدة بـ lifetime <code>'static</code>. هذا يعني أن instance تبقى صالحة طوال فترة تشغيل نواتنا. في body الدالة، نستدعي أولاً دالة <code>active_level_4_table</code> لاسترداد mutable reference إلى level 4 page table. ثم نستدعي دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.OffsetPageTable.html#method.new"><code>OffsetPageTable::new</code></a> بهذا المرجع. كوسيطة ثانية، تتوقع دالة <code>new</code> العنوان الافتراضي حيث يبدأ تعيين الذاكرة الفيزيائية، المُعطى في متغير <code>physical_memory_offset</code>.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">OffsetPageTable</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Initialize a new OffsetPageTable.</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">///</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// This function is unsafe because the caller must guarantee that the</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// complete physical memory is mapped to virtual memory at the passed</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// `physical_memory_offset`. Also, this function must be only called once</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// to avoid aliasing `&amp;mut` references (which is undefined behavior).</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub unsafe fn</span><span style="color: #DCDCAA;"> init</span><span>(</span><span style="color: #9CDCFE;">physical_memory_offset</span><span>:</span><span style="color: #4EC9B0;"> VirtAddr</span><span>) -&gt;</span><span style="color: #4EC9B0;"> OffsetPageTable</span><span>&lt;&#39;</span><span style="color: #4EC9B0;">static</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> level_4_table</span><span> =</span><span style="color: #DCDCAA;"> active_level_4_table</span><span>(</span><span style="color: #9CDCFE;">physical_memory_offset</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        OffsetPageTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">level_4_table</span><span>,</span><span style="color: #9CDCFE;"> physical_memory_offset</span><span>)</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// make private</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe fn</span><span style="color: #DCDCAA;"> active_level_4_table</span><span>(</span><span style="color: #9CDCFE;">physical_memory_offset</span><span>:</span><span style="color: #4EC9B0;"> VirtAddr</span><span>)</span></span>
+<span class="giallo-l"><span>    -&gt; &amp;&#39;</span><span style="color: #4EC9B0;">static</span><span style="color: #569CD6;"> mut</span><span style="color: #4EC9B0;"> PageTable</span></span>
+<span class="giallo-l"><span>{…}</span></span></code></pre>
+<p>الدالة تأخذ <code>physical_memory_offset</code> كوسيطة وتعيد instance <code>OffsetPageTable</code> جديدة بـ lifetime <code>'static</code>. هذا يعني أن instance تبقى صالحة طوال فترة تشغيل نواتنا. في body الدالة، نستدعي أولاً دالة <code>active_level_4_table</code> لاسترداد mutable reference إلى level 4 page table. ثم نستدعي دالة <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.OffsetPageTable.html#method.new"><code>OffsetPageTable::new</code></a> بهذا المرجع. كوسيطة ثانية، تتوقع دالة <code>new</code> العنوان الافتراضي حيث يبدأ تعيين الذاكرة الفيزيائية، المُعطى في متغير <code>physical_memory_offset</code>.</p>
 <p>يجب استدعاء دالة <code>active_level_4_table</code> فقط من دالة <code>init</code> من الآن فصاعدًا لأنها يمكن أن تؤدي بسهولة إلى aliased mutable references عند استدعائها مرات متعددة، الذي قد يسبب undefined behavior. لهذا السبب، نجعل الدالة خاصة بإزالة specifier <code>pub</code>.</p>
 <p>يمكننا الآن استخدام دالة <code>Translate::translate_addr</code> بدلاً من دالة <code>memory::translate_addr</code> الخاصة بنا. نحتاج فقط لتغيير عدة أسطر في <code>kernel_main</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#608b4e;">// new: different imports
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::{structures::paging::Translate, VirtAddr};
-</span><span>
-</span><span>    […] </span><span style="color:#608b4e;">// hello world and blog_os::init
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#608b4e;">// new: initialize a mapper
-</span><span>    </span><span style="color:#569cd6;">let</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> addresses = […] </span><span style="color:#608b4e;">// same as before
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">for &amp;</span><span>address </span><span style="color:#569cd6;">in &amp;</span><span>addresses {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> virt = VirtAddr::new(address);
-</span><span>        </span><span style="color:#608b4e;">// new: use the `mapper.translate_addr` method
-</span><span>        </span><span style="color:#569cd6;">let</span><span> phys = mapper.translate_addr(virt);
-</span><span>        println!(</span><span style="color:#d69d85;">&quot;</span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;"> -&gt; </span><span style="color:#b4cea8;">{:?}</span><span style="color:#d69d85;">&quot;</span><span>, virt, phys);
-</span><span>    }
-</span><span>
-</span><span>    […] </span><span style="color:#608b4e;">// test_main(), &quot;it did not crash&quot; printing, and hlt_loop()
-</span><span>}
-</span></code></pre>
-<p>نحتاج لاستيراد trait <code>Translate</code> لاستخدام دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html#method.translate_addr"><code>translate_addr</code></a> التي يوفرها.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // new: different imports</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::memory;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::{</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">Translate</span><span>,</span><span style="color: #4EC9B0;"> VirtAddr</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    […]</span><span style="color: #6A9955;"> // hello world and blog_os::init</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // new: initialize a mapper</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> mapper</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> addresses</span><span> = […]</span><span style="color: #6A9955;"> // same as before</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #C586C0;">    for</span><span> &amp;</span><span style="color: #9CDCFE;">address</span><span style="color: #569CD6;"> in</span><span> &amp;</span><span style="color: #9CDCFE;">addresses</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> virt</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">address</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // new: use the `mapper.translate_addr` method</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> phys</span><span> =</span><span style="color: #9CDCFE;"> mapper</span><span>.</span><span style="color: #DCDCAA;">translate_addr</span><span>(</span><span style="color: #9CDCFE;">virt</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">        println!</span><span>(</span><span style="color: #CE9178;">&quot;{:?} -&gt; {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> virt</span><span>,</span><span style="color: #9CDCFE;"> phys</span><span>);</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    […]</span><span style="color: #6A9955;"> // test_main(), &quot;it did not crash&quot; printing, and hlt_loop()</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>نحتاج لاستيراد trait <code>Translate</code> لاستخدام دالة <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Translate.html#method.translate_addr"><code>translate_addr</code></a> التي يوفرها.</p>
 <p>عندما نشغله الآن، نرى نفس نتائج الترجمة كما قبل، مع أن الاختلاف أن ترجمة huge page تعمل الآن:</p>
 <p><img src="https://os.phil-opp.com/ar/paging-implementation/qemu-mapper-translate-addr.png" alt="0xb8000 -&gt; 0xb8000, 0x201008 -&gt; 0x401008, 0x10000201a10 -&gt; 0x279a10, 0x18000000000 -&gt; 0x0" /></p>
 <p>كما هو متوقع، ترجمات <code>0xb8000</code> وعناوين الكود وال stack تبقى نفسها كدالة الترجمة الخاصة بنا. بالإضافة، نرى الآن أن العنوان الافتراضي <code>physical_memory_offset</code> مُعيّن إلى العنوان الفيزيائي <code>0x0</code>.</p>
@@ -655,52 +640,50 @@
 <p>في هذه المرحلة، لم نعد بحاجة إلى دوال <code>memory::translate_addr</code> و <code>memory::translate_addr_inner</code>، لذلك يمكننا حذفها.</p>
 <h3 id="creating-a-new-mapping"><a class="zola-anchor" href="#creating-a-new-mapping" aria-label="Anchor link for: creating-a-new-mapping">🔗</a>Creating a new Mapping</h3>
 <p>حتى الآن، نظرنا فقط إلى page tables دون تعديل أي شيء. لنغير ذلك بإنشاء تعيين جديد لـ page غير مُعيّنة سابقًا.</p>
-<p>سنستخدم دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a> من trait <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> لتنفيذنا، لذلك لننظر إليها أولاً. التوثيق يخبرنا أنها تأخذ أربع وسيطات: page التي نريد تعيينها، frame التي يجب تعيين page إليها، مجموعة flags لـ page table entry، و <code>frame_allocator</code>. frame allocator مطلوب لأن تعيين page المحددة قد يحتاج إنشاء page tables إضافية، التي تحتاج frames غير مستخدمة كـ backing storage.</p>
+<p>سنستخدم دالة <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a> من trait <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a> لتنفيذنا، لذلك لننظر إليها أولاً. التوثيق يخبرنا أنها تأخذ أربع وسيطات: page التي نريد تعيينها، frame التي يجب تعيين page إليها، مجموعة flags لـ page table entry، و <code>frame_allocator</code>. frame allocator مطلوب لأن تعيين page المحددة قد يحتاج إنشاء page tables إضافية، التي تحتاج frames غير مستخدمة كـ backing storage.</p>
 <h4 id="a-create-example-mapping-function"><a class="zola-anchor" href="#a-create-example-mapping-function" aria-label="Anchor link for: a-create-example-mapping-function">🔗</a>A <code>create_example_mapping</code> Function</h4>
 <p>الخطوة الأولى من تنفيذنا هي إنشاء دالة <code>create_example_mapping</code> جديدة تُعيّن virtual page معينة إلى <code>0xb8000</code>، physical frame لـ VGA text buffer. نختار ذلك frame لأنه يسمح لنا بسهولة اختبار ما إذا كان التعيين قد أُنشئ بشكل صحيح: نحتاج فقط للكتابة إلى page المُعيّنة حديثًا ونرى ما إذا ظهرت الكتابة على الشاشة.</p>
 <p>دالة <code>create_example_mapping</code> تبدو كالتالي:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>x86_64::{
-</span><span>    PhysAddr,
-</span><span>    structures::paging::{Page, PhysFrame, Mapper, Size4KiB, FrameAllocator}
-</span><span>};
-</span><span>
-</span><span style="color:#608b4e;">/// Creates an example mapping for the given page to frame `0xb8000`.
-</span><span style="color:#569cd6;">pub fn </span><span>create_example_mapping(
-</span><span>    page: Page,
-</span><span>    mapper: </span><span style="color:#569cd6;">&amp;mut</span><span> OffsetPageTable,
-</span><span>    frame_allocator: </span><span style="color:#569cd6;">&amp;mut</span><span> impl FrameAllocator&lt;Size4KiB&gt;,
-</span><span>) {
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::structures::paging::PageTableFlags </span><span style="color:#569cd6;">as</span><span> Flags;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> frame = PhysFrame::containing_address(PhysAddr::new(</span><span style="color:#b5cea8;">0xb8000</span><span>));
-</span><span>    </span><span style="color:#569cd6;">let</span><span> flags = Flags::</span><span style="color:#b4cea8;">PRESENT </span><span style="color:#569cd6;">| </span><span>Flags::</span><span style="color:#b4cea8;">WRITABLE</span><span>;
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> map_to_result = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        </span><span style="color:#608b4e;">// FIXME: this is not safe, we do it only for testing
-</span><span>        mapper.map_to(page, frame, flags, frame_allocator)
-</span><span>    };
-</span><span>    map_to_result.expect(</span><span style="color:#d69d85;">&quot;map_to failed&quot;</span><span>).flush();
-</span><span>}
-</span></code></pre>
-<p>بالإضافة إلى <code>page</code> التي يجب تعيينها، تتوقع الدالة mutable reference إلى instance <code>OffsetPageTable</code> و <code>frame_allocator</code>. parameter <code>frame_allocator</code> يستخدم صياغة <a href="https://doc.rust-lang.org/book/ch10-02-traits.html#traits-as-parameters"><code>impl Trait</code></a> لتكون <a href="https://doc.rust-lang.org/book/ch10-00-generics.html">generic</a> على جميع الأنواع التي تنفذ trait <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a>. trait <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a> عام على trait <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/trait.PageSize.html"><code>PageSize</code></a> للعمل مع 4 KiB pages القياسية و 2 MiB/1 GiB huge pages. نريد فقط إنشاء تعيين 4 KiB، لذلك نعين generic parameter إلى <code>Size4KiB</code>.</p>
-<p>دالة <a href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a> غير آمنة لأن المستدعي يجب أن يضمن أن frame غير مستخدمة بالفعل. السبب هو أن تعيين نفس frame مرتين قد يؤدي إلى undefined behavior، على سبيل المثال عندما يشير <code>&amp;mut</code> referenceان مختلفان إلى نفس موقع الذاكرة الفيزيائية. في حالتنا، نعيد استخدام VGA text buffer frame، المُعيّنة بالفعل، لذلك نكسر الشرط المطلوب. ومع ذلك، دالة <code>create_example_mapping</code> هي فقط دالة اختبار مؤقتة وستُزال بعد هذا المقال، لذلك لا بأس. لتذكيرنا بعدم الأمان، نضع تعليق <code>FIXME</code> على السطر.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> x86_64</span><span>::{</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    PhysAddr</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::{</span><span style="color: #4EC9B0;">Page</span><span>,</span><span style="color: #4EC9B0;"> PhysFrame</span><span>,</span><span style="color: #4EC9B0;"> Mapper</span><span>,</span><span style="color: #4EC9B0;"> Size4KiB</span><span>,</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>}</span></span>
+<span class="giallo-l"><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// Creates an example mapping for the given page to frame `0xb8000`.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> create_example_mapping</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    page</span><span>:</span><span style="color: #4EC9B0;"> Page</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    mapper</span><span>: &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> OffsetPageTable</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    frame_allocator</span><span>: &amp;</span><span style="color: #569CD6;">mut impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;,</span></span>
+<span class="giallo-l"><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">PageTableFlags</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> Flags</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #4EC9B0;"> PhysFrame</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #4EC9B0;">PhysAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0xb8000</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> flags</span><span> =</span><span style="color: #4EC9B0;"> Flags</span><span>::PRESENT |</span><span style="color: #4EC9B0;"> Flags</span><span>::WRITABLE;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> map_to_result</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // FIXME: this is not safe, we do it only for testing</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        mapper</span><span>.</span><span style="color: #DCDCAA;">map_to</span><span>(</span><span style="color: #9CDCFE;">page</span><span>,</span><span style="color: #9CDCFE;"> frame</span><span>,</span><span style="color: #9CDCFE;"> flags</span><span>,</span><span style="color: #9CDCFE;"> frame_allocator</span><span>)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    map_to_result</span><span>.</span><span style="color: #DCDCAA;">expect</span><span>(</span><span style="color: #CE9178;">&quot;map_to failed&quot;</span><span>).</span><span style="color: #DCDCAA;">flush</span><span>();</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>بالإضافة إلى <code>page</code> التي يجب تعيينها، تتوقع الدالة mutable reference إلى instance <code>OffsetPageTable</code> و <code>frame_allocator</code>. parameter <code>frame_allocator</code> يستخدم صياغة <a rel="external" href="https://doc.rust-lang.org/book/ch10-02-traits.html#traits-as-parameters"><code>impl Trait</code></a> لتكون <a rel="external" href="https://doc.rust-lang.org/book/ch10-00-generics.html">generic</a> على جميع الأنواع التي تنفذ trait <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a>. trait <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a> عام على trait <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/trait.PageSize.html"><code>PageSize</code></a> للعمل مع 4 KiB pages القياسية و 2 MiB/1 GiB huge pages. نريد فقط إنشاء تعيين 4 KiB، لذلك نعين generic parameter إلى <code>Size4KiB</code>.</p>
+<p>دالة <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>map_to</code></a> غير آمنة لأن المستدعي يجب أن يضمن أن frame غير مستخدمة بالفعل. السبب هو أن تعيين نفس frame مرتين قد يؤدي إلى undefined behavior، على سبيل المثال عندما يشير <code>&amp;mut</code> referenceان مختلفان إلى نفس موقع الذاكرة الفيزيائية. في حالتنا، نعيد استخدام VGA text buffer frame، المُعيّنة بالفعل، لذلك نكسر الشرط المطلوب. ومع ذلك، دالة <code>create_example_mapping</code> هي فقط دالة اختبار مؤقتة وستُزال بعد هذا المقال، لذلك لا بأس. لتذكيرنا بعدم الأمان، نضع تعليق <code>FIXME</code> على السطر.</p>
 <p>بالإضافة إلى <code>page</code> و <code>unused_frame</code>، تأخذ دالة <code>map_to</code> مجموعة flags للتعيين ومرجعًا إلى <code>frame_allocator</code>، الذي سيُشرح بعد لحظة. للflags، نعين flag <code>PRESENT</code> لأنها مطلوبة لجميع entries الصالحة و flag <code>WRITABLE</code> لجعل page المُعيّنة قابلة للكتابة. لقائمة جميع flags الممكنة، راجع قسم <a href="https://os.phil-opp.com/paging-introduction/#page-table-format"><em>Page Table Format</em></a> من المقال السابق.</p>
 <h4 id="a-dummy-frameallocator"><a class="zola-anchor" href="#a-dummy-frameallocator" aria-label="Anchor link for: a-dummy-frameallocator">🔗</a>A dummy <code>FrameAllocator</code></h4>
 <p>لكي نتمكن من استدعاء <code>create_example_mapping</code>، نحتاج لإنشاء نوع ينفذ trait <code>FrameAllocator</code> أولاً. كما لوحظ أعلاه، مسؤول عن تخصيص frames لـ page tables جديدة إذا احتاجتها <code>map_to</code>.</p>
 <p>لنبدأ بالحالة البسيطة ونفترض أننا لا نحتاج لإنشاء page tables جديدة. لهذه الحالة، frame allocator يُعيد دائمًا <code>None</code> يكفي. نُنشئ مثل هذا <code>EmptyFrameAllocator</code> لاختبار دالة التعيين:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#608b4e;">/// A FrameAllocator that always returns `None`.
-</span><span style="color:#569cd6;">pub struct </span><span>EmptyFrameAllocator;
-</span><span>
-</span><span style="color:#569cd6;">unsafe impl </span><span>FrameAllocator&lt;Size4KiB&gt; </span><span style="color:#569cd6;">for </span><span>EmptyFrameAllocator {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>allocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span>self) -&gt; Option&lt;PhysFrame&gt; {
-</span><span>        None
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// A FrameAllocator that always returns `None`.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> EmptyFrameAllocator</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> EmptyFrameAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> allocate_frame</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">PhysFrame</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        None</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>تنفيذ <code>FrameAllocator</code> غير آمن لأن المنفذ يجب أن يضمن أن المُخصص يُعيد frames غير مستخدمة فقط. وإلا، قد يحدث undefined behavior، على سبيل المثال عندما تُعيّن virtual pageان إلى نفس physical frame. <code>EmptyFrameAllocator</code> يُعيد دائمًا <code>None</code>، لذلك هذا ليس مشكلة في هذه الحالة.</p>
 <h4 id="choosing-a-virtual-page"><a class="zola-anchor" href="#choosing-a-virtual-page" aria-label="Anchor link for: choosing-a-virtual-page">🔗</a>Choosing a Virtual Page</h4>
 <p>الآن لدينا frame allocator بسيط يمكننا تمريره لدالة <code>create_example_mapping</code>. ومع ذلك، المُخصص يُعيد دائمًا <code>None</code>، لذلك سيعمل فقط إذا لم تكن هناك page table frames إضافية مطلوبة لإنشاء التعيين. لفهم متى تكون page table frames إضافية مطلوبة ومتى لا، لنconsider مثالًا:</p>
@@ -712,135 +695,128 @@
 <p>لاستدعاء دالة <code>create_example_mapping</code> مع <code>EmptyFrameAllocator</code>، نحتاج لاختيار page لها جميع page tables موجودة بالفعل. لإيجاد مثل هذه page، يمكننا استخدام حقيقة أن bootloader يُحمّل نفسه في أول megabyte من مساحة العنونة الافتراضية. هذا يعني أن level 1 table صالحة موجودة لجميع pages في هذه المنطقة. لذلك، يمكننا اختيار أي page غير مستخدمة في منطقة الذاكرة هذه لتعييننا، مثل page في العنوان <code>0</code>. عادةً، يجب أن تبقى هذه page غير مستخدمة لضمان أن dereferencing null pointer يسبب page fault، لذلك نعرف أن bootloader يتركها غير مُعيّنة.</p>
 <h4 id="creating-the-mapping"><a class="zola-anchor" href="#creating-the-mapping" aria-label="Anchor link for: creating-the-mapping">🔗</a>Creating the Mapping</h4>
 <p>الآن لدينا جميع parameters المطلوبة لاستدعاء دالة <code>create_example_mapping</code>، لذلك لنعدّل دالة <code>kernel_main</code> لتعيين page في العنوان الافتراضي <code>0</code>. بما أننا نُعيّن page إلى frame لـ VGA text buffer، يجب أن نرى الكتابة إليها على الشاشة بعد ذلك. يبدو التنفيذ كالتالي:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory;
-</span><span>    </span><span style="color:#569cd6;">use </span><span>x86_64::{structures::paging::Page, VirtAddr}; </span><span style="color:#608b4e;">// new import
-</span><span>
-</span><span>    […] </span><span style="color:#608b4e;">// hello world and blog_os::init
-</span><span>
-</span><span>    </span><span style="color:#569cd6;">let</span><span> phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> mapper = </span><span style="color:#569cd6;">unsafe </span><span>{ memory::init(phys_mem_offset) };
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = memory::EmptyFrameAllocator;
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// map an unused page
-</span><span>    </span><span style="color:#569cd6;">let</span><span> page = Page::containing_address(VirtAddr::new(</span><span style="color:#b5cea8;">0</span><span>));
-</span><span>    memory::create_example_mapping(page, </span><span style="color:#569cd6;">&amp;mut</span><span> mapper, </span><span style="color:#569cd6;">&amp;mut</span><span> frame_allocator);
-</span><span>
-</span><span>    </span><span style="color:#608b4e;">// write the string `New!` to the screen through the new mapping
-</span><span>    </span><span style="color:#569cd6;">let</span><span> page_ptr: </span><span style="color:#569cd6;">*mut u64 </span><span>= page.start_address().as_mut_ptr();
-</span><span>    </span><span style="color:#569cd6;">unsafe </span><span>{ page_ptr.offset(</span><span style="color:#b5cea8;">400</span><span>).write_volatile(</span><span style="color:#b5cea8;">0x_f021_f077_f065_f04e</span><span>)};
-</span><span>
-</span><span>    […] </span><span style="color:#608b4e;">// test_main(), &quot;it did not crash&quot; printing, and hlt_loop()
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::memory;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::{</span><span style="color: #4EC9B0;">structures</span><span>::</span><span style="color: #4EC9B0;">paging</span><span>::</span><span style="color: #4EC9B0;">Page</span><span>,</span><span style="color: #4EC9B0;"> VirtAddr</span><span>};</span><span style="color: #6A9955;"> // new import</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    […]</span><span style="color: #6A9955;"> // hello world and blog_os::init</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> phys_mem_offset</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>.physical_memory_offset);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> mapper</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(</span><span style="color: #9CDCFE;">phys_mem_offset</span><span>) };</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> =</span><span style="color: #4EC9B0;"> memory</span><span>::</span><span style="color: #4EC9B0;">EmptyFrameAllocator</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // map an unused page</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #4EC9B0;">VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    memory</span><span>::</span><span style="color: #DCDCAA;">create_example_mapping</span><span>(</span><span style="color: #9CDCFE;">page</span><span>, &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> mapper</span><span>, &amp;</span><span style="color: #569CD6;">mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span>);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">    // write the string `New!` to the screen through the new mapping</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page_ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u64</span><span> =</span><span style="color: #9CDCFE;"> page</span><span>.</span><span style="color: #DCDCAA;">start_address</span><span>().</span><span style="color: #DCDCAA;">as_mut_ptr</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #9CDCFE;"> page_ptr</span><span>.</span><span style="color: #DCDCAA;">offset</span><span>(</span><span style="color: #B5CEA8;">400</span><span>).</span><span style="color: #DCDCAA;">write_volatile</span><span>(</span><span style="color: #B5CEA8;">0x_f021_f077_f065_f04e</span><span>)};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    […]</span><span style="color: #6A9955;"> // test_main(), &quot;it did not crash&quot; printing, and hlt_loop()</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>نُنشئ أولاً التعيين لـ page في العنوان <code>0</code> باستدعاء دالة <code>create_example_mapping</code> مع mutable reference إلى <code>mapper</code> و <code>frame_allocator</code>. هذا يُعيّن page إلى VGA text buffer frame، لذلك يجب أن نرى أي كتابة إليها على الشاشة.</p>
-<p>ثم نحول page إلى raw pointer ونكتب قيمة إلى offset <code>400</code>. لا نكتب إلى بداية page لأن السطر العلوي لـ VGA buffer يُزاح مباشرة من الشاشة بـ <code>println</code> التالي. نكتب القيمة <code>0x_f021_f077_f065_f04e</code>، التي تمثل سلسلة <em>“New!”</em> على خلفية بيضاء. كما تعلمنا [في مقال <em>“VGA Text Mode”</em>]، يجب أن تكون الكتابات إلى VGA buffer volatile، لذلك نستخدم دالة <a href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write_volatile"><code>write_volatile</code></a>.</p>
+<p>ثم نحول page إلى raw pointer ونكتب قيمة إلى offset <code>400</code>. لا نكتب إلى بداية page لأن السطر العلوي لـ VGA buffer يُزاح مباشرة من الشاشة بـ <code>println</code> التالي. نكتب القيمة <code>0x_f021_f077_f065_f04e</code>، التي تمثل سلسلة <em>“New!”</em> على خلفية بيضاء. كما تعلمنا [في مقال <em>“VGA Text Mode”</em>]، يجب أن تكون الكتابات إلى VGA buffer volatile، لذلك نستخدم دالة <a rel="external" href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write_volatile"><code>write_volatile</code></a>.</p>
 <p>عندما نشغله في QEMU، نرى الإخراج التالي:</p>
 <p><img src="https://os.phil-opp.com/ar/paging-implementation/qemu-new-mapping.png" alt="QEMU printing “It did not crash!” with four completely white cells in the middle of the screen" /></p>
 <p><em>“New!”</em> على الشاشة سببها كتابتنا إلى page <code>0</code>، مما يعني أننا أنشأنا تعيينًا جديدًا في page tables بنجاح.</p>
 <p>إنشاء ذلك التعيين عمل فقط لأن level 1 table المسؤولة عن page في العنوان <code>0</code> موجودة بالفعل. عندما نحاول تعيين page ليس لها level 1 table موجود بعد، تفشل دالة <code>map_to</code> لأنها تحاول إنشاء page tables جديدة بتخصيص frames مع <code>EmptyFrameAllocator</code>. يمكننا رؤية ذلك يحدث عندما نحاول تعيين page <code>0xdeadbeaf000</code> بدلاً من <code>0</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    […]
-</span><span>    </span><span style="color:#569cd6;">let</span><span> page = Page::containing_address(VirtAddr::new(</span><span style="color:#b5cea8;">0xdeadbeaf000</span><span>));
-</span><span>    […]
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #4EC9B0;">VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #B5CEA8;">0xdeadbeaf000</span><span>));</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>عندما نشغله، يحدث panic برسالة الخطأ التالية:</p>
-<pre style="background-color:#1e1e1e;color:#dcdcdc;"><code><span>panicked at &#39;map_to failed: FrameAllocationFailed&#39;, /…/result.rs:999:5
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>panicked at &#39;map_to failed: FrameAllocationFailed&#39;, /…/result.rs:999:5</span></span></code></pre>
 <p>لتعيين pages ليس لها level 1 page table بعد، نحتاج لإنشاء <code>FrameAllocator</code> مناسب. لكن كيف نعرف أي frames غير مستخدمة وكم ذاكرة فيزيائية متاحة؟</p>
 <h3 id="allocating-frames"><a class="zola-anchor" href="#allocating-frames" aria-label="Anchor link for: allocating-frames">🔗</a>Allocating Frames</h3>
 <p>من أجل إنشاء page tables جديدة، نحتاج لإنشاء frame allocator مناسب لذلك، نستخدم <code>memory_map</code> الممرر من قبل bootloader كجزء من struct <code>BootInfo</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>bootloader::bootinfo::MemoryMap;
-</span><span>
-</span><span style="color:#608b4e;">/// A FrameAllocator that returns usable frames from the bootloader&#39;s memory map.
-</span><span style="color:#569cd6;">pub struct </span><span>BootInfoFrameAllocator {
-</span><span>    memory_map: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> MemoryMap,
-</span><span>    next: </span><span style="color:#569cd6;">usize</span><span>,
-</span><span>}
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>BootInfoFrameAllocator {
-</span><span>    </span><span style="color:#608b4e;">/// Create a FrameAllocator from the passed memory map.
-</span><span>    </span><span style="color:#608b4e;">///
-</span><span>    </span><span style="color:#608b4e;">/// This function is unsafe because the caller must guarantee that the passed
-</span><span>    </span><span style="color:#608b4e;">/// memory map is valid. The main requirement is that all frames that are marked
-</span><span>    </span><span style="color:#608b4e;">/// as `USABLE` in it are really unused.
-</span><span>    </span><span style="color:#569cd6;">pub unsafe fn </span><span>init(memory_map: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> MemoryMap) -&gt; </span><span style="color:#569cd6;">Self </span><span>{
-</span><span>        BootInfoFrameAllocator {
-</span><span>            memory_map,
-</span><span>            next: </span><span style="color:#b5cea8;">0</span><span>,
-</span><span>        }
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bootloader</span><span>::</span><span style="color: #4EC9B0;">bootinfo</span><span>::</span><span style="color: #4EC9B0;">MemoryMap</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">/// A FrameAllocator that returns usable frames from the bootloader&#39;s memory map.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    memory_map</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static MemoryMap</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">    next</span><span>:</span><span style="color: #4EC9B0;"> usize</span><span>,</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    /// Create a FrameAllocator from the passed memory map.</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    ///</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    /// This function is unsafe because the caller must guarantee that the passed</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    /// memory map is valid. The main requirement is that all frames that are marked</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    /// as `USABLE` in it are really unused.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    pub unsafe fn</span><span style="color: #DCDCAA;"> init</span><span>(</span><span style="color: #9CDCFE;">memory_map</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static MemoryMap</span><span>) -&gt;</span><span style="color: #569CD6;"> Self</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        BootInfoFrameAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            memory_map</span><span>,</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">            next</span><span>:</span><span style="color: #B5CEA8;"> 0</span><span>,</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>الـ struct له حقلان: مرجع <code>'static</code> إلى memory map الممرر من قبل bootloader وحقل <code>next</code> يتتبع رقم frame التالي الذي يجب أن يُعيده المُخصص.</p>
-<p>كما شرحنا في قسم <a href="https://os.phil-opp.com/ar/paging-implementation/#boot-information"><em>Boot Information</em></a>، memory map يُوفر من قبل BIOS/UEFI firmware. يمكن الاستعلام عنه فقط في وقت مبكر جدًا من عملية الإقلاع، لذلك يستدعي bootloader الدوال المقابلة لنا. memory map يتكون من قائمة <a href="https://docs.rs/bootloader/0.6.4/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a> structs، التي تحتوي على عنوان البداية والطول ونوع (مثل unused و reserved و إلخ) لكل منطقة ذاكرة.</p>
+<p>كما شرحنا في قسم <a href="https://os.phil-opp.com/ar/paging-implementation/#boot-information"><em>Boot Information</em></a>، memory map يُوفر من قبل BIOS/UEFI firmware. يمكن الاستعلام عنه فقط في وقت مبكر جدًا من عملية الإقلاع، لذلك يستدعي bootloader الدوال المقابلة لنا. memory map يتكون من قائمة <a rel="external" href="https://docs.rs/bootloader/0.6.4/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a> structs، التي تحتوي على عنوان البداية والطول ونوع (مثل unused و reserved و إلخ) لكل منطقة ذاكرة.</p>
 <p>دالة <code>init</code> تُهيئة <code>BootInfoFrameAllocator</code> بـ memory map معينة. حقل <code>next</code> يُهيئة بـ <code>0</code> وسيزداد لكل frame allocation لتجنب إعادة نفس frame مرتين. بما أننا لا نعرف ما إذا كانت frames الصالحة من memory map قد استخدمت في مكان آخر، يجب أن تكون دالة <code>init</code> <code>unsafe</code> لتتطلب ضمانات إضافية من المستدعي.</p>
 <h4 id="a-usable-frames-method"><a class="zola-anchor" href="#a-usable-frames-method" aria-label="Anchor link for: a-usable-frames-method">🔗</a>A <code>usable_frames</code> Method</h4>
 <p>قبل تنفيذ trait <code>FrameAllocator</code>، نضيف دالة مساعدة تحول memory map إلى iterator من frames صالحة:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#569cd6;">use </span><span>bootloader::bootinfo::MemoryRegionType;
-</span><span>
-</span><span style="color:#569cd6;">impl </span><span>BootInfoFrameAllocator {
-</span><span>    </span><span style="color:#608b4e;">/// Returns an iterator over the usable frames specified in the memory map.
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>usable_frames(</span><span style="color:#569cd6;">&amp;</span><span>self) -&gt; impl Iterator&lt;Item = PhysFrame&gt; {
-</span><span>        </span><span style="color:#608b4e;">// get usable regions from memory map
-</span><span>        </span><span style="color:#569cd6;">let</span><span> regions = self.memory_map.iter();
-</span><span>        </span><span style="color:#569cd6;">let</span><span> usable_regions = regions
-</span><span>            .filter(|r| r.region_type == MemoryRegionType::Usable);
-</span><span>        </span><span style="color:#608b4e;">// map each region to its address range
-</span><span>        </span><span style="color:#569cd6;">let</span><span> addr_ranges = usable_regions
-</span><span>            .map(|r| r.range.start_addr()</span><span style="color:#569cd6;">..</span><span>r.range.end_addr());
-</span><span>        </span><span style="color:#608b4e;">// transform to an iterator of frame start addresses
-</span><span>        </span><span style="color:#569cd6;">let</span><span> frame_addresses = addr_ranges.flat_map(|r| r.step_by(</span><span style="color:#b5cea8;">4096</span><span>));
-</span><span>        </span><span style="color:#608b4e;">// create `PhysFrame` types from the start addresses
-</span><span>        frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
-</span><span>    }
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> bootloader</span><span>::</span><span style="color: #4EC9B0;">bootinfo</span><span>::</span><span style="color: #4EC9B0;">MemoryRegionType</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">impl</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">    /// Returns an iterator over the usable frames specified in the memory map.</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> usable_frames</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #569CD6;"> impl</span><span style="color: #4EC9B0;"> Iterator</span><span>&lt;</span><span style="color: #4EC9B0;">Item</span><span> =</span><span style="color: #4EC9B0;"> PhysFrame</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // get usable regions from memory map</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> regions</span><span> =</span><span style="color: #569CD6;"> self</span><span>.memory_map.</span><span style="color: #DCDCAA;">iter</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> usable_regions</span><span> =</span><span style="color: #9CDCFE;"> regions</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">filter</span><span>(|</span><span style="color: #9CDCFE;">r</span><span>|</span><span style="color: #9CDCFE;"> r</span><span>.region_type ==</span><span style="color: #4EC9B0;"> MemoryRegionType</span><span>::</span><span style="color: #4EC9B0;">Usable</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // map each region to its address range</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> addr_ranges</span><span> =</span><span style="color: #9CDCFE;"> usable_regions</span></span>
+<span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">map</span><span>(|</span><span style="color: #9CDCFE;">r</span><span>|</span><span style="color: #9CDCFE;"> r</span><span>.range.</span><span style="color: #DCDCAA;">start_addr</span><span>()..</span><span style="color: #9CDCFE;">r</span><span>.range.</span><span style="color: #DCDCAA;">end_addr</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // transform to an iterator of frame start addresses</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> frame_addresses</span><span> =</span><span style="color: #9CDCFE;"> addr_ranges</span><span>.</span><span style="color: #DCDCAA;">flat_map</span><span>(|</span><span style="color: #9CDCFE;">r</span><span>|</span><span style="color: #9CDCFE;"> r</span><span>.</span><span style="color: #DCDCAA;">step_by</span><span>(</span><span style="color: #B5CEA8;">4096</span><span>));</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">        // create `PhysFrame` types from the start addresses</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        frame_addresses</span><span>.</span><span style="color: #DCDCAA;">map</span><span>(|</span><span style="color: #9CDCFE;">addr</span><span>|</span><span style="color: #4EC9B0;"> PhysFrame</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #4EC9B0;">PhysAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">addr</span><span>)))</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>هذه الدالة تستخدم iterator combinator methods لتحويل <code>MemoryMap</code> الأولية إلى iterator من physical frames صالحة:</p>
 <ul>
-<li>أولاً، نستدعي دالة <code>iter</code> لتحويل memory map إلى iterator من <a href="https://docs.rs/bootloader/0.6.4/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a>s.</li>
-<li>ثم نستخدم دالة <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.filter"><code>filter</code></a> لتخطي أي regions محجوزة أو غير متاحة بخلاف ذلك. يُحدّث bootloader memory map لجميع التعيينات التي يُنشئها، لذلك frames المستخدمة من قبل نواتنا (code أو data أو stack) أو لتخزين boot information محددة بالفعل كـ <code>InUse</code> أو مشابه. لذلك، نستطيع التأكد من أن frames <code>Usable</code> غير مستخدمة في مكان آخر.</li>
-<li>بعد ذلك، نستخدم combinator <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.map"><code>map</code></a> و <a href="https://doc.rust-lang.org/core/ops/struct.Range.html">range syntax</a> لتحويل iterator من memory regions إلى iterator من address ranges.</li>
-<li>ثم نستخدم <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.flat_map"><code>flat_map</code></a> لتحويل address ranges إلى iterator من frame start addresses، باختيار كل عنوان 4096 باستخدام <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.step_by"><code>step_by</code></a>. بما أن 4096 bytes (= 4 KiB) هو حجم page، نحصل على عنوان بداية كل frame. يُحاذي bootloader جميع مناطق الذاكرة الصالحة page-aligned لذلك لا نحتاج أي alignment أو rounding code هنا. باستخدام <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.flat_map"><code>flat_map</code></a> بدلاً من <code>map</code>، نحصل على <code>Iterator&lt;Item = u64&gt;</code> بدلاً من <code>Iterator&lt;Item = Iterator&lt;Item = u64&gt;&gt;</code>.</li>
+<li>أولاً، نستدعي دالة <code>iter</code> لتحويل memory map إلى iterator من <a rel="external" href="https://docs.rs/bootloader/0.6.4/bootloader/bootinfo/struct.MemoryRegion.html"><code>MemoryRegion</code></a>s.</li>
+<li>ثم نستخدم دالة <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.filter"><code>filter</code></a> لتخطي أي regions محجوزة أو غير متاحة بخلاف ذلك. يُحدّث bootloader memory map لجميع التعيينات التي يُنشئها، لذلك frames المستخدمة من قبل نواتنا (code أو data أو stack) أو لتخزين boot information محددة بالفعل كـ <code>InUse</code> أو مشابه. لذلك، نستطيع التأكد من أن frames <code>Usable</code> غير مستخدمة في مكان آخر.</li>
+<li>بعد ذلك، نستخدم combinator <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.map"><code>map</code></a> و <a rel="external" href="https://doc.rust-lang.org/core/ops/struct.Range.html">range syntax</a> لتحويل iterator من memory regions إلى iterator من address ranges.</li>
+<li>ثم نستخدم <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.flat_map"><code>flat_map</code></a> لتحويل address ranges إلى iterator من frame start addresses، باختيار كل عنوان 4096 باستخدام <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.step_by"><code>step_by</code></a>. بما أن 4096 bytes (= 4 KiB) هو حجم page، نحصل على عنوان بداية كل frame. يُحاذي bootloader جميع مناطق الذاكرة الصالحة page-aligned لذلك لا نحتاج أي alignment أو rounding code هنا. باستخدام <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.flat_map"><code>flat_map</code></a> بدلاً من <code>map</code>، نحصل على <code>Iterator&lt;Item = u64&gt;</code> بدلاً من <code>Iterator&lt;Item = Iterator&lt;Item = u64&gt;&gt;</code>.</li>
 <li>أخيرًا، نحول start addresses إلى <code>PhysFrame</code> types لإنشاء <code>Iterator&lt;Item = PhysFrame&gt;</code>.</li>
 </ul>
-<p>نوع عودة الدالة يستخدم ميزة <a href="https://doc.rust-lang.org/book/ch10-02-traits.html#returning-types-that-implement-traits"><code>impl Trait</code></a>. بهذه الطريقة، نحدد أننا نُعيد نوعًا ينفذ trait <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html"><code>Iterator</code></a> بـ item type <code>PhysFrame</code> لكن لا نحتاج لتسمية نوع العودة المحدد. هذا مهم هنا لأننا <em>لا نستطيع</em> تسمية النوع المحدد لأنه يعتمد على أنواع closure غير قابلة للتسمية.</p>
+<p>نوع عودة الدالة يستخدم ميزة <a rel="external" href="https://doc.rust-lang.org/book/ch10-02-traits.html#returning-types-that-implement-traits"><code>impl Trait</code></a>. بهذه الطريقة، نحدد أننا نُعيد نوعًا ينفذ trait <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html"><code>Iterator</code></a> بـ item type <code>PhysFrame</code> لكن لا نحتاج لتسمية نوع العودة المحدد. هذا مهم هنا لأننا <em>لا نستطيع</em> تسمية النوع المحدد لأنه يعتمد على أنواع closure غير قابلة للتسمية.</p>
 <h4 id="implementing-the-frameallocator-trait"><a class="zola-anchor" href="#implementing-the-frameallocator-trait" aria-label="Anchor link for: implementing-the-frameallocator-trait">🔗</a>Implementing the <code>FrameAllocator</code> Trait</h4>
 <p>الآن يمكننا تنفيذ trait <code>FrameAllocator</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/memory.rs
-</span><span>
-</span><span style="color:#569cd6;">unsafe impl </span><span>FrameAllocator&lt;Size4KiB&gt; </span><span style="color:#569cd6;">for </span><span>BootInfoFrameAllocator {
-</span><span>    </span><span style="color:#569cd6;">fn </span><span>allocate_frame(</span><span style="color:#569cd6;">&amp;mut </span><span>self) -&gt; Option&lt;PhysFrame&gt; {
-</span><span>        </span><span style="color:#569cd6;">let</span><span> frame = self.usable_frames().nth(self.next);
-</span><span>        self.next += </span><span style="color:#b5cea8;">1</span><span>;
-</span><span>        frame
-</span><span>    }
-</span><span>}
-</span></code></pre>
-<p>نستخدم أولاً دالة <code>usable_frames</code> للحصول على iterator من frames صالحة من memory map. ثم نستخدم دالة <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.nth"><code>Iterator::nth</code></a> للحصول على frame برقم <code>self.next</code> (بتخطي <code>(self.next - 1)</code> frames). قبل إعادة ذلك frame، نزيد <code>self.next</code> بأحد حتى نُعيد frame التالي في الاستدعاء التالي.</p>
-<p>هذا التنفيذ ليس مثاليًا تمامًا لأنه يُعيد إنشاء <code>usable_frame</code> allocator في كل allocation. سيكون أفضل تخزين iterator مباشرة كـ struct field بدلاً من ذلك. ثم لن نحتاج دالة <code>nth</code> ونستدعي <a href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#tymethod.next"><code>next</code></a> فقط في كل allocation. المشكلة مع هذا النهج أنه غير ممكن تخزين نوع <code>impl Trait</code> في struct field حاليًا. قد يعمل يومًا ما عندما تنفذ <a href="https://github.com/rust-lang/rfcs/pull/2071"><em>named existential types</em></a> بالكامل.</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/memory.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe impl</span><span style="color: #4EC9B0;"> FrameAllocator</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;</span><span style="color: #C586C0;"> for</span><span style="color: #4EC9B0;"> BootInfoFrameAllocator</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> allocate_frame</span><span>(&amp;</span><span style="color: #569CD6;">mut self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> Option</span><span>&lt;</span><span style="color: #4EC9B0;">PhysFrame</span><span>&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> frame</span><span> =</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">usable_frames</span><span>().</span><span style="color: #DCDCAA;">nth</span><span>(</span><span style="color: #569CD6;">self</span><span>.next);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        self</span><span>.next +=</span><span style="color: #B5CEA8;"> 1</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        frame</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>نستخدم أولاً دالة <code>usable_frames</code> للحصول على iterator من frames صالحة من memory map. ثم نستخدم دالة <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#method.nth"><code>Iterator::nth</code></a> للحصول على frame برقم <code>self.next</code> (بتخطي <code>(self.next - 1)</code> frames). قبل إعادة ذلك frame، نزيد <code>self.next</code> بأحد حتى نُعيد frame التالي في الاستدعاء التالي.</p>
+<p>هذا التنفيذ ليس مثاليًا تمامًا لأنه يُعيد إنشاء <code>usable_frame</code> allocator في كل allocation. سيكون أفضل تخزين iterator مباشرة كـ struct field بدلاً من ذلك. ثم لن نحتاج دالة <code>nth</code> ونستدعي <a rel="external" href="https://doc.rust-lang.org/core/iter/trait.Iterator.html#tymethod.next"><code>next</code></a> فقط في كل allocation. المشكلة مع هذا النهج أنه غير ممكن تخزين نوع <code>impl Trait</code> في struct field حاليًا. قد يعمل يومًا ما عندما تنفذ <a rel="external" href="https://github.com/rust-lang/rfcs/pull/2071"><em>named existential types</em></a> بالكامل.</p>
 <h4 id="using-the-bootinfoframeallocator"><a class="zola-anchor" href="#using-the-bootinfoframeallocator" aria-label="Anchor link for: using-the-bootinfoframeallocator">🔗</a>Using the <code>BootInfoFrameAllocator</code></h4>
 <p>يمكننا الآن تعديل دالة <code>kernel_main</code> لتمرير instance <code>BootInfoFrameAllocator</code> بدلاً من <code>EmptyFrameAllocator</code>:</p>
-<pre data-lang="rust" style="background-color:#1e1e1e;color:#dcdcdc;" class="language-rust "><code class="language-rust" data-lang="rust"><span style="color:#608b4e;">// in src/main.rs
-</span><span>
-</span><span style="color:#569cd6;">fn </span><span>kernel_main(boot_info: </span><span style="color:#569cd6;">&amp;&#39;static</span><span> BootInfo) -&gt; </span><span style="color:#569cd6;">! </span><span>{
-</span><span>    </span><span style="color:#569cd6;">use </span><span>blog_os::memory::BootInfoFrameAllocator;
-</span><span>    […]
-</span><span>    </span><span style="color:#569cd6;">let mut</span><span> frame_allocator = </span><span style="color:#569cd6;">unsafe </span><span>{
-</span><span>        BootInfoFrameAllocator::init(</span><span style="color:#569cd6;">&amp;</span><span>boot_info.memory_map)
-</span><span>    };
-</span><span>    […]
-</span><span>}
-</span></code></pre>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> kernel_main</span><span>(</span><span style="color: #9CDCFE;">boot_info</span><span>: &amp;&#39;</span><span style="color: #4EC9B0;">static BootInfo</span><span>) -&gt; ! {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> blog_os</span><span>::</span><span style="color: #4EC9B0;">memory</span><span>::</span><span style="color: #4EC9B0;">BootInfoFrameAllocator</span><span>;</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> frame_allocator</span><span> =</span><span style="color: #569CD6;"> unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        BootInfoFrameAllocator</span><span>::</span><span style="color: #DCDCAA;">init</span><span>(&amp;</span><span style="color: #9CDCFE;">boot_info</span><span>.memory_map)</span></span>
+<span class="giallo-l"><span>    };</span></span>
+<span class="giallo-l"><span>    […]</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
 <p>مع boot info frame allocator، ينجح التعيين ونرى <em>“New!”</em> بالأبيض على الأسود على الشاشة مرة أخرى. خلف الكواليس، تُنشئ دالة <code>map_to</code> page tables المفقودة بالطريقة التالية:</p>
 <ul>
 <li>استخدام <code>frame_allocator</code> الممرر لتخصيص frame غير مستخدمة.</li>
@@ -855,7 +831,7 @@
 <p>لا نستطيع تعيين الذاكرة الفيزيائية من نواتنا بدون الوصول إلى page tables، لذلك نحتاج دعم من bootloader. مكتبة <code>bootloader</code> تدعم إنشاء التعيين المطلوب عبر cargo features اختيارية. تمرر المعلومات المطلوبة لنواتنا في شكل وسيطة <code>&amp;BootInfo</code> لدالة entry point.</p>
 <p>لتنفيذنا، مررنا أولاً عبر page tables يدويًا لتنفيذ دالة ترجمة، ثم استخدمنا نوع <code>MappedPageTable</code> من مكتبة <code>x86_64</code>. تعلمنا أيضًا كيفية إنشاء تعيينات جديدة في page table وكيفية إنشاء <code>FrameAllocator</code> المطلوب فوق memory map الممرر من bootloader.</p>
 <h2 id="what-s-next"><a class="zola-anchor" href="#what-s-next" aria-label="Anchor link for: what-s-next">🔗</a>What’s next?</h2>
-<p>المقال التالي سيُنشئ منطقة ذاكرة heap لنواتنا، الذي سيسمح لنا <a href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html">بتخصيص ذاكرة</a> واستخدام <a href="https://doc.rust-lang.org/alloc/collections/index.html">أنواع collections</a> مختلفة.</p>
+<p>المقال التالي سيُنشئ منطقة ذاكرة heap لنواتنا، الذي سيسمح لنا <a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html">بتخصيص ذاكرة</a> واستخدام <a rel="external" href="https://doc.rust-lang.org/alloc/collections/index.html">أنواع collections</a> مختلفة.</p>
 
     </div>
 
