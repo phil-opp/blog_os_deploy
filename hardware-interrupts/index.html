@@ -219,13 +219,13 @@
 <p>Each controller can be configured through two <a href="https://os.phil-opp.com/testing/#i-o-ports">I/O ports</a>, one “command” port and one “data” port. For the primary controller, these ports are <code>0x20</code> (command) and <code>0x21</code> (data). For the secondary controller, they are <code>0xa0</code> (command) and <code>0xa1</code> (data). For more information on how the PICs can be configured, see the <a rel="external" href="https://wiki.osdev.org/8259_PIC">article on osdev.org</a>.</p>
 <h3 id="implementation"><a class="zola-anchor" href="#implementation" aria-label="Anchor link for: implementation">🔗</a>Implementation</h3>
 <p>The default configuration of the PICs is not usable because it sends interrupt vector numbers in the range of 0–15 to the CPU. These numbers are already occupied by CPU exceptions. For example, number 8 corresponds to a double fault. To fix this overlapping issue, we need to remap the PIC interrupts to different numbers. The actual range doesn’t matter as long as it does not overlap with the exceptions, but typically the range of 32–47 is chosen, because these are the first free numbers after the 32 exception slots.</p>
-<p>The configuration happens by writing special values to the command and data ports of the PICs. Fortunately, there is already a crate called <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/"><code>pic8259</code></a>, so we don’t need to write the initialization sequence ourselves. However, if you are interested in how it works, check out <a rel="external" href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">its source code</a>. It’s fairly small and well documented.</p>
+<p>The configuration happens by writing special values to the command and data ports of the PICs. Fortunately, there is already a crate called <a rel="external" href="https://docs.rs/pic8259/0.11.0/pic8259/"><code>pic8259</code></a>, so we don’t need to write the initialization sequence ourselves. However, if you are interested in how it works, check out <a rel="external" href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">its source code</a>. It’s fairly small and well documented.</p>
 <p>To add the crate as a dependency, we add the following to our project:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[dependencies]</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">pic8259</span><span> =</span><span style="color: #CE9178;"> &quot;0.10.1&quot;</span></span></code></pre>
-<p>The main abstraction provided by the crate is the <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a> struct that represents the primary/secondary PIC layout we saw above. It is designed to be used in the following way:</p>
+<span class="giallo-l"><span style="color: #9CDCFE;">pic8259</span><span> =</span><span style="color: #CE9178;"> &quot;0.11.0&quot;</span></span></code></pre>
+<p>The main abstraction provided by the crate is the <a rel="external" href="https://docs.rs/pic8259/0.11.0/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a> struct that represents the primary/secondary PIC layout we saw above. It is designed to be used in the following way:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> pic8259</span><span>::</span><span style="color: #4EC9B0;">ChainedPics</span><span>;</span></span>
@@ -245,7 +245,7 @@
 <span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init_idt</span><span>();</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #4EC9B0;"> interrupts</span><span>::PICS.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">initialize</span><span>() };</span><span style="color: #6A9955;"> // new</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>We use the <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> function to perform the PIC initialization. Like the <code>ChainedPics::new</code> function, this function is also unsafe because it can cause undefined behavior if the PIC is misconfigured.</p>
+<p>We use the <a rel="external" href="https://docs.rs/pic8259/0.11.0/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> function to perform the PIC initialization. Like the <code>ChainedPics::new</code> function, this function is also unsafe because it can cause undefined behavior if the PIC is misconfigured.</p>
 <p>If all goes well, we should continue to see the “It did not crash” message when executing <code>cargo run</code>.</p>
 <h2 id="enabling-interrupts"><a class="zola-anchor" href="#enabling-interrupts" aria-label="Anchor link for: enabling-interrupts">🔗</a>Enabling Interrupts</h2>
 <p>Until now, nothing happened because interrupts are still disabled in the CPU configuration. This means that the CPU does not listen to the interrupt controller at all, so no interrupts can reach the CPU. Let’s change that:</p>
@@ -274,10 +274,6 @@
 <span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> as_u8</span><span>(</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> u8</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        self as</span><span style="color: #4EC9B0;"> u8</span></span>
 <span class="giallo-l"><span>    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> as_usize</span><span>(</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
-<span class="giallo-l"><span style="color: #4EC9B0;">        usize</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>())</span></span>
-<span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p>The enum is a <a rel="external" href="https://doc.rust-lang.org/reference/items/enumerations.html#custom-discriminant-values-for-fieldless-enumerations">C-like enum</a> so that we can directly specify the index for each variant. The <code>repr(u8)</code> attribute specifies that each variant is represented as a <code>u8</code>. We will add more variants for other interrupts in the future.</p>
 <p>Now we can add a handler function for the timer interrupt:</p>
@@ -290,7 +286,7 @@
 <span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
 <span class="giallo-l"><span>        […]</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Timer</span><span>.</span><span style="color: #DCDCAA;">as_usize</span><span>()]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Timer</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>()]</span></span>
 <span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">timer_interrupt_handler</span><span>);</span><span style="color: #6A9955;"> // new</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
@@ -302,7 +298,7 @@
 <span class="giallo-l"><span>{</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;.&quot;</span><span>);</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>Our <code>timer_interrupt_handler</code> has the same signature as our exception handlers, because the CPU reacts identically to exceptions and external interrupts (the only difference is that some exceptions push an error code). The <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> struct implements the <a rel="external" href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> trait, so we can access individual entries through array indexing syntax.</p>
+<p>Our <code>timer_interrupt_handler</code> has the same signature as our exception handlers, because the CPU reacts identically to exceptions and external interrupts (the only difference is that some exceptions push an error code). The <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> struct implements the <a rel="external" href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> trait, so we can access individual entries through array indexing syntax.</p>
 <p>In our timer interrupt handler, we print a dot to the screen. As the timer interrupt happens periodically, we would expect to see a dot appearing on each timer tick. However, when we run it, we see that only a single dot is printed:</p>
 <p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
 <h3 id="end-of-interrupt"><a class="zola-anchor" href="#end-of-interrupt" aria-label="Anchor link for: end-of-interrupt">🔗</a>End of Interrupt</h3>
@@ -381,7 +377,7 @@
 <span class="giallo-l"><span>        WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
 <span class="giallo-l"><span>    });</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>The <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> function takes a <a rel="external" href="https://doc.rust-lang.org/book/ch13-01-closures.html">closure</a> and executes it in an interrupt-free environment. We use it to ensure that no interrupt can occur as long as the <code>Mutex</code> is locked. When we run our kernel now, we see that it keeps running without hanging. (We still don’t notice any dots, but this is because they’re scrolling by too fast. Try to slow down the printing, e.g., by putting a <code>for _ in 0..10000 {}</code> inside the loop.)</p>
+<p>The <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> function takes a <a rel="external" href="https://doc.rust-lang.org/book/ch13-01-closures.html">closure</a> and executes it in an interrupt-free environment. We use it to ensure that no interrupt can occur as long as the <code>Mutex</code> is locked. When we run our kernel now, we see that it keeps running without hanging. (We still don’t notice any dots, but this is because they’re scrolling by too fast. Try to slow down the printing, e.g., by putting a <code>for _ in 0..10000 {}</code> inside the loop.)</p>
 <p>We can apply the same change to our serial printing function to ensure that no deadlocks occur with it either:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/serial.rs</span></span>
 <span class="giallo-l"></span>
@@ -521,7 +517,7 @@
 <span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
 <span class="giallo-l"><span>        […]</span></span>
 <span class="giallo-l"><span style="color: #6A9955;">        // new</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_usize</span><span>()]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>()]</span></span>
 <span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">keyboard_interrupt_handler</span><span>);</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
@@ -558,7 +554,7 @@
 <span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>We use the <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> type of the <code>x86_64</code> crate to read a byte from the keyboard’s data port. This byte is called the <a rel="external" href="https://en.wikipedia.org/wiki/Scancode"><em>scancode</em></a> and it represents the key press/release. We don’t do anything with the scancode yet, other than print it to the screen:</p>
+<p>We use the <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/port/type.Port.html"><code>Port</code></a> type of the <code>x86_64</code> crate to read a byte from the keyboard’s data port. This byte is called the <a rel="external" href="https://en.wikipedia.org/wiki/Scancode"><em>scancode</em></a> and it represents the key press/release. We don’t do anything with the scancode yet, other than print it to the screen:</p>
 <p><img src="https://os.phil-opp.com/hardware-interrupts/qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
 <p>The above image shows me slowly typing “123”. We see that adjacent keys have adjacent scancodes and that pressing a key causes a different scancode than releasing it. But how do we translate the scancodes to the actual key actions exactly?</p>
 <h3 id="interpreting-the-scancodes"><a class="zola-anchor" href="#interpreting-the-scancodes" aria-label="Anchor link for: interpreting-the-scancodes">🔗</a>Interpreting the Scancodes</h3>
