@@ -93,8 +93,20 @@
                     <a href="#introduccion-1">Introducción</a>
                 </li><li>
                     <a href="#implementacion-2">Implementación</a>
+                </li><li>
+                    <a href="#usandolo-2">Usándolo</a>
+                </li><li>
+                    <a href="#discusion-2">Discusión</a>
+                </li><li>
+                    <a href="#variaciones">Variaciones</a>
                 </li>
             </ol>
+        </li><li>
+            <a href="#resumen">Resumen</a>
+            
+        </li><li>
+            <a href="#que-sigue">¿Qué sigue?</a>
+            
         </li>
         <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
     </ol>
@@ -171,8 +183,20 @@
                         <a href="#introduccion-1">Introducción</a>
                     </li><li>
                         <a href="#implementacion-2">Implementación</a>
+                    </li><li>
+                        <a href="#usandolo-2">Usándolo</a>
+                    </li><li>
+                        <a href="#discusion-2">Discusión</a>
+                    </li><li>
+                        <a href="#variaciones">Variaciones</a>
                     </li>
                 </ul>
+            </li><li>
+                <a href="#resumen">Resumen</a>
+                
+            </li><li>
+                <a href="#que-sigue">¿Qué sigue?</a>
+                
             </li>
             <li class="toc-comments-link"><a href="#comments">Comentarios</a></li>
         </ul>
@@ -697,7 +721,7 @@ En el segundo paso, utiliza el método <a rel="external" href="https://doc.rust-
 <p>Dado que la longitud de la lista depende del número de bloques de memoria no utilizados, el rendimiento puede variar extremadamente para diferentes programas. Un programa que solo crea un par de asignaciones experimentará un rendimiento relativamente rápido en la asignación. Sin embargo, para un programa que fragmenta el heap con muchas asignaciones, el rendimiento de la asignación será muy malo porque la lista enlazada será muy larga y contendrá en su mayoría bloques muy pequeños.</p>
 <p>Es importante notar que este problema de rendimiento no es un problema causado por nuestra implementación básica, sino un problema fundamental del enfoque de la lista enlazada. Dado que el rendimiento de asignación puede ser muy importante para el código a nivel de kernel, exploramos un tercer diseño de allocador a continuación que intercambia un rendimiento mejorado por una utilización de memoria reducida.</p>
 <h2 id="allocador-de-bloques-de-tamano-fijo"><a class="zola-anchor" href="#allocador-de-bloques-de-tamano-fijo" aria-label="Anchor link for: allocador-de-bloques-de-tamano-fijo">🔗</a>Allocador de Bloques de Tamaño Fijo</h2>
-<p>A continuación, presentamos un diseño de allocador que utiliza bloques de memoria de tamaño fijo para satisfacer las solicitudes de asignación. De esta manera, el allocador a menudo devuelve bloques que son más grandes de lo que se necesita para las asignaciones, lo que resulta en memoria desperdiciada debido a [fragmentación interna]. Por otro lado, reduce drásticamente el tiempo requerido para encontrar un bloque adecuado (en comparación con el allocador de lista enlazada), lo que resulta en un mejor rendimiento de asignación.</p>
+<p>A continuación, presentamos un diseño de allocador que utiliza bloques de memoria de tamaño fijo para satisfacer las solicitudes de asignación. De esta manera, el allocador a menudo devuelve bloques que son más grandes de lo que se necesita para las asignaciones, lo que resulta en memoria desperdiciada debido a <a rel="external" href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">fragmentación interna</a>. Por otro lado, reduce drásticamente el tiempo requerido para encontrar un bloque adecuado (en comparación con el allocador de lista enlazada), lo que resulta en un mejor rendimiento de asignación.</p>
 <h3 id="introduccion-1"><a class="zola-anchor" href="#introduccion-1" aria-label="Anchor link for: introduccion-1">🔗</a>Introducción</h3>
 <p>La idea detrás de un <em>allocador de bloques de tamaño fijo</em> es la siguiente: En lugar de asignar exactamente la cantidad de memoria solicitada, definimos un pequeño número de tamaños de bloque y redondeamos cada asignación al siguiente tamaño de bloque. Por ejemplo, con tamaños de bloque de 16, 64 y 512 bytes, una asignación de 4 bytes devolvería un bloque de 16 bytes, una asignación de 48 bytes un bloque de 64 bytes y una asignación de 128 bytes un bloque de 512 bytes.</p>
 <p>Al igual que el allocador de lista enlazada, llevamos un registro de la memoria no utilizada creando una lista enlazada en la memoria no utilizada. Sin embargo, en lugar de usar una sola lista con diferentes tamaños de bloque, creamos una lista separada para cada clase de tamaño. Cada lista solo almacena bloques de un solo tamaño. Por ejemplo, con tamaños de bloque de 16, 64 y 512, habría tres listas enlazadas separadas en la memoria:</p>
@@ -867,7 +891,86 @@ En el segundo paso, utiliza el método <a rel="external" href="https://doc.rust-
 <p>La implementación del método <code>dealloc</code> se ve así:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/allocator/fixed_size_block.rs</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::{mem,</span><span style="color: #4EC9B0;"> ptr</span><span>::</span></span></code></pre>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::{mem,</span><span style="color: #4EC9B0;"> ptr</span><span>::</span><span style="color: #4EC9B0;">NonNull</span><span>};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #6A9955;">// dentro del bloque `unsafe impl GlobalAlloc`</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">unsafe fn</span><span style="color: #DCDCAA;"> dealloc</span><span>(&amp;</span><span style="color: #569CD6;">self</span><span>,</span><span style="color: #9CDCFE;"> ptr</span><span>: *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> u8</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>:</span><span style="color: #4EC9B0;"> Layout</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">    let mut</span><span style="color: #9CDCFE;"> allocator</span><span> =</span><span style="color: #569CD6;"> self</span><span>.</span><span style="color: #DCDCAA;">lock</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #C586C0;">    match</span><span style="color: #DCDCAA;"> list_index</span><span>(&amp;</span><span style="color: #9CDCFE;">layout</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        Some</span><span>(</span><span style="color: #9CDCFE;">index</span><span>) =&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> new_node</span><span> =</span><span style="color: #4EC9B0;"> ListNode</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                next</span><span>:</span><span style="color: #9CDCFE;"> allocator</span><span>.list_heads[</span><span style="color: #9CDCFE;">index</span><span>].</span><span style="color: #DCDCAA;">take</span><span>(),</span></span>
+<span class="giallo-l"><span>            };</span></span>
+<span class="giallo-l"><span style="color: #6A9955;">            // verificar que el bloque tenga el tamaño y la alineación requeridos para almacenar el nodo</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">            assert!</span><span>(</span><span style="color: #4EC9B0;">mem</span><span>::</span><span style="color: #DCDCAA;">size_of</span><span>::&lt;</span><span style="color: #4EC9B0;">ListNode</span><span>&gt;() &lt;= BLOCK_SIZES[</span><span style="color: #9CDCFE;">index</span><span>]);</span></span>
+<span class="giallo-l"><span style="color: #DCDCAA;">            assert!</span><span>(</span><span style="color: #4EC9B0;">mem</span><span>::</span><span style="color: #DCDCAA;">align_of</span><span>::&lt;</span><span style="color: #4EC9B0;">ListNode</span><span>&gt;() &lt;= BLOCK_SIZES[</span><span style="color: #9CDCFE;">index</span><span>]);</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> new_node_ptr</span><span> =</span><span style="color: #9CDCFE;"> ptr</span><span style="color: #569CD6;"> as</span><span> *</span><span style="color: #569CD6;">mut</span><span style="color: #4EC9B0;"> ListNode</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                new_node_ptr</span><span>.</span><span style="color: #DCDCAA;">write</span><span>(</span><span style="color: #9CDCFE;">new_node</span><span>);</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                allocator</span><span>.list_heads[</span><span style="color: #9CDCFE;">index</span><span>] =</span><span style="color: #4EC9B0;"> Some</span><span>(&amp;</span><span style="color: #569CD6;">mut</span><span> *</span><span style="color: #9CDCFE;">new_node_ptr</span><span>);</span></span>
+<span class="giallo-l"><span>            }</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">        None</span><span> =&gt; {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> ptr</span><span> =</span><span style="color: #4EC9B0;"> NonNull</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span><span style="color: #9CDCFE;">ptr</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            unsafe</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">                allocator</span><span>.fallback_allocator.</span><span style="color: #DCDCAA;">deallocate</span><span>(</span><span style="color: #9CDCFE;">ptr</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>);</span></span>
+<span class="giallo-l"><span>            }</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Al igual que en <code>alloc</code>, primero utilizamos el método <code>lock</code> para obtener una referencia mutable al allocador y luego la función <code>list_index</code> para obtener la lista de bloques correspondiente al <code>Layout</code> dado. Si el índice es <code>None</code>, no existe un tamaño de bloque adecuado en <code>BLOCK_SIZES</code>, lo que indica que la asignación fue creada por el allocador de respaldo. Por lo tanto, usamos su <a rel="external" href="https://docs.rs/linked_list_allocator/0.9.0/linked_list_allocator/struct.Heap.html#method.deallocate"><code>deallocate</code></a> para liberar la memoria de nuevo. El método espera un <a rel="external" href="https://doc.rust-lang.org/nightly/core/ptr/struct.NonNull.html"><code>NonNull</code></a> en lugar de un <code>*mut u8</code>, así que primero necesitamos convertir el puntero. (La llamada a <code>unwrap</code> solo falla cuando el puntero es null, lo que nunca debería ocurrir cuando el compilador llama a <code>dealloc</code>.)</p>
+<p>Si <code>list_index</code> devuelve un índice de bloque, necesitamos agregar el bloque de memoria liberado a la lista. Para ello, primero creamos un nuevo <code>ListNode</code> que apunta a la cabeza actual de la lista (utilizando <a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#method.take"><code>Option::take</code></a> de nuevo). Antes de escribir el nuevo nodo en el bloque de memoria liberado, primero verificamos que el tamaño de bloque actual especificado por <code>index</code> tenga el tamaño y la alineación requeridos para almacenar un <code>ListNode</code>. Luego realizamos la escritura convirtiendo el puntero <code>*mut u8</code> dado a un puntero <code>*mut ListNode</code> y llamando al método unsafe <a rel="external" href="https://doc.rust-lang.org/std/primitive.pointer.html#method.write"><code>write</code></a> sobre él. El último paso es establecer el puntero de cabeza de la lista, que actualmente es <code>None</code> porque llamamos a <code>take</code> sobre él, a nuestro <code>ListNode</code> recién escrito. Para ello, convertimos el <code>new_node_ptr</code> crudo en una referencia mutable.</p>
+<p>Hay algunas cosas que vale la pena señalar:</p>
+<ul>
+<li>No diferenciamos entre bloques asignados desde una lista de bloques y bloques asignados desde el allocador de respaldo. Esto significa que los nuevos bloques creados en <code>alloc</code> se agregan a la lista de bloques en <code>dealloc</code>, aumentando así el número de bloques de ese tamaño.</li>
+<li>El método <code>alloc</code> es el único lugar donde se crean nuevos bloques en nuestra implementación. Esto significa que inicialmente comenzamos con listas de bloques vacías y solo llenamos estas listas de forma perezosa cuando se realizan asignaciones de su tamaño de bloque.</li>
+<li>No necesitamos bloques <code>unsafe</code> en <code>alloc</code> y <code>dealloc</code>, aunque realizamos algunas operaciones <code>unsafe</code>. La razón es que Rust actualmente trata el cuerpo completo de las funciones unsafe como un gran bloque <code>unsafe</code>. Dado que usar bloques <code>unsafe</code> explícitos tiene la ventaja de que es obvio qué operaciones son unsafe y cuáles no, existe una <a rel="external" href="https://github.com/rust-lang/rfcs/pull/2585">RFC propuesta</a> para cambiar este comportamiento.</li>
+</ul>
+<h3 id="usandolo-2"><a class="zola-anchor" href="#usandolo-2" aria-label="Anchor link for: usandolo-2">🔗</a>Usándolo</h3>
+<p>Para usar nuestro nuevo <code>FixedSizeBlockAllocator</code>, necesitamos actualizar el static <code>ALLOCATOR</code> en el módulo <code>allocator</code>:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/allocator.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> fixed_size_block</span><span>::</span><span style="color: #4EC9B0;">FixedSizeBlockAllocator</span><span>;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>#[global_allocator]</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">static</span><span> ALLOCATOR:</span><span style="color: #4EC9B0;"> Locked</span><span>&lt;</span><span style="color: #4EC9B0;">FixedSizeBlockAllocator</span><span>&gt; =</span><span style="color: #4EC9B0;"> Locked</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(</span></span>
+<span class="giallo-l"><span style="color: #4EC9B0;">    FixedSizeBlockAllocator</span><span>::</span><span style="color: #DCDCAA;">new</span><span>());</span></span></code></pre>
+<p>Dado que la función <code>init</code> se comporta igual para todos los allocadores que implementamos, no necesitamos modificar la llamada a <code>init</code> en <code>init_heap</code>.</p>
+<p>Cuando ahora ejecutamos nuestras pruebas <code>heap_allocation</code> de nuevo, todas las pruebas deberían seguir pasando:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test --test heap_allocation</span></span>
+<span class="giallo-l"><span>simple_allocation... [ok]</span></span>
+<span class="giallo-l"><span>large_vec... [ok]</span></span>
+<span class="giallo-l"><span>many_boxes... [ok]</span></span>
+<span class="giallo-l"><span>many_boxes_long_lived... [ok]</span></span></code></pre>
+<p>¡Nuestro nuevo allocador parece funcionar!</p>
+<h3 id="discusion-2"><a class="zola-anchor" href="#discusion-2" aria-label="Anchor link for: discusion-2">🔗</a>Discusión</h3>
+<p>Si bien el enfoque de bloques de tamaño fijo tiene un rendimiento mucho mejor que el enfoque de lista enlazada, desperdicia hasta la mitad de la memoria cuando se usan potencias de 2 como tamaños de bloque. Si este compromiso vale la pena depende en gran medida del tipo de aplicación. Para un núcleo de sistema operativo, donde el rendimiento es crítico, el enfoque de bloques de tamaño fijo parece ser la mejor opción.</p>
+<p>En cuanto a la implementación, hay varias cosas que podríamos mejorar en nuestra implementación actual:</p>
+<ul>
+<li>En lugar de asignar bloques solo de forma perezosa utilizando el allocador de respaldo, podría ser mejor rellenar previamente las listas para mejorar el rendimiento de las asignaciones iniciales.</li>
+<li>Para simplificar la implementación, solo permitimos tamaños de bloque que sean potencias de 2 para poder usarlos también como alineación del bloque. Almacenando (o calculando) la alineación de una forma diferente, también podríamos permitir tamaños de bloque arbitrarios. De esta manera, podríamos agregar más tamaños de bloque, por ejemplo, para tamaños de asignación comunes, con el fin de minimizar la memoria desperdiciada.</li>
+<li>Actualmente solo creamos nuevos bloques, pero nunca los liberamos de nuevo. Esto provoca fragmentación y podría eventualmente resultar en un fallo de asignación para asignaciones grandes. Podría tener sentido imponer una longitud máxima de lista para cada tamaño de bloque. Cuando se alcanza la longitud máxima, las desasignaciones posteriores se liberan usando el allocador de respaldo en lugar de agregarse a la lista.</li>
+<li>En lugar de recurrir a un allocador de lista enlazada, podríamos tener un allocador especial para asignaciones mayores de 4 KiB. La idea es utilizar <a href="https://os.phil-opp.com/paging-introduction/">paginación</a>, que opera sobre páginas de 4 KiB, para mapear un bloque continuo de memoria virtual a marcos físicos no continuos. De esta manera, la fragmentación de la memoria no utilizada ya no es un problema para las asignaciones grandes.</li>
+<li>Con un allocador de páginas de este tipo, podría tener sentido agregar tamaños de bloque de hasta 4 KiB y descartar por completo el allocador de lista enlazada. Las principales ventajas de esto serían una fragmentación reducida y una previsibilidad de rendimiento mejorada, es decir, un mejor rendimiento en el peor caso.</li>
+</ul>
+<p>Es importante señalar que las mejoras de implementación descritas anteriormente son solo sugerencias. Los allocadores utilizados en los núcleos de sistemas operativos suelen estar altamente optimizados para la carga de trabajo específica del núcleo, lo cual solo es posible mediante un extenso perfilado.</p>
+<h3 id="variaciones"><a class="zola-anchor" href="#variaciones" aria-label="Anchor link for: variaciones">🔗</a>Variaciones</h3>
+<p>También hay muchas variaciones del diseño de allocador de bloques de tamaño fijo. Dos ejemplos populares son el <em>allocador slab</em> y el <em>allocador buddy</em>, que también se usan en núcleos populares como Linux. A continuación, damos una breve introducción a estos dos diseños.</p>
+<h4 id="allocador-slab"><a class="zola-anchor" href="#allocador-slab" aria-label="Anchor link for: allocador-slab">🔗</a>Allocador Slab</h4>
+<p>La idea detrás de un <a rel="external" href="https://en.wikipedia.org/wiki/Slab_allocation">allocador slab</a> es usar tamaños de bloque que correspondan directamente a tipos seleccionados en el núcleo. De esta manera, las asignaciones de esos tipos se ajustan exactamente a un tamaño de bloque y no se desperdicia memoria. A veces, incluso podría ser posible preinicializar instancias de tipos en bloques no utilizados para mejorar aún más el rendimiento.</p>
+<p>La asignación slab a menudo se combina con otros allocadores. Por ejemplo, puede usarse junto con un allocador de bloques de tamaño fijo para dividir aún más un bloque asignado con el fin de reducir el desperdicio de memoria. También se usa a menudo para implementar un <a rel="external" href="https://en.wikipedia.org/wiki/Object_pool_pattern">patrón de pool de objetos</a> sobre una única asignación grande.</p>
+<h4 id="allocador-buddy"><a class="zola-anchor" href="#allocador-buddy" aria-label="Anchor link for: allocador-buddy">🔗</a>Allocador Buddy</h4>
+<p>En lugar de usar una lista enlazada para gestionar los bloques liberados, el diseño de <a rel="external" href="https://en.wikipedia.org/wiki/Buddy_memory_allocation">allocador buddy</a> utiliza una estructura de datos de <a rel="external" href="https://en.wikipedia.org/wiki/Binary_tree">árbol binario</a> junto con tamaños de bloque potencia de 2. Cuando se requiere un nuevo bloque de cierto tamaño, divide un bloque de mayor tamaño en dos mitades, creando así dos nodos hijos en el árbol. Cada vez que un bloque se libera de nuevo, se analiza su bloque vecino en el árbol. Si el vecino también está libre, los dos bloques se unen de nuevo para formar un bloque del doble de tamaño.</p>
+<p>La ventaja de este proceso de fusión es que se reduce la <a rel="external" href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#External_fragmentation">fragmentación externa</a>, de modo que los bloques pequeños liberados pueden reutilizarse para una asignación grande. Tampoco usa un allocador de respaldo, por lo que el rendimiento es más predecible. El mayor inconveniente es que solo son posibles tamaños de bloque potencia de 2, lo que podría resultar en una gran cantidad de memoria desperdiciada debido a la <a rel="external" href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">fragmentación interna</a>. Por esta razón, los allocadores buddy a menudo se combinan con un allocador slab para dividir aún más un bloque asignado en múltiples bloques más pequeños.</p>
+<h2 id="resumen"><a class="zola-anchor" href="#resumen" aria-label="Anchor link for: resumen">🔗</a>Resumen</h2>
+<p>Este post dio una visión general de diferentes diseños de allocadores. Aprendimos cómo implementar un <a href="https://os.phil-opp.com/allocator-designs/#bump-allocator">allocador de bump</a> básico, que reparte memoria linealmente incrementando un único puntero <code>next</code>. Si bien la asignación por bump es muy rápida, solo puede reutilizar memoria después de que todas las asignaciones hayan sido liberadas. Por esta razón, rara vez se usa como allocador global.</p>
+<p>A continuación, creamos un <a href="https://os.phil-opp.com/allocator-designs/#linked-list-allocator">allocador de lista enlazada</a> que utiliza los propios bloques de memoria liberados para crear una lista enlazada, la llamada <a rel="external" href="https://en.wikipedia.org/wiki/Free_list">lista libre</a>. Esta lista hace posible almacenar un número arbitrario de bloques liberados de diferentes tamaños. Si bien no se produce desperdicio de memoria, el enfoque sufre de bajo rendimiento porque una solicitud de asignación podría requerir un recorrido completo de la lista. Nuestra implementación también sufre de <a rel="external" href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#External_fragmentation">fragmentación externa</a> porque no fusiona de nuevo los bloques liberados adyacentes.</p>
+<p>Para solucionar los problemas de rendimiento del enfoque de lista enlazada, creamos un <a href="https://os.phil-opp.com/allocator-designs/#fixed-size-block-allocator">allocador de bloques de tamaño fijo</a> que predefine un conjunto fijo de tamaños de bloque. Para cada tamaño de bloque, existe una <a rel="external" href="https://en.wikipedia.org/wiki/Free_list">lista libre</a> separada, de modo que las asignaciones y desasignaciones solo necesitan insertar/extraer al frente de la lista y, por lo tanto, son muy rápidas. Dado que cada asignación se redondea al siguiente tamaño de bloque mayor, se desperdicia algo de memoria debido a la <a rel="external" href="https://en.wikipedia.org/wiki/Fragmentation_(computing)#Internal_fragmentation">fragmentación interna</a>.</p>
+<p>Hay muchos más diseños de allocadores con diferentes compromisos. La <a href="https://os.phil-opp.com/allocator-designs/#slab-allocator">asignación slab</a> funciona bien para optimizar la asignación de estructuras comunes de tamaño fijo, pero no es aplicable en todas las situaciones. La <a href="https://os.phil-opp.com/allocator-designs/#buddy-allocator">asignación buddy</a> usa un árbol binario para fusionar de nuevo los bloques liberados, pero desperdicia una gran cantidad de memoria porque solo admite tamaños de bloque potencia de 2. También es importante recordar que cada implementación de núcleo tiene una carga de trabajo única, por lo que no existe un diseño de allocador “mejor” que se ajuste a todos los casos.</p>
+<h2 id="que-sigue"><a class="zola-anchor" href="#que-sigue" aria-label="Anchor link for: que-sigue">🔗</a>¿Qué sigue?</h2>
+<p>Con este post, concluimos por ahora nuestra implementación de gestión de memoria. A continuación, comenzaremos a explorar la <a rel="external" href="https://en.wikipedia.org/wiki/Computer_multitasking"><em>multitarea</em></a>, empezando por la multitarea cooperativa en forma de <a rel="external" href="https://rust-lang.github.io/async-book/01_getting_started/04_async_await_primer.html"><em>async/await</em></a>. En posts posteriores, exploraremos luego los <a rel="external" href="https://en.wikipedia.org/wiki/Thread_(computing)"><em>hilos</em></a>, el <a rel="external" href="https://en.wikipedia.org/wiki/Multiprocessing"><em>multiprocesamiento</em></a> y los <a rel="external" href="https://en.wikipedia.org/wiki/Process_(computing)"><em>procesos</em></a>.</p>
+
     </div>
 
     <div class="post-footer-support">
