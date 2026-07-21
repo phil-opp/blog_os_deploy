@@ -328,7 +328,7 @@
 </tbody></table>
 <p><strong>特権スタックテーブル</strong>は特権レベルが変わった際にCPUが使用します。例えば、CPUがユーザーモード（特権レベル3）の時に例外が発生した場合、CPUは通常例外ハンドラを呼び出す前にカーネルモード（特権レベル0）に切り替わります。この場合、CPUは特権レベルスタックテーブルの0番目のスタックに切り替わります。ユーザーモードについてはまだ実装してないため、このテープルはとりあえず無視しておきましょう。</p>
 <h3 id="tsswotukuru"><a class="zola-anchor" href="#tsswotukuru" aria-label="Anchor link for: tsswotukuru">🔗</a>TSSをつくる</h3>
-<p>割り込みスタックテーブルにダブルフォルト用のスタックを含めた新しいTSSをつくってみましょう。そのためにはTSS構造体が必要です。幸いにも、すでに<code>x86_64</code>クレートに<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/tss/struct.TaskStateSegment.html"><code>TaskStateSegment</code>構造体</a>が含まれているので、これを使っていきます。</p>
+<p>割り込みスタックテーブルにダブルフォルト用のスタックを含めた新しいTSSをつくってみましょう。そのためにはTSS構造体が必要です。幸いにも、すでに<code>x86_64</code>クレートに<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/tss/struct.TaskStateSegment.html"><code>TaskStateSegment</code>構造体</a>が含まれているので、これを使っていきます。</p>
 <p>新しい<code>gdt</code>モジュール内でTSSをつくります（名前の意味は後でわかるでしょう）：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
 <span class="giallo-l"></span>
@@ -350,7 +350,7 @@
 <span class="giallo-l"><span style="color: #569CD6;">            static mut</span><span> STACK: [</span><span style="color: #4EC9B0;">u8</span><span>; STACK_SIZE] = [</span><span style="color: #B5CEA8;">0</span><span>; STACK_SIZE];</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> stack_start</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">from_ptr</span><span>(&amp;</span><span style="color: #9CDCFE;">raw</span><span style="color: #569CD6;"> const</span><span> STACK);</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> stack_end</span><span> =</span><span style="color: #9CDCFE;"> stack_start</span><span> + STACK_SIZE;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> stack_end</span><span> =</span><span style="color: #9CDCFE;"> stack_start</span><span> + STACK_SIZE</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>;</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">            stack_end</span></span>
 <span class="giallo-l"><span>        };</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        tss</span></span>
@@ -377,8 +377,8 @@
 <span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> GDT:</span><span style="color: #4EC9B0;"> GlobalDescriptorTable</span><span> = {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> gdt</span><span> =</span><span style="color: #4EC9B0;"> GlobalDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;TSS));</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span><span>.</span><span style="color: #DCDCAA;">append</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span><span>.</span><span style="color: #DCDCAA;">append</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;TSS));</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span></span>
 <span class="giallo-l"><span>    };</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
@@ -414,8 +414,8 @@
 <span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> GDT: (</span><span style="color: #4EC9B0;">GlobalDescriptorTable</span><span>,</span><span style="color: #4EC9B0;"> Selectors</span><span>) = {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> gdt</span><span> =</span><span style="color: #4EC9B0;"> GlobalDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> code_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> tss_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;TSS));</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> code_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">append</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> tss_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">append</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;TSS));</span></span>
 <span class="giallo-l"><span>        (</span><span style="color: #9CDCFE;">gdt</span><span>,</span><span style="color: #4EC9B0;"> Selectors</span><span> {</span><span style="color: #9CDCFE;"> code_selector</span><span>,</span><span style="color: #9CDCFE;"> tss_selector</span><span> })</span></span>
 <span class="giallo-l"><span>    };</span></span>
 <span class="giallo-l"><span>}</span></span>
@@ -428,16 +428,16 @@
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/gdt.rs</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init</span><span>() {</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">segmentation</span><span>::set_cs;</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">tables</span><span>::load_tss;</span></span>
-<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #569CD6;">    use</span><span style="color: #4EC9B0;"> x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #4EC9B0;">segmentation</span><span>::{</span><span style="color: #4EC9B0;">CS</span><span>,</span><span style="color: #4EC9B0;"> Segment</span><span>};</span></span>
+<span class="giallo-l"><span>    </span></span>
 <span class="giallo-l"><span>    GDT.</span><span style="color: #B5CEA8;">0.</span><span style="color: #DCDCAA;">load</span><span>();</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span></span>
-<span class="giallo-l"><span style="color: #DCDCAA;">        set_cs</span><span>(GDT.</span><span style="color: #B5CEA8;">1.</span><span>code_selector);</span></span>
+<span class="giallo-l"><span>        CS::</span><span style="color: #DCDCAA;">set_reg</span><span>(GDT.</span><span style="color: #B5CEA8;">1.</span><span>code_selector);</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">        load_tss</span><span>(GDT.</span><span style="color: #B5CEA8;">1.</span><span>tss_selector);</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p><a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/segmentation/fn.set_cs.html"><code>set_cs</code></a>を使ってコードセグメントレジスタを再読み込みして、<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>を使ってTSSを読み込んでいます。これらの関数は<code>unsafe</code>とマークされているので、呼び出すには<code>unsafe</code>ブロックが必要です。<code>unsafe</code>なのは、不正なセレクタを読み込むことでメモリ安全性を壊す可能性があるからです。</p>
+<p><a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/segmentation/struct.CS.html#method.set_reg"><code>CS::set_reg</code></a>を使ってコードセグメントレジスタを再読み込みして、<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>を使ってTSSを読み込んでいます。これらの関数は<code>unsafe</code>とマークされているので、呼び出すには<code>unsafe</code>ブロックが必要です。<code>unsafe</code>なのは、不正なセレクタを読み込むことでメモリ安全性を壊す可能性があるからです。</p>
 <p>これで正常なTSSと割り込みスタックテーブルを読み込んだので、私達はIDT内のダブルフォルトハンドラにスタックインデックスをセットすることができます：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
 <span class="giallo-l"></span>

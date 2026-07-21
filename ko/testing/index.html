@@ -226,6 +226,16 @@
 <p>이 글은 이전에 작성된 글들 <a href="https://os.phil-opp.com/unit-testing/"><em>Unit Testing</em></a>과 <a href="https://os.phil-opp.com/integration-tests/"><em>Integration Tests</em></a>를 대체합니다 (예전에 작성된 이 두 포스트의 내용은 오래전 내용이라 현재는 더 이상 유효하지 않습니다). 이 글은 독자가 2019년 4월 27일 이후에 글 <a href="https://os.phil-opp.com/minimal-rust-kernel/"><em>A Minimal Rust Kernel</em></a>을 읽고 따라 실습해봤다는 가정하에 작성했습니다. 독자는 해당 포스트에서 작성했던 파일 <code> .cargo/config.toml</code>을 가지고 있어야 합니다. 이 파일은 <a href="https://os.phil-opp.com/minimal-rust-kernel/#set-a-default-target">컴파일 대상 환경을 설정</a>하고 <a href="https://os.phil-opp.com/minimal-rust-kernel/#using-cargo-run">프로그램 실행 시작을 담당하는 실행 파일을 정의</a>합니다.</p>
 <h2 id="rust-peurogeuraem-teseuteuhagi"><a class="zola-anchor" href="#rust-peurogeuraem-teseuteuhagi" aria-label="Anchor link for: rust-peurogeuraem-teseuteuhagi">🔗</a>Rust 프로그램 테스트하기</h2>
 <p>Rust 언어에 <a rel="external" href="https://doc.rust-lang.org/book/ch11-00-testing.html">내장된 자체 테스트 프레임워크</a>를 사용하면 복잡한 초기 설정 과정 없이 유닛 테스트들을 실행할 수 있습니다. 작성한 함수에 가정 설정문 (assertion check)들을 삽입한 후, 함수 선언 바로 앞에 <code>#[test]</code> 속성을 추가하기만 하면 됩니다. 그 후에 <code>cargo test</code> 명령어를 실행하면 <code>cargo</code>가 자동으로 크레이트의 모든 테스트 함수들을 발견하고 실행합니다.</p>
+<p>우리의 커널 바이너리에 대해 테스트를 활성화하려면, <code>Cargo.toml</code>에서 <code>test</code> 플래그를 <code>true</code>로 설정하면 됩니다:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[[bin]]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">name</span><span> =</span><span style="color: #CE9178;"> &quot;blog_os&quot;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">test</span><span> =</span><span style="color: #569CD6;"> true</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">bench</span><span> =</span><span style="color: #569CD6;"> false</span></span></code></pre>
+<p>이 <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#configuring-a-target"><code>[[bin]]</code> 섹션</a>은 <code>cargo</code>가 우리의 <code>blog_os</code> 실행 파일을 어떻게 컴파일해야 하는지 지정합니다.
+<code>test</code> 필드는 이 실행 파일에 대해 테스트가 지원되는지 여부를 지정합니다.
+<a href="https://os.phil-opp.com/freestanding-rust-binary/#making-rust-analyzer-happy"><code>rust-analyzer</code>를 위해</a> 첫 번째 글에서는 <code>test = false</code>로 설정했지만, 이제는 테스트를 활성화하려 하므로 다시 <code>true</code>로 설정합니다.</p>
 <p>안타깝게도 우리의 커널처럼 <code>no_std</code> 환경에서 구동할 프로그램은 Rust가 기본으로 제공하는 테스트 프레임워크를 이용하기 어렵습니다. Rust의 테스트 프레임워크는 기본적으로 언어에 내장된 <a rel="external" href="https://doc.rust-lang.org/test/index.html"><code>test</code></a> 라이브러리를 사용하는데, 이 라이브러리는 Rust 표준 라이브러리를 이용합니다. 우리의 <code>#no_std</code> 커널을 테스트할 때는 Rust의 기본 테스트 프레임워크를 사용할 수 없습니다.</p>
 <p>프로젝트 디렉터리 안에서 <code>cargo test</code> 명령어를 실행하면 아래와 같은 오류가 발생합니다:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test</span></span>
@@ -243,7 +253,7 @@
 <span class="giallo-l"><span>#![test_runner(</span><span style="color: #569CD6;">crate</span><span>::test_runner)]</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>#[cfg(test)]</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #DCDCAA;"> Fn</span><span>()]) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #DCDCAA;"> Fn</span><span>()]) {</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;Running {} tests&quot;</span><span>,</span><span style="color: #9CDCFE;"> tests</span><span>.</span><span style="color: #DCDCAA;">len</span><span>());</span></span>
 <span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> test</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> tests</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">        test</span><span>();</span></span>
@@ -252,7 +262,7 @@
 <p><code>test_runner</code>는 짧은 디버그 메시지를 출력한 후 주어진 리스트의 각 테스트 함수를 호출합니다. 인자 타입 <code>&amp;[&amp; dyn Fn()]</code>은 <a rel="external" href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><em>Fn()</em></a> 트레이트를 구현하는 타입에 대한 레퍼런스들의 <a rel="external" href="https://doc.rust-lang.org/std/primitive.slice.html"><em>slice</em></a>입니다. 좀 더 쉽게 말하면 이것은 함수처럼 호출될 수 있는 타입에 대한 레퍼런스들의 리스트입니다. <code>test_runner</code> 함수는 테스트 용도 외에 쓸모가 없기에 <code>#[cfg(test)]</code> 속성을 적용하여 테스트 시에만 빌드합니다.</p>
 <p><code>cargo test</code>를 다시 시도하면 실행이 성공할 것입니다 (실행이 실패한다면 아래의 노트를 확인해주세요). 하지만 “Hello World” 메시지만 출력될 뿐 <code>test_runner</code>로부터의 메시지는 출력되지 않는데, 아직 <code>_start</code> 함수를 프로그램 실행 시작 함수로 이용하고 있기 때문입니다. 우리가 <code>#[no_main]</code> 속성을 통해 별도의 실행 시작 함수를 사용하고 있기에, 커스텀 테스트 프레임워크가 <code>test_runner</code>를 호출하려고 생성한 <code>main</code>함수가 이용되지 않고 있습니다.</p>
 <div class = "warning">
-<p><strong>각주:</strong> 특정 상황에서 <code>cargo test</code> 실행 시 “duplicate lang item” 오류가 발생하는 버그가 존재합니다. <code>Cargo.toml</code>에 <code>panic = "abort"</code> 설정이 있으면 해당 오류가 발생할 수 있습니다. 해당 설정을 제거하면 <code>cargo test</code> 실행 시 오류가 발생하지 않을 것입니다. 더 자세한 정보는 <a rel="external" href="https://github.com/rust-lang/cargo/issues/7359">해당 버그에 대한 깃헙 이슈</a>를 참조해주세요.</p>
+<p><strong>각주:</strong> 특정 상황에서 <code>cargo test</code> 실행 시 “duplicate lang item” 오류가 발생하는 버그가 존재합니다. <code>Cargo.toml</code>에 <code>panic = "abort"</code> 설정이 있으면 해당 오류가 발생할 수 있습니다. 해당 설정을 제거하면 <code>cargo test</code> 실행 시 오류가 발생하지 않을 것입니다. 만약 그래도 해결되지 않는다면, <code>.cargo/config.toml</code> 파일의 <code>[unstable]</code> 섹션에 <code>panic-abort-tests = true</code>를 추가해보세요. 더 자세한 정보는 <a rel="external" href="https://github.com/rust-lang/cargo/issues/7359">해당 버그에 대한 깃헙 이슈</a>를 참조해주세요.</p>
 </div>
 <p>이 문제를 해결하려면 우선 <code>reexport_test_harness_main</code> 속성을 사용해 테스트 프레임워크가 생성하는 함수의 이름을 <code>main</code> 이외의 이름으로 변경해야 합니다. 그 후에 <code>_start</code> 함수로부터 이름이 변경된 이 함수를 호출할 것입니다.</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
@@ -302,8 +312,8 @@
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[dependencies]</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">x86_64</span><span> =</span><span style="color: #CE9178;"> &quot;0.14.2&quot;</span></span></code></pre>
-<p><code>x86_64</code> 크레이트가 제공하는 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> 타입을 사용해 아래처럼 <code>exit_qemu</code> 함수를 작성합니다:</p>
+<span class="giallo-l"><span style="color: #9CDCFE;">x86_64</span><span> =</span><span style="color: #CE9178;"> &quot;0.15.5&quot;</span></span></code></pre>
+<p><code>x86_64</code> 크레이트가 제공하는 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/port/type.Port.html"><code>Port</code></a> 타입을 사용해 아래처럼 <code>exit_qemu</code> 함수를 작성합니다:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>,</span><span style="color: #4EC9B0;"> PartialEq</span><span>,</span><span style="color: #4EC9B0;"> Eq</span><span>)]</span></span>
@@ -321,7 +331,7 @@
 <span class="giallo-l"><span style="color: #9CDCFE;">        port</span><span>.</span><span style="color: #DCDCAA;">write</span><span>(</span><span style="color: #9CDCFE;">exit_code</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u32</span><span>);</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>이 함수는 새로운 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a>를 주소 <code>0xf4</code>(<code>isa-debug-exit</code> 장치의 <code>iobase</code>)에 생성합니다. 그다음 인자로 받은 종료 상태 코드를 포트로 전달합니다. 여기서 <code>u32</code> 타입을 사용하는 이유는 앞에서 우리가 <code>isa-debug-exit</code> 장치의 <code>iosize</code>를 4 바이트로 설정했기 때문입니다. 입출력 포트에 값을 쓰는 것은 잘못하면 프로그램이 예상치 못한 행동을 보일 수 있어 위험하다고 간주합니다. 따라서 이 함수가 처리하는 두 작업 모두 <code>unsafe</code> 블록 안에 배치해야 합니다.</p>
+<p>이 함수는 새로운 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/port/type.Port.html"><code>Port</code></a>를 주소 <code>0xf4</code>(<code>isa-debug-exit</code> 장치의 <code>iobase</code>)에 생성합니다. 그다음 인자로 받은 종료 상태 코드를 포트로 전달합니다. 여기서 <code>u32</code> 타입을 사용하는 이유는 앞에서 우리가 <code>isa-debug-exit</code> 장치의 <code>iosize</code>를 4 바이트로 설정했기 때문입니다. 입출력 포트에 값을 쓰는 것은 잘못하면 프로그램이 예상치 못한 행동을 보일 수 있어 위험하다고 간주합니다. 따라서 이 함수가 처리하는 두 작업 모두 <code>unsafe</code> 블록 안에 배치해야 합니다.</p>
 <p><code>QemuExitCode</code> enum 타입을 이용하여 프로그램 종료 상태를 표현합니다. 모든 테스트가 성공적으로 실행되었다면 “성공” 종료 코드를 반환하고 그렇지 않았다면 “실패” 종료 코드를 반환하도록 구현할 것입니다. enum에는 <code>#[repr(u32)]</code> 속성이 적용하여 enum의 각 분류 값은 <code>u32</code> 타입의 값으로 표현됩니다. <code>0x10</code>을 성공 종료 코드로 사용하고 <code>0x11</code>을 실패 종료 코드로 사용할 것입니다. QEMU가 이미 사용 중인 종료 코드와 중복되지만 않는다면, 어떤 값을 성공/실패 종료 코드로 사용하는지는 크게 중요하지 않습니다. <code>0</code>을 성공 종료 코드로 사용하는 것은 바람직하지 않은데, 그 이유는 종료 코드 변환 결과인 <code>(0 &lt;&lt; 1) | 1 = 1</code>의 값이 QEMU가 실행 실패 시 반환하는 코드와 동일하기 때문입니다. 이 경우 종료 코드만으로는 QEMU가 실행을 실패한 것인지 모든 테스트가 성공적으로 실행된 것인지 구분하기 어렵습니다.</p>
 <p>이제 <code>test_runner</code> 함수를 수정하여 모든 테스트 실행 완료 시 QEMU가 종료하도록 합니다.</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
@@ -547,7 +557,7 @@
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>#[cfg(test)]</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #4EC9B0;"> Testable</span><span>]) {</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> test_runner</span><span>(</span><span style="color: #9CDCFE;">tests</span><span>: &amp;[&amp;</span><span style="color: #569CD6;">dyn</span><span style="color: #4EC9B0;"> Testable</span><span>]) {</span><span style="color: #6A9955;"> // new</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;Running {} tests&quot;</span><span>,</span><span style="color: #9CDCFE;"> tests</span><span>.</span><span style="color: #DCDCAA;">len</span><span>());</span></span>
 <span class="giallo-l"><span style="color: #C586C0;">    for</span><span style="color: #9CDCFE;"> test</span><span style="color: #569CD6;"> in</span><span style="color: #9CDCFE;"> tests</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        test</span><span>.</span><span style="color: #DCDCAA;">run</span><span>();</span><span style="color: #6A9955;"> // new</span></span>
@@ -632,7 +642,7 @@
 <p>각 통합 테스트는 독립된 실행파일이기에 각각마다의 크레이트 속성(<code>no_std</code>, <code>no_main</code>, <code>test_runner</code> 등)들을 새로 설정해줘야 합니다. 테스트 시작 함수인 <code>test_main</code>을 호출할 실행 시작 함수 <code>_start</code> 또한 새로 만들어줘야 합니다. 통합 테스트는 테스트 모드가 아닌 이상 빌드되지 않기에 테스트 함수들에 <code>cfg(test)</code> 속성을 부여할 필요가 없습니다.</p>
 <p><code>test_runner</code> 함수에는 항상 패닉하는 <a rel="external" href="https://doc.rust-lang.org/core/macro.unimplemented.html"><code>unimplemented</code></a> 매크로를 넣었고, 패닉 핸들러에는 무한 루프를 넣었습니다.
 이 테스트 또한 <code>main.rs</code>에서 작성한 테스트와 동일하게 <code>serial_println</code> 매크로 및 <code>exit_qemu</code> 함수를 이용해 작성하면 좋겠지만, 해당 함수들은 별도의 컴파일 유닛인 <code>main.rs</code>에 정의되어 있기에 <code>basic_boot.rs</code>에서는 사용할 수 없습니다.</p>
-<p><code>cargo test</code> 명령어를 실행하면 패닉 핸들러 내의 무한 루프 때문에 실행이 끝나지 않습니다. 키보드에서 <code>Ctrl+c</code>를 입력해야 QEMU의 실행을 종료할 수 있습니다.</p>
+<p><code>cargo test</code> 명령어를 실행하면 패닉 핸들러 내의 무한 루프 때문에 실행이 끝나지 않습니다. 키보드에서 <code>ctrl+c</code>를 입력해야 QEMU의 실행을 종료할 수 있습니다.</p>
 <h3 id="raibeureori-saengseonghagi"><a class="zola-anchor" href="#raibeureori-saengseonghagi" aria-label="Anchor link for: raibeureori-saengseonghagi">🔗</a>라이브러리 생성하기</h3>
 <p><code>main.rs</code>에서 작성한 코드 일부를 따로 라이브러리 형태로 분리한 후, 통합 테스트에서 해당 라이브러리를 로드하여 필요한 함수들을 사용할 것입니다. 우선 아래와 같이 새 파일 <code>src/lib.rs</code>를 생성합니다.</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// src/lib.rs</span></span>

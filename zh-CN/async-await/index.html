@@ -1204,7 +1204,7 @@
 <span class="giallo-l"><span>        }</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>该方法只需循环调用 <code>run_ready_tasks</code> 函数。虽然理论上我们可以在 <code>tasks</code> map 为空时从函数返回，但由于我们的 <code>keyboard_task</code> 永远不会完成，这种情况永远不会发生，因此一个简单的 <code>loop</code> 循环就足够了。由于该函数永远不会返回，我们使用 <code>!</code> 返回类型将函数标记为发散。</p>
+<p>该方法只需循环调用 <code>run_ready_tasks</code> 函数。虽然理论上我们可以在 <code>tasks</code> map 为空时从函数返回，但由于我们的 <code>keyboard::print_keypresses</code> 任务永远不会完成，这种情况永远不会发生，因此一个简单的 <code>loop</code> 循环就足够了。由于该函数永远不会返回，我们使用 <code>!</code> 返回类型将函数标记为发散。</p>
 <p>现在我们可以修改 <code>kernel_main</code> 来使用新的 <code>Executor</code> 替代 <code>SimpleExecutor</code>：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
 <span class="giallo-l"></span>
@@ -1241,14 +1241,14 @@
 <span class="giallo-l"><span>        }</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>由于我们在 <code>run_ready_tasks</code> 之后直接调用了 <code>sleep_if_idle</code> ，而该函数会循环执行直到 <code>task_queue</code> 为空，再次检查队列可能显得多余。然而，硬件中断可能在 <code>run_ready_tasks</code> 返回后立即发生，因此在调用 <code>sleep_if_idle</code> 函数时可能会有新任务进入队列。仅当队列仍为空时，我们才会使用 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/index.html"><code>x86_64</code></a> crate 提供的 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/fn.hlt.html"><code>instructions::hlt</code></a> 包装函数来执行 <code>hlt</code> 指令使 CPU 进入休眠。</p>
+<p>由于我们在 <code>run_ready_tasks</code> 之后直接调用了 <code>sleep_if_idle</code> ，而该函数会循环执行直到 <code>task_queue</code> 为空，再次检查队列可能显得多余。然而，硬件中断可能在 <code>run_ready_tasks</code> 返回后立即发生，因此在调用 <code>sleep_if_idle</code> 函数时可能会有新任务进入队列。仅当队列仍为空时，我们才会使用 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/index.html"><code>x86_64</code></a> crate 提供的 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/fn.hlt.html"><code>instructions::hlt</code></a> 包装函数来执行 <code>hlt</code> 指令使 CPU 进入休眠。</p>
 <p>遗憾的是，这个实现中仍存在一个微妙的竞态条件。由于中断是异步的且可能在任何时刻发生，有可能在 <code>is_empty</code> 检查与 <code>hlt</code> 调用之间恰好发生中断：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #C586C0;">if</span><span style="color: #569CD6;"> self</span><span>.task_queue.</span><span style="color: #DCDCAA;">is_empty</span><span>() {</span></span>
 <span class="giallo-l"><span style="color: #6A9955;">    /// &lt;--- 中断可能在此处发生</span></span>
 <span class="giallo-l"><span style="color: #4EC9B0;">    x86_64</span><span>::</span><span style="color: #4EC9B0;">instructions</span><span>::</span><span style="color: #DCDCAA;">hlt</span><span>();</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p>若此时中断向 <code>task_queue</code> 推送了任务，我们就会让 CPU 进入休眠，尽管此时队列中已有任务等待运行。最坏情况下，这可能导致键盘中断的处理被延迟，直至下一次按键或定时器中断。那么我们该如何防止这种情况呢？</p>
-<p>答案是在检查前禁用 CPU 中断，并在之后与 <code>hlt</code> 指令一起原子性地重新启用中断。这样，中间发生的所有中断都会被延迟到执行 <code>hlt</code> 指令后，确保不会错过任何唤醒动作。为实现这一方法，我们可以使用 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/index.html"><code>x86_64</code></a> crate 提供的 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.enable_and_hlt.html"><code>interrupts::enable_and_hlt</code></a> 函数。</p>
+<p>答案是在检查前禁用 CPU 中断，并在之后与 <code>hlt</code> 指令一起原子性地重新启用中断。这样，中间发生的所有中断都会被延迟到执行 <code>hlt</code> 指令后，确保不会错过任何唤醒动作。为实现这一方法，我们可以使用 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/index.html"><code>x86_64</code></a> crate 提供的 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/interrupts/fn.enable_and_hlt.html"><code>interrupts::enable_and_hlt</code></a> 函数。</p>
 <p>更新后的 <code>sleep_if_idle</code> 函数实现如下：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/task/executor.rs</span></span>
 <span class="giallo-l"></span>

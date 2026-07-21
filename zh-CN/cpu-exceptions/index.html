@@ -221,7 +221,7 @@
 </ol>
 <p>不过现在我们不必为4和5多加纠结，未来我们会单独讲解全局描述符表和硬件中断的。</p>
 <h2 id="idtlei-xing"><a class="zola-anchor" href="#idtlei-xing" aria-label="Anchor link for: idtlei-xing">🔗</a>IDT类型</h2>
-<p>与其创建我们自己的IDT类型映射，不如直接使用 <code>x86_64</code> crate 内置的 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code> 结构</a>，其实现是这样的：</p>
+<p>与其创建我们自己的IDT类型映射，不如直接使用 <code>x86_64</code> crate 内置的 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code> 结构</a>，其实现是这样的：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span>#[repr(</span><span style="color: #4EC9B0;">C</span><span>)]</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub struct</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    pub</span><span style="color: #9CDCFE;"> divide_by_zero</span><span>:</span><span style="color: #4EC9B0;"> Entry</span><span>&lt;</span><span style="color: #4EC9B0;">HandlerFunc</span><span>&gt;,</span></span>
@@ -246,7 +246,7 @@
 <span class="giallo-l"><span style="color: #569CD6;">    pub</span><span style="color: #9CDCFE;"> security_exception</span><span>:</span><span style="color: #4EC9B0;"> Entry</span><span>&lt;</span><span style="color: #4EC9B0;">HandlerFuncWithErrCode</span><span>&gt;,</span></span>
 <span class="giallo-l"><span style="color: #6A9955;">    // some fields omitted</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>每一个字段都是 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.Entry.html"><code>idt::Entry&lt;F&gt;</code></a> 类型，这个类型包含了一条完整的IDT条目（定义参见上文）。 其泛型参数 <code>F</code> 定义了中断处理函数的类型，在有些字段中该参数为 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFunc.html"><code>HandlerFunc</code></a>，而有些则是 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>，而对于 page fault 这种特殊异常，则为 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.PageFaultHandlerFunc.html"><code>PageFaultHandlerFunc</code></a>。</p>
+<p>每一个字段都是 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/struct.Entry.html"><code>idt::Entry&lt;F&gt;</code></a> 类型，这个类型包含了一条完整的IDT条目（定义参见上文）。 其泛型参数 <code>F</code> 定义了中断处理函数的类型，在有些字段中该参数为 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/type.HandlerFunc.html"><code>HandlerFunc</code></a>，而有些则是 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>，而对于 page fault 这种特殊异常，则为 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/type.PageFaultHandlerFunc.html"><code>PageFaultHandlerFunc</code></a>。</p>
 <p>首先让我们看一看 <code>HandlerFunc</code> 类型的定义：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #569CD6;">type</span><span style="color: #4EC9B0;"> HandlerFunc</span><span> =</span><span style="color: #569CD6;"> extern</span><span style="color: #CE9178;"> &quot;x86-interrupt&quot;</span><span style="color: #DCDCAA;"> fn</span><span>(</span><span style="color: #9CDCFE;">_</span><span>:</span><span style="color: #4EC9B0;"> InterruptStackFrame</span><span>);</span></span></code></pre>
 <p>这是一个针对 <code>extern "x86-interrupt" fn</code> 类型的 <a rel="external" href="https://doc.rust-lang.org/book/ch20-03-advanced-types.html#creating-type-synonyms-with-type-aliases">类型别名</a>。<code>extern</code> 关键字使用 <a rel="external" href="https://doc.rust-lang.org/nomicon/ffi.html#foreign-calling-conventions">外部调用约定</a> 定义了一个函数，这种定义方式多用于和C语言代码通信（<code>extern "C" fn</code>），那么这里的外部调用约定又究竟调用了哪些东西？</p>
@@ -278,10 +278,11 @@
 <p>当一个常规函数调用发生时（使用 <code>call</code> 指令），CPU会在跳转目标函数之前，将返回地址入栈。当函数返回时（使用 <code>ret</code> 指令），CPU会在跳回目标函数之前弹出返回地址。所以常规函数调用的栈帧看起来是这样的：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/cpu-exceptions/function-stack-frame.svg" alt="function stack frame" /></p>
 <p>对于错误和中断处理函数，仅仅压入一个返回地址并不足够，因为中断处理函数通常会运行在一个不那么一样的上下文中（栈指针、CPU flags等等）。所以CPU在遇到中断发生时是这么处理的：</p>
-<ol>
+<ol start="0">
+<li><strong>保存旧的栈指针</strong>: CPU会读取栈指针寄存器（<code>rsp</code>）和栈段寄存器（<code>ss</code>）的值，并将它们记录到一个内部缓冲区中。</li>
 <li><strong>对齐栈指针</strong>: 任何指令都有可能触发中断，所以栈指针可能是任何值，而部分CPU指令（比如部分SSE指令）需要栈指针16字节边界对齐，因此CPU会在中断触发后立刻为其进行对齐。</li>
 <li><strong>切换栈</strong> （部分情况下）: 当CPU特权等级改变时，例如当一个用户态程序触发CPU异常时，会触发栈切换。该行为也可能被所谓的 <em>中断栈表</em> 配置，在特定中断中触发，关于该表，我们会在下一篇文章做出讲解。</li>
-<li><strong>压入旧的栈指针</strong>: 当中断发生后，栈指针对齐之前，CPU会将栈指针寄存器（<code>rsp</code>）和栈段寄存器（<code>ss</code>）的数据入栈，由此可在中断处理函数返回后，恢复上一层的栈指针。</li>
+<li><strong>压入旧的栈指针</strong>: CPU会将步骤0中的 <code>rsp</code> 和 <code>ss</code> 值入栈，由此可在中断处理函数返回后，恢复上一层的栈指针。</li>
 <li><strong>压入并更新 <code>RFLAGS</code> 寄存器</strong>: <a rel="external" href="https://en.wikipedia.org/wiki/FLAGS_register"><code>RFLAGS</code></a> 寄存器包含了各式各样的控制位和状态位，当中断发生时，CPU会改变其中的部分数值，并将旧值入栈。</li>
 <li><strong>压入指令指针</strong>: 在跳转中断处理函数之前，CPU会将指令指针寄存器（<code>rip</code>）和代码段寄存器（<code>cs</code>）的数据入栈，此过程与常规函数调用中返回地址入栈类似。</li>
 <li><strong>压入错误码</strong> （针对部分异常）: 对于部分特定的异常，比如 page faults ，CPU会推入一个错误码用于标记错误的成因。</li>
@@ -289,7 +290,7 @@
 </ol>
 <p>所以 <em>中断栈帧</em> 看起来是这样的：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/cpu-exceptions/exception-stack-frame.svg" alt="interrupt stack frame" /></p>
-<p>在 <code>x86_64</code> crate 中，中断栈帧已经被 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptStackFrame.html"><code>InterruptStackFrame</code></a> 结构完整表达，该结构会以 <code>&amp;mut</code> 的形式传入处理函数，并可以用于查询错误发生的更详细的原因。但该结构并不包含错误码字段，因为只有极少量的错误会传入错误码，所以对于这类需要传入 <code>error_code</code> 的错误，其函数类型变为了 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>。</p>
+<p>在 <code>x86_64</code> crate 中，中断栈帧已经被 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/struct.InterruptStackFrame.html"><code>InterruptStackFrame</code></a> 结构完整表达，该结构会以 <code>&amp;mut</code> 的形式传入处理函数，并可以用于查询错误发生的更详细的原因。但该结构并不包含错误码字段，因为只有极少量的错误会传入错误码，所以对于这类需要传入 <code>error_code</code> 的错误，其函数类型变为了 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/type.HandlerFuncWithErrCode.html"><code>HandlerFuncWithErrCode</code></a>。</p>
 <h3 id="mu-hou-hua-xu"><a class="zola-anchor" href="#mu-hou-hua-xu" aria-label="Anchor link for: mu-hou-hua-xu">🔗</a>幕后花絮</h3>
 <p><code>x86-interrupt</code> 调用约定是一个十分厉害的抽象，它几乎隐藏了所有错误处理函数中的凌乱细节，但尽管如此，了解一下水面下发生的事情还是有用的。我们来简单介绍一下被 <code>x86-interrupt</code> 隐藏起来的行为：</p>
 <ul>
@@ -343,7 +344,7 @@
 <span class="giallo-l"><span>   = help: add #![feature(abi_x86_interrupt)] to the crate attributes to enable</span></span></code></pre>
 <p>这是因为 <code>x86-interrupt</code> 并不是稳定特性，需要手动启用，只需要在我们的 <code>lib.rs</code> 中加入 <code>#![feature(abi_x86_interrupt)]</code> 开关即可。</p>
 <h3 id="zai-ru-idt"><a class="zola-anchor" href="#zai-ru-idt" aria-label="Anchor link for: zai-ru-idt">🔗</a>载入 IDT</h3>
-<p>要让CPU使用新的中断描述符表，我们需要使用 <a rel="external" href="https://www.felixcloutier.com/x86/lgdt:lidt"><code>lidt</code></a> 指令来装载一下，<code>x86_64</code> 的 <code>InterruptDescriptorTable</code> 结构提供了 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html#method.load"><code>load</code></a> 函数用来实现这个需求。让我们来试一下：</p>
+<p>要让CPU使用新的中断描述符表，我们需要使用 <a rel="external" href="https://www.felixcloutier.com/x86/lgdt:lidt"><code>lidt</code></a> 指令来装载一下，<code>x86_64</code> 的 <code>InterruptDescriptorTable</code> 结构提供了 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/struct.InterruptDescriptorTable.html#method.load"><code>load</code></a> 函数用来实现这个需求。让我们来试一下：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub fn</span><span style="color: #DCDCAA;"> init_idt</span><span>() {</span></span>
@@ -455,7 +456,7 @@
 <p>该测试仅调用了 <code>int3</code> 函数以触发 breakpoint exception，通过查看这个函数是否能够继续运行下去，就可以确认我们对应的中断处理函数是否工作正常。</p>
 <p>现在，你可以执行 <code>cargo test</code> 来运行所有测试，或者执行 <code>cargo test --lib</code> 来运行 <code>lib.rs</code> 及其子模块中包含的测试，最终输出如下：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>blog_os::interrupts::test_breakpoint_exception...	[ok]</span></span></code></pre><h2 id="hei-mo-fa-you-dian-duo"><a class="zola-anchor" href="#hei-mo-fa-you-dian-duo" aria-label="Anchor link for: hei-mo-fa-you-dian-duo">🔗</a>黑魔法有点多？</h2>
-<p>相对来说，<code>x86-interrupt</code> 调用约定和 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> 类型让错误处理变得直截了当，如果这对你来说太过于神奇，进而想要了解错误处理中的所有隐秘细节，我们推荐读一下这些：<a href="https://os.phil-opp.com/edition-1/extra/naked-exceptions/">“使用裸函数处理错误”</a> 系列文章展示了如何在不使用 <code>x86-interrupt</code> 的前提下创建IDT。但是需要注意的是，这些文章都是在 <code>x86-interrupt</code> 调用约定和 <code>x86_64</code> crate 出现之前的产物，这些东西属于博客的 <a href="https://os.phil-opp.com/edition-1/">第一版</a>，不排除信息已经过期了的可能。</p>
+<p>相对来说，<code>x86-interrupt</code> 调用约定和 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> 类型让错误处理变得直截了当，如果这对你来说太过于神奇，进而想要了解错误处理中的所有隐秘细节，我们推荐读一下这些：<a href="https://os.phil-opp.com/edition-1/extra/naked-exceptions/">“使用裸函数处理错误”</a> 系列文章展示了如何在不使用 <code>x86-interrupt</code> 的前提下创建IDT。但是需要注意的是，这些文章都是在 <code>x86-interrupt</code> 调用约定和 <code>x86_64</code> crate 出现之前的产物，这些东西属于博客的 <a href="https://os.phil-opp.com/edition-1/">第一版</a>，不排除信息已经过期了的可能。</p>
 <h2 id="jie-xia-lai-shi"><a class="zola-anchor" href="#jie-xia-lai-shi" aria-label="Anchor link for: jie-xia-lai-shi">🔗</a>接下来是？</h2>
 <p>我们已经成功捕获了第一个异常，并从异常中成功恢复，下一步就是试着捕获所有异常，如果有未捕获的异常就会触发致命的<a rel="external" href="https://wiki.osdev.org/Triple_Fault">triple fault</a>，那就只能重启整个系统了。下一篇文章会展开说我们如何通过正确捕捉<a rel="external" href="https://wiki.osdev.org/Double_Fault#Double_Fault">double faults</a>来避免这种情况。</p>
 

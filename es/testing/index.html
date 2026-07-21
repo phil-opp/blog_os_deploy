@@ -222,7 +222,17 @@
 <p>Esta publicación reemplaza las publicaciones (<em>Pruebas Unitarias</em>) y (<em>Pruebas de Integración</em>) (ahora obsoletas). Se asume que has seguido la publicación (<em>Un Núcleo Rust Mínimo</em>) después del 2019-04-27. Principalmente, requiere que tengas un archivo <code>.cargo/config.toml</code> que <a href="https://os.phil-opp.com/minimal-rust-kernel/#set-a-default-target">establezca un objetivo predeterminado</a> y <a href="https://os.phil-opp.com/minimal-rust-kernel/#using-cargo-run">defina un ejecutable de runner</a>.</p>
 <h2 id="pruebas-en-rust"><a class="zola-anchor" href="#pruebas-en-rust" aria-label="Anchor link for: pruebas-en-rust">🔗</a>Pruebas en Rust</h2>
 <p>Rust tiene un <a rel="external" href="https://doc.rust-lang.org/book/ch11-00-testing.html">marco de prueba incorporado</a> que es capaz de ejecutar pruebas unitarias sin la necesidad de configurar nada. Solo crea una función que verifique algunos resultados mediante afirmaciones y añade el atributo <code>#[test]</code> al encabezado de la función. Luego, <code>cargo test</code> encontrará y ejecutará automáticamente todas las funciones de prueba de tu crate.</p>
-<p>Desafortunadamente, es un poco más complicado para aplicaciones <code>no_std</code> como nuestro núcleo. El problema es que el marco de prueba de Rust utiliza implícitamente la biblioteca incorporada <a rel="external" href="https://doc.rust-lang.org/test/index.html"><code>test</code></a>, que depende de la biblioteca estándar. Esto significa que no podemos usar el marco de prueba predeterminado para nuestro núcleo <code>#[no_std]</code>.</p>
+<p>Para habilitar las pruebas para el binario de nuestro núcleo, podemos establecer la bandera <code>test</code> en <code>true</code> en el Cargo.toml:</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[[bin]]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">name</span><span> =</span><span style="color: #CE9178;"> &quot;blog_os&quot;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">test</span><span> =</span><span style="color: #569CD6;"> true</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">bench</span><span> =</span><span style="color: #569CD6;"> false</span></span></code></pre>
+<p>Esta <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#configuring-a-target">sección <code>[[bin]]</code></a> especifica cómo debe compilar <code>cargo</code> nuestro ejecutable <code>blog_os</code>.
+El campo <code>test</code> especifica si las pruebas están soportadas para este ejecutable.
+Establecimos <code>test = false</code> en la primera publicación para <a href="https://os.phil-opp.com/freestanding-rust-binary/#making-rust-analyzer-happy">hacer feliz a <code>rust-analyzer</code></a>, pero ahora queremos habilitar las pruebas, así que lo volvemos a establecer en <code>true</code>.</p>
+<p>Desafortunadamente, las pruebas son un poco más complicadas para aplicaciones <code>no_std</code> como nuestro núcleo. El problema es que el marco de prueba de Rust utiliza implícitamente la biblioteca incorporada <a rel="external" href="https://doc.rust-lang.org/test/index.html"><code>test</code></a>, que depende de la biblioteca estándar. Esto significa que no podemos usar el marco de prueba predeterminado para nuestro núcleo <code>#[no_std]</code>.</p>
 <p>Podemos ver esto cuando intentamos ejecutar <code>cargo test</code> en nuestro proyecto:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>&gt; cargo test</span></span>
 <span class="giallo-l"><span>   Compiling blog_os v0.1.0 (/…/blog_os)</span></span>
@@ -254,7 +264,7 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;¡Hola Mundo{}!&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
 <span class="giallo-l"></span>
@@ -292,12 +302,12 @@
 <p>El dispositivo <code>isa-debug-exit</code> utiliza E/S mapeada en puerto. El parámetro <code>iobase</code> especifica en qué dirección de puerto debe residir el dispositivo (<code>0xf4</code> es un puerto <a rel="external" href="https://wiki.osdev.org/I/O_Ports#The_list">generalmente no utilizado</a> en el bus de E/S de x86) y el <code>iosize</code> especifica el tamaño de puerto (<code>0x04</code> significa cuatro bytes).</p>
 <h3 id="usando-el-dispositivo-de-salida"><a class="zola-anchor" href="#usando-el-dispositivo-de-salida" aria-label="Anchor link for: usando-el-dispositivo-de-salida">🔗</a>Usando el Dispositivo de Salida</h3>
 <p>La funcionalidad del dispositivo <code>isa-debug-exit</code> es muy simple. Cuando se escribe un <code>valor</code> en el puerto de E/S especificado por <code>iobase</code>, provoca que QEMU salga con un <a rel="external" href="https://en.wikipedia.org/wiki/Exit_status">código de salida</a> <code>(valor &lt;&lt; 1) | 1</code>. Por lo tanto, cuando escribimos <code>0</code> en el puerto, QEMU saldrá con un código de salida <code>(0 &lt;&lt; 1) | 1 = 1</code>, y cuando escribimos <code>1</code> en el puerto, saldrá con un código de salida <code>(1 &lt;&lt; 1) | 1 = 3</code>.</p>
-<p>En lugar de invocar manualmente las instrucciones de ensamblaje <code>in</code> y <code>out</code>, utilizamos las abstracciones provistas por la crate <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/"><code>x86_64</code></a>. Para añadir una dependencia en esa crate, la añadimos a la sección de <code>dependencies</code> en nuestro <code>Cargo.toml</code>:</p>
+<p>En lugar de invocar manualmente las instrucciones de ensamblaje <code>in</code> y <code>out</code>, utilizamos las abstracciones provistas por la crate <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/"><code>x86_64</code></a>. Para añadir una dependencia en esa crate, la añadimos a la sección de <code>dependencies</code> en nuestro <code>Cargo.toml</code>:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># en Cargo.toml</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[dependencies]</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">x86_64</span><span> =</span><span style="color: #CE9178;"> &quot;0.14.2&quot;</span></span></code></pre>
-<p>Ahora podemos usar el tipo <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> proporcionado por la crate para crear una función <code>exit_qemu</code>:</p>
+<span class="giallo-l"><span style="color: #9CDCFE;">x86_64</span><span> =</span><span style="color: #CE9178;"> &quot;0.15.5&quot;</span></span></code></pre>
+<p>Ahora podemos usar el tipo <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/port/type.Port.html"><code>Port</code></a> proporcionado por la crate para crear una función <code>exit_qemu</code>:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>#[derive(</span><span style="color: #4EC9B0;">Debug</span><span>,</span><span style="color: #4EC9B0;"> Clone</span><span>,</span><span style="color: #4EC9B0;"> Copy</span><span>,</span><span style="color: #4EC9B0;"> PartialEq</span><span>,</span><span style="color: #4EC9B0;"> Eq</span><span>)]</span></span>
@@ -315,7 +325,7 @@
 <span class="giallo-l"><span style="color: #9CDCFE;">        port</span><span>.</span><span style="color: #DCDCAA;">write</span><span>(</span><span style="color: #9CDCFE;">exit_code</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u32</span><span>);</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>La función crea un nuevo <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> en <code>0xf4</code>, que es el <code>iobase</code> del dispositivo <code>isa-debug-exit</code>. Luego escribe el código de salida pasado al puerto. Usamos <code>u32</code> porque especificamos el <code>iosize</code> del dispositivo <code>isa-debug-exit</code> como 4 bytes. Ambas operaciones son inseguras porque escribir en un puerto de E/S puede resultar en un comportamiento arbitrario.</p>
+<p>La función crea un nuevo <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/port/type.Port.html"><code>Port</code></a> en <code>0xf4</code>, que es el <code>iobase</code> del dispositivo <code>isa-debug-exit</code>. Luego escribe el código de salida pasado al puerto. Usamos <code>u32</code> porque especificamos el <code>iosize</code> del dispositivo <code>isa-debug-exit</code> como 4 bytes. Ambas operaciones son inseguras porque escribir en un puerto de E/S puede resultar en un comportamiento arbitrario.</p>
 <p>Para especificar el código de salida, creamos un enum <code>QemuExitCode</code>. La idea es salir con el código de salida de éxito si todas las pruebas tuvieron éxito y con el código de salida de fallo de otro modo. El enum está marcado como <code>#[repr(u32)]</code> para representar cada variante como un entero <code>u32</code>. Usamos el código de salida <code>0x10</code> para éxito y <code>0x11</code> para fallo. Los códigos de salida reales no importan mucho, siempre y cuando no choquen con los códigos de salida predeterminados de QEMU. Por ejemplo, usar el código de salida <code>0</code> para éxito no es una buena idea porque se convierte en <code>(0 &lt;&lt; 1) | 1 = 1</code> después de la transformación, que es el código de salida predeterminado cuando QEMU falla al ejecutarse. Así que no podríamos diferenciar un error de QEMU de una ejecución de prueba exitosa.</p>
 <p>Ahora podemos actualizar nuestro <code>test_runner</code> para salir de QEMU después de que se hayan ejecutado todas las pruebas:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// en src/main.rs</span></span>
@@ -603,7 +613,7 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>#[no_mangle]</span><span style="color: #6A9955;"> // no modificar el nombre de esta función</span></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span><span style="color: #6A9955;"> // no modificar el nombre de esta función</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
 <span class="giallo-l"></span>
@@ -670,7 +680,7 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #6A9955;">/// Punto de entrada para `cargo test`</span></span>
 <span class="giallo-l"><span>#[cfg(test)]</span></span>
-<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
 <span class="giallo-l"><span style="color: #C586C0;">    loop</span><span> {}</span></span>
@@ -719,7 +729,7 @@
 <span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::println;</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    println!</span><span>(</span><span style="color: #CE9178;">&quot;¡Hola Mundo{}!&quot;</span><span>,</span><span style="color: #CE9178;"> &quot;!&quot;</span><span>);</span></span>
 <span class="giallo-l"></span>
@@ -801,7 +811,7 @@
 <span class="giallo-l"><span>#![test_runner(test_runner)]</span></span>
 <span class="giallo-l"><span>#![reexport_test_harness_main =</span><span style="color: #CE9178;"> &quot;test_main&quot;</span><span>]</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    test_main</span><span>();</span></span>
 <span class="giallo-l"></span>
@@ -849,7 +859,7 @@
 <span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> core</span><span>::</span><span style="color: #4EC9B0;">panic</span><span>::</span><span style="color: #4EC9B0;">PanicInfo</span><span>;</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> blog_os</span><span>::{exit_qemu, serial_print, serial_println,</span><span style="color: #4EC9B0;"> QemuExitCode</span><span>};</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>#[no_mangle]</span></span>
+<span class="giallo-l"><span>#[</span><span style="color: #569CD6;">unsafe</span><span>(no_mangle)]</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub extern</span><span style="color: #CE9178;"> &quot;C&quot;</span><span style="color: #569CD6;"> fn</span><span style="color: #DCDCAA;"> _start</span><span>() -&gt; ! {</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    should_fail</span><span>();</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    serial_println!</span><span>(</span><span style="color: #CE9178;">&quot;[la prueba no falló]&quot;</span><span>);</span></span>

@@ -93,6 +93,13 @@
             <a href="#resume">Résumé</a>
             
         </li><li>
+            <a href="#satisfaire-rust-analyzer">Satisfaire rust-analyzer</a>
+            <ol>
+                <li>
+                    <a href="#les-deux-sens-du-mot-target">Les deux sens du mot « target »</a>
+                </li>
+            </ol>
+        </li><li>
             <a href="#et-ensuite">Et ensuite ?</a>
             
         </li>
@@ -170,6 +177,13 @@
             </li><li>
                 <a href="#resume">Résumé</a>
                 
+            </li><li>
+                <a href="#satisfaire-rust-analyzer">Satisfaire rust-analyzer</a>
+                <ul>
+                    <li>
+                        <a href="#les-deux-sens-du-mot-target">Les deux sens du mot « target »</a>
+                    </li>
+                </ul>
             </li><li>
                 <a href="#et-ensuite">Et ensuite ?</a>
                 
@@ -427,6 +441,53 @@ Cet article décrit les étapes nécessaires pour créer un exécutable Rust aut
 <span class="giallo-l"><span style="color: #6A9955;"># macOS</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">cargo</span><span style="color: #CE9178;"> rustc</span><span style="color: #569CD6;"> -- -C</span><span style="color: #CE9178;"> link-args=&quot;-e __start -static -nostartfiles&quot;</span></span></code></pre>
 <p>À noter que ceci est juste un exemple minimal d’un exécutable Rust autoporté. Cet exécutable s’attend à de nombreuses choses, comme par exemple le fait qu’une pile soit initialisée lorsque la fonction <code>_start</code> est appelée. <strong>Donc pour une réelle utilisation d’un tel exécutable, davantages d’étapes sont requises.</strong></p>
+<h2 id="satisfaire-rust-analyzer"><a class="zola-anchor" href="#satisfaire-rust-analyzer" aria-label="Anchor link for: satisfaire-rust-analyzer">🔗</a>Satisfaire <code>rust-analyzer</code></h2>
+<p>Le projet <a rel="external" href="https://rust-analyzer.github.io/"><code>rust-analyzer</code></a> est un excellent moyen d’obtenir la complétion de code et le support de l’« aller à la définition » (ainsi que de nombreuses autres fonctionnalités) pour le code Rust dans votre éditeur.
+Il fonctionne également très bien pour les projets <code>#![no_std]</code>, je recommande donc de l’utiliser pour le développement de noyau !</p>
+<p>Si vous utilisez la fonctionnalité <a rel="external" href="https://rust-analyzer.github.io/book/configuration.html#checkOnSave"><code>checkOnSave</code></a> de <code>rust-analyzer</code> (activée par défaut), il se peut qu’il signale une erreur pour la fonction de panic de notre noyau :</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>found duplicate lang item `panic_impl`</span></span></code></pre>
+<p>La raison de cette erreur est que <code>rust-analyzer</code> invoque <code>cargo check --all-targets</code> par défaut, ce qui essaie aussi de compiler l’exécutable en mode <a rel="external" href="https://doc.rust-lang.org/book/ch11-01-writing-tests.html">test</a> et <a rel="external" href="https://doc.rust-lang.org/rustc/tests/index.html#benchmarks">benchmark</a>.</p>
+<div class="note">
+<h3 id="les-deux-sens-du-mot-target"><a class="zola-anchor" href="#les-deux-sens-du-mot-target" aria-label="Anchor link for: les-deux-sens-du-mot-target">🔗</a>Les deux sens du mot « target »</h3>
+<p>Le flag <code>--all-targets</code> n’a aucun rapport avec l’argument <code>--target</code>.
+Le terme « target » a deux sens différents dans <code>cargo</code> :</p>
+<ul>
+<li>Le flag <code>--target</code> spécifie la <strong><a rel="external" href="https://doc.rust-lang.org/rustc/targets/index.html"><em>cible de compilation</em></a></strong> qui doit être passée au compilateur <code>rustc</code>. Elle doit être configurée avec le <a rel="external" href="https://clang.llvm.org/docs/CrossCompilation.html#target-triple">triplé cible</a> de la machine qui doit exécuter notre code.</li>
+<li>Le flag <code>--all-targets</code> fait référence à la <strong><a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html"><em>cible de paquet</em></a></strong> de Cargo. Les paquets Cargo peuvent être à la fois une bibliothèque et un exécutable, vous pouvez donc spécifier de quelle manière vous souhaitez compiler votre crate. De plus, Cargo possède aussi des cibles de paquet pour les <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#examples">exemples</a>, les <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#tests">tests</a> et les <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#benchmarks">benchmarks</a>. Ces cibles de paquet peuvent coexister, vous pouvez donc compiler/vérifier la même crate par exemple en mode bibliothèque ou test.</li>
+</ul>
+</div>
+<p>Par défaut, <code>cargo check</code> ne compile que les cibles de paquet <em>bibliothèque</em> et <em>exécutable</em>.
+Toutefois, <code>rust-analyzer</code> choisit de vérifier toutes les cibles de paquet par défaut lorsque <a rel="external" href="https://rust-analyzer.github.io/book/configuration.html#checkOnSave"><code>checkOnSave</code></a> est activé.
+C’est la raison pour laquelle <code>rust-analyzer</code> signale l’erreur <code>lang item</code> ci-dessus que nous ne voyons pas avec <code>cargo check</code>.
+Si nous lançons <code>cargo check --all-targets</code>, nous voyons l’erreur aussi :</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error[E0152]: found duplicate lang item `panic_impl`</span></span>
+<span class="giallo-l"><span>  --&gt; src/main.rs:13:1</span></span>
+<span class="giallo-l"><span>   |</span></span>
+<span class="giallo-l"><span>13 | / fn panic(_info: &amp;PanicInfo) -&gt; ! {</span></span>
+<span class="giallo-l"><span>14 | |     loop {}</span></span>
+<span class="giallo-l"><span>15 | | }</span></span>
+<span class="giallo-l"><span>   | |_^</span></span>
+<span class="giallo-l"><span>   |</span></span>
+<span class="giallo-l"><span>   = note: the lang item is first defined in crate `std` (which `test` depends on)</span></span>
+<span class="giallo-l"><span>   = note: first definition in `std` loaded from /home/[...]/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-8df6be531efb3fd0.rlib</span></span>
+<span class="giallo-l"><span>   = note: second definition in the local crate (`blog_os`)</span></span></code></pre>
+<p>Le premier <code>note</code> nous indique que l’objet de langage panic est déjà défini dans la crate <code>std</code>, qui est une dépendance de la crate <code>test</code>.
+La crate <code>test</code> est automatiquement incluse lors de la compilation d’une crate en <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#tests">mode test</a>.
+Cela n’a pas de sens pour notre noyau <code>#![no_std]</code> car il n’y a aucun moyen de supporter la bibliothèque standard sur bare metal.
+Cette erreur n’est donc pas pertinente pour notre projet et nous pouvons l’ignorer sans risque.</p>
+<p>La bonne manière d’éviter cette erreur est de spécifier dans notre <code>Cargo.toml</code> que notre exécutable ne supporte pas la compilation en mode <code>test</code> et <code>bench</code>.
+Nous pouvons faire cela en ajoutant une section <code>[[bin]]</code> à notre <code>Cargo.toml</code> pour <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#configuring-a-target">configurer la compilation</a> de notre exécutable :</p>
+<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>[[bin]]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">name</span><span> =</span><span style="color: #CE9178;"> &quot;blog_os&quot;</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">test</span><span> =</span><span style="color: #569CD6;"> false</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">bench</span><span> =</span><span style="color: #569CD6;"> false</span></span></code></pre>
+<p>Les doubles crochets autour de <code>bin</code> ne sont pas une erreur, c’est la manière dont le format TOML définit les clés qui peuvent apparaître plusieurs fois.
+Comme une crate peut avoir plusieurs exécutables, la section <code>[[bin]]</code> peut elle aussi apparaître plusieurs fois dans le <code>Cargo.toml</code>.
+C’est aussi la raison du champ obligatoire <code>name</code>, qui doit correspondre au nom de l’exécutable (pour que <code>cargo</code> sache quels réglages doivent être appliqués à quel exécutable).</p>
+<p>En configurant les champs <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#the-test-field"><code>test</code></a> et <a rel="external" href="https://doc.rust-lang.org/cargo/reference/cargo-targets.html#the-bench-field"><code>bench</code></a> à <code>false</code>, nous indiquons à <code>cargo</code> de ne pas compiler notre exécutable en mode test ou benchmark.
+Maintenant <code>cargo check --all-targets</code> ne devrait plus lever d’erreur, et l’implémentation de <code>checkOnSave</code> de <code>rust-analyzer</code> devrait être satisfaite elle aussi.</p>
 <h2 id="et-ensuite"><a class="zola-anchor" href="#et-ensuite" aria-label="Anchor link for: et-ensuite">🔗</a>Et ensuite ?</h2>
 <p>Le <a href="https://os.phil-opp.com/minimal-rust-kernel/">poste suivant</a> explique les étapes nécessaires pour transformer notre exécutable autoporté minimal en noyau de système d’opération. Cela comprend la création d’une cible personnalisée, l’intégration de notre exécutable avec un chargeur d’amorçage et l’apprentissage de comment imprimer quelque chose sur l’écran.</p>
 

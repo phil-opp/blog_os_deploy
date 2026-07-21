@@ -328,7 +328,7 @@
 </tbody></table>
 <p>A <em>Privilege Stack Table</em> é usada pela CPU quando o nível de privilégio muda. Por exemplo, se uma exceção ocorre enquanto a CPU está em modo usuário (nível de privilégio 3), a CPU normalmente troca para o modo kernel (nível de privilégio 0) antes de invocar o manipulador de exceção. Nesse caso, a CPU trocaria para a 0ª pilha na Privilege Stack Table (já que 0 é o nível de privilégio alvo). Ainda não temos nenhum programa em modo usuário, então ignoraremos esta tabela por enquanto.</p>
 <h3 id="criando-uma-tss"><a class="zola-anchor" href="#criando-uma-tss" aria-label="Anchor link for: criando-uma-tss">🔗</a>Criando uma TSS</h3>
-<p>Vamos criar uma nova TSS que contém uma pilha de double fault separada em sua interrupt stack table. Para isso, precisamos de uma struct TSS. Felizmente, a crate <code>x86_64</code> já contém uma <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/tss/struct.TaskStateSegment.html">struct <code>TaskStateSegment</code></a> que podemos usar.</p>
+<p>Vamos criar uma nova TSS que contém uma pilha de double fault separada em sua interrupt stack table. Para isso, precisamos de uma struct TSS. Felizmente, a crate <code>x86_64</code> já contém uma <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/tss/struct.TaskStateSegment.html">struct <code>TaskStateSegment</code></a> que podemos usar.</p>
 <p>Criamos a TSS em um novo módulo <code>gdt</code> (o nome fará sentido mais tarde):</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// em src/lib.rs</span></span>
 <span class="giallo-l"></span>
@@ -350,7 +350,7 @@
 <span class="giallo-l"><span style="color: #569CD6;">            static mut</span><span> STACK: [</span><span style="color: #4EC9B0;">u8</span><span>; STACK_SIZE] = [</span><span style="color: #B5CEA8;">0</span><span>; STACK_SIZE];</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> stack_start</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">from_ptr</span><span>(&amp;</span><span style="color: #9CDCFE;">raw</span><span style="color: #569CD6;"> const</span><span> STACK);</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> stack_end</span><span> =</span><span style="color: #9CDCFE;"> stack_start</span><span> + STACK_SIZE;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">            let</span><span style="color: #9CDCFE;"> stack_end</span><span> =</span><span style="color: #9CDCFE;"> stack_start</span><span> + STACK_SIZE</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>;</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">            stack_end</span></span>
 <span class="giallo-l"><span>        };</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        tss</span></span>
@@ -373,8 +373,8 @@
 <span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> GDT:</span><span style="color: #4EC9B0;"> GlobalDescriptorTable</span><span> = {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> gdt</span><span> =</span><span style="color: #4EC9B0;"> GlobalDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;TSS));</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span><span>.</span><span style="color: #DCDCAA;">append</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span><span>.</span><span style="color: #DCDCAA;">append</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;TSS));</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        gdt</span></span>
 <span class="giallo-l"><span>    };</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
@@ -410,8 +410,8 @@
 <span class="giallo-l"><span style="color: #DCDCAA;">lazy_static!</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    static ref</span><span> GDT: (</span><span style="color: #4EC9B0;">GlobalDescriptorTable</span><span>,</span><span style="color: #4EC9B0;"> Selectors</span><span>) = {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> gdt</span><span> =</span><span style="color: #4EC9B0;"> GlobalDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> code_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> tss_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">add_entry</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;TSS));</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> code_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">append</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">kernel_code_segment</span><span>());</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> tss_selector</span><span> =</span><span style="color: #9CDCFE;"> gdt</span><span>.</span><span style="color: #DCDCAA;">append</span><span>(</span><span style="color: #4EC9B0;">Descriptor</span><span>::</span><span style="color: #DCDCAA;">tss_segment</span><span>(&amp;TSS));</span></span>
 <span class="giallo-l"><span>        (</span><span style="color: #9CDCFE;">gdt</span><span>,</span><span style="color: #4EC9B0;"> Selectors</span><span> {</span><span style="color: #9CDCFE;"> code_selector</span><span>,</span><span style="color: #9CDCFE;"> tss_selector</span><span> })</span></span>
 <span class="giallo-l"><span>    };</span></span>
 <span class="giallo-l"><span>}</span></span>
@@ -433,7 +433,7 @@
 <span class="giallo-l"><span style="color: #DCDCAA;">        load_tss</span><span>(GDT.</span><span style="color: #B5CEA8;">1.</span><span>tss_selector);</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>Recarregamos o registrador de segmento de código usando <a rel="external" href="https://docs.rs/x86_64/0.14.5/x86_64/instructions/segmentation/struct.CS.html#method.set_reg"><code>CS::set_reg</code></a> e carregamos a TSS usando <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>. As funções são marcadas como <code>unsafe</code>, então precisamos de um bloco <code>unsafe</code> para invocá-las. A razão é que pode ser possível quebrar a segurança de memória carregando seletores inválidos.</p>
+<p>Recarregamos o registrador de segmento de código usando <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/segmentation/struct.CS.html#method.set_reg"><code>CS::set_reg</code></a> e carregamos a TSS usando <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/tables/fn.load_tss.html"><code>load_tss</code></a>. As funções são marcadas como <code>unsafe</code>, então precisamos de um bloco <code>unsafe</code> para invocá-las. A razão é que pode ser possível quebrar a segurança de memória carregando seletores inválidos.</p>
 <p>Agora que carregamos uma TSS e interrupt stack table válidas, podemos definir o índice de pilha para nosso manipulador de double fault na IDT:</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// em src/interrupts.rs</span></span>
 <span class="giallo-l"></span>

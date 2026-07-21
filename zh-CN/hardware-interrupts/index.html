@@ -234,14 +234,14 @@
 <p>每个控制器都可以通过两个 <a href="https://os.phil-opp.com/testing/#i-o-ports">I/O 端口</a> 进行配置，一个是“指令”端口，另一个是“数据”端口。对于主控制器，端口地址是 <code>0x20</code>（指令）和 <code>0x21</code>（数据），而对于副控制器，端口地址是 <code>0xa0</code>（指令）和 <code>0xa1</code>（数据）。要查看更多关于PIC配置的细节，请参见 <a rel="external" href="https://wiki.osdev.org/8259_PIC">article on osdev.org</a>。</p>
 <h3 id="shi-xian"><a class="zola-anchor" href="#shi-xian" aria-label="Anchor link for: shi-xian">🔗</a>实现</h3>
 <p>PIC默认的配置其实是无法使用的，因为它仅仅是将0-15之间的中断向量编号发送给了CPU，然而这些编号已经用在了CPU的异常编号中了，比如8号代指 double fault 异常。要修复这个错误，我们需要对PIC中断序号进行重映射，新的序号只需要避开已被定义的CPU异常即可，CPU定义的异常数量有32个，所以通常会使用32-47这个区段。</p>
-<p>我们需要通过往指令和数据端口写入特定数据才能对配置进行编程，幸运的是已经有了一个名叫 <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/"><code>pic8259</code></a> 的crate封装了这些东西，我们无需自己去处理这些初始化方面的细节。
+<p>我们需要通过往指令和数据端口写入特定数据才能对配置进行编程，幸运的是已经有了一个名叫 <a rel="external" href="https://docs.rs/pic8259/0.11.0/pic8259/"><code>pic8259</code></a> 的crate封装了这些东西，我们无需自己去处理这些初始化方面的细节。
 如果你十分好奇其中的细节，这里是 <a rel="external" href="https://docs.rs/crate/pic8259/0.10.1/source/src/lib.rs">它的源码</a>，他的内部逻辑其实十分简洁，而且具备完善的文档。</p>
 <p>我们可以这样将 crate 作为依赖加入工程中：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #6A9955;"># in Cargo.toml</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>[dependencies]</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">pic8259</span><span> =</span><span style="color: #CE9178;"> &quot;0.10.1&quot;</span></span></code></pre>
-<p>这个 crate 提供的主要抽象结构就是 <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a>，用于映射上文所说的主副PIC的映射布局，它可以这样使用：</p>
+<span class="giallo-l"><span style="color: #9CDCFE;">pic8259</span><span> =</span><span style="color: #CE9178;"> &quot;0.11.0&quot;</span></span></code></pre>
+<p>这个 crate 提供的主要抽象结构就是 <a rel="external" href="https://docs.rs/pic8259/0.11.0/pic8259/struct.ChainedPics.html"><code>ChainedPics</code></a>，用于映射上文所说的主副PIC的映射布局，它可以这样使用：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/interrupts.rs</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">use</span><span style="color: #4EC9B0;"> pic8259</span><span>::</span><span style="color: #4EC9B0;">ChainedPics</span><span>;</span></span>
@@ -261,7 +261,7 @@
 <span class="giallo-l"><span style="color: #4EC9B0;">    interrupts</span><span>::</span><span style="color: #DCDCAA;">init_idt</span><span>();</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    unsafe</span><span> {</span><span style="color: #4EC9B0;"> interrupts</span><span>::PICS.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">initialize</span><span>() };</span><span style="color: #6A9955;"> // new</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>我们使用 <a rel="external" href="https://docs.rs/pic8259/0.10.1/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> 函数进行PIC的初始化。正如 <code>ChainedPics::new</code> ，这个函数也是 unsafe 的，因为里面的不安全逻辑可能会导致PIC配置失败，进而出现一些未定义行为。</p>
+<p>我们使用 <a rel="external" href="https://docs.rs/pic8259/0.11.0/pic8259/struct.ChainedPics.html#method.initialize"><code>initialize</code></a> 函数进行PIC的初始化。正如 <code>ChainedPics::new</code> ，这个函数也是 unsafe 的，因为里面的不安全逻辑可能会导致PIC配置失败，进而出现一些未定义行为。</p>
 <p>如果一切顺利，我们在运行 <code>cargo run</code> 后应当能看到诸如 “It did not crash” 此类的输出信息。</p>
 <h2 id="qi-yong-zhong-duan"><a class="zola-anchor" href="#qi-yong-zhong-duan" aria-label="Anchor link for: qi-yong-zhong-duan">🔗</a>启用中断</h2>
 <p>不过现在什么都不会发生，因为CPU配置里面中断还是禁用状态呢，也就是说CPU现在根本不会监听来自中断控制器的信息，即任何中断都无法到达CPU。我们来启用它：</p>
@@ -290,10 +290,6 @@
 <span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> as_u8</span><span>(</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> u8</span><span> {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        self as</span><span style="color: #4EC9B0;"> u8</span></span>
 <span class="giallo-l"><span>    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #569CD6;">    fn</span><span style="color: #DCDCAA;"> as_usize</span><span>(</span><span style="color: #569CD6;">self</span><span>) -&gt;</span><span style="color: #4EC9B0;"> usize</span><span> {</span></span>
-<span class="giallo-l"><span style="color: #4EC9B0;">        usize</span><span>::</span><span style="color: #DCDCAA;">from</span><span>(</span><span style="color: #569CD6;">self</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>())</span></span>
-<span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p>这是一个 <a rel="external" href="https://doc.rust-lang.org/reference/items/enumerations.html#custom-discriminant-values-for-fieldless-enumerations">C语言风格的枚举</a>，我们可以为每个枚举值指定其对应的数值，<code>repr(u8)</code> 开关使枚举值对应的数值以 <code>u8</code> 格式进行存储，这样未来我们可以在这里加入更多的中断枚举。</p>
 <p>那么开始为计时器中断添加一个处理函数：</p>
@@ -306,7 +302,7 @@
 <span class="giallo-l"><span style="color: #569CD6;">        let mut</span><span style="color: #9CDCFE;"> idt</span><span> =</span><span style="color: #4EC9B0;"> InterruptDescriptorTable</span><span>::</span><span style="color: #DCDCAA;">new</span><span>();</span></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
 <span class="giallo-l"><span>        […]</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Timer</span><span>.</span><span style="color: #DCDCAA;">as_usize</span><span>()]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Timer</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>()]</span></span>
 <span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">timer_interrupt_handler</span><span>);</span><span style="color: #6A9955;"> // new</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
@@ -318,7 +314,7 @@
 <span class="giallo-l"><span>{</span></span>
 <span class="giallo-l"><span style="color: #DCDCAA;">    print!</span><span>(</span><span style="color: #CE9178;">&quot;.&quot;</span><span>);</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p><code>timer_interrupt_handler</code> 和错误处理函数具有相同的函数签名，这是因为CPU对异常和外部中断的处理方式是相同的（除了个别异常会传入错误码以外）。<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> 结构实现了 <a rel="external" href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> trait，所以我们可以通过序号来单独修改某一个条目。</p>
+<p><code>timer_interrupt_handler</code> 和错误处理函数具有相同的函数签名，这是因为CPU对异常和外部中断的处理方式是相同的（除了个别异常会传入错误码以外）。<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/idt/struct.InterruptDescriptorTable.html"><code>InterruptDescriptorTable</code></a> 结构实现了 <a rel="external" href="https://doc.rust-lang.org/core/ops/trait.IndexMut.html"><code>IndexMut</code></a> trait，所以我们可以通过序号来单独修改某一个条目。</p>
 <p>在我们刚刚写好的处理函数中，我们会往屏幕上输出一个点，随着计时器中断周期性触发，我们应该能看到每一个计时周期过后屏幕上都会多出一个点。然而事实却并不是如此，我们只能在屏幕上看到一个点：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/hardware-interrupts/qemu-single-dot-printed.png" alt="QEMU printing only a single dot for hardware timer" /></p>
 <h3 id="jie-shu-zhong-duan"><a class="zola-anchor" href="#jie-shu-zhong-duan" aria-label="Anchor link for: jie-shu-zhong-duan">🔗</a>结束中断</h3>
@@ -397,7 +393,7 @@
 <span class="giallo-l"><span>        WRITER.</span><span style="color: #DCDCAA;">lock</span><span>().</span><span style="color: #DCDCAA;">write_fmt</span><span>(</span><span style="color: #9CDCFE;">args</span><span>).</span><span style="color: #DCDCAA;">unwrap</span><span>();</span></span>
 <span class="giallo-l"><span>    });</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p><a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> 函数可以使一个 <a rel="external" href="https://doc.rust-lang.org/book/ch13-01-closures.html">闭包</a> 代码块在无中断环境下执行，由此我们可以让 <code>Mutex</code> 变量在锁定期间的执行逻辑不会被中断信号打断。再次运行我们的内核，此时程序就不会被挂起了。（然而我们依然不会看到任何点号，因为输出速度实在是太快了，试着降低一下输出速度就可以了，比如在循环里插入一句 <code>for _ in 0..10000 {}</code>。）</p>
+<p><a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/interrupts/fn.without_interrupts.html"><code>without_interrupts</code></a> 函数可以使一个 <a rel="external" href="https://doc.rust-lang.org/book/ch13-01-closures.html">闭包</a> 代码块在无中断环境下执行，由此我们可以让 <code>Mutex</code> 变量在锁定期间的执行逻辑不会被中断信号打断。再次运行我们的内核，此时程序就不会被挂起了。（然而我们依然不会看到任何点号，因为输出速度实在是太快了，试着降低一下输出速度就可以了，比如在循环里插入一句 <code>for _ in 0..10000 {}</code>。）</p>
 <p>我们也可以在串行输出函数里也加入同样的逻辑来避免死锁：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/serial.rs</span></span>
 <span class="giallo-l"></span>
@@ -537,7 +533,7 @@
 <span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>.breakpoint.</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">breakpoint_handler</span><span>);</span></span>
 <span class="giallo-l"><span>        […]</span></span>
 <span class="giallo-l"><span style="color: #6A9955;">        // new</span></span>
-<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_usize</span><span>()]</span></span>
+<span class="giallo-l"><span style="color: #9CDCFE;">        idt</span><span>[</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>()]</span></span>
 <span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">set_handler_fn</span><span>(</span><span style="color: #9CDCFE;">keyboard_interrupt_handler</span><span>);</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #9CDCFE;">        idt</span></span>
@@ -574,7 +570,7 @@
 <span class="giallo-l"><span>            .</span><span style="color: #DCDCAA;">notify_end_of_interrupt</span><span>(</span><span style="color: #4EC9B0;">InterruptIndex</span><span>::</span><span style="color: #4EC9B0;">Keyboard</span><span>.</span><span style="color: #DCDCAA;">as_u8</span><span>());</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>我们使用了 <code>x86_64</code> crate 中的 <a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/instructions/port/struct.Port.html"><code>Port</code></a> 来从键盘数据端口中读取名为 [<em>扫描码</em>] 的随着按键按下/释放而不断变化的数字。我们暂且不处理它，只是在屏幕上打印出来：</p>
+<p>我们使用了 <code>x86_64</code> crate 中的 <a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/instructions/port/type.Port.html"><code>Port</code></a> 来从键盘数据端口中读取名为 [<em>扫描码</em>] 的随着按键按下/释放而不断变化的数字。我们暂且不处理它，只是在屏幕上打印出来：</p>
 <p><img src="https://os.phil-opp.com/zh-CN/hardware-interrupts/qemu-printing-scancodes.gif" alt="QEMU printing scancodes to the screen when keys are pressed" /></p>
 <p>在上图中，演示的正是缓慢输入 <code>123</code> 的结果。我们可以看到，相邻的按键具备相邻的扫描码，而按下按键和松开按键也会出现不同的扫描码，那么问题来了，我们该如何对这些扫描码进行译码？</p>
 <h3 id="sao-miao-ma-zhuan-yi"><a class="zola-anchor" href="#sao-miao-ma-zhuan-yi" aria-label="Anchor link for: sao-miao-ma-zhuan-yi">🔗</a>扫描码转义</h3>

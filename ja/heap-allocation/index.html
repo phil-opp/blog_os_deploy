@@ -82,8 +82,6 @@
                     <a href="#dummyallocator">DummyAllocator</a>
                 </li><li>
                     <a href="#global-allocator-shu-xing">#[global_allocator]属性</a>
-                </li><li>
-                    <a href="#alloc-error-handler-shu-xing">#[alloc_error_handler]属性</a>
                 </li>
             </ol>
         </li><li>
@@ -166,8 +164,6 @@
                         <a href="#dummyallocator">DummyAllocator</a>
                     </li><li>
                         <a href="#global-allocator-shu-xing">#[global_allocator]属性</a>
-                    </li><li>
-                        <a href="#alloc-error-handler-shu-xing">#[alloc_error_handler]属性</a>
                     </li>
                 </ul>
             </li><li>
@@ -194,7 +190,7 @@
 <p>私たちのカーネルでは現在二種類の変数が使用されています：局所変数と<code>static</code>変数です。局所変数は<a rel="external" href="https://ja.wikipedia.org/wiki/%E3%82%B3%E3%83%BC%E3%83%AB%E3%82%B9%E3%82%BF%E3%83%83%E3%82%AF">コールスタック</a>に格納されており、変数の定義された関数がリターンするまでの間のみ有効です。静的変数はメモリ上の固定された場所に格納されており、プログラムのライフタイム全体で常に生存しています。</p>
 <h3 id="ju-suo-bian-shu"><a class="zola-anchor" href="#ju-suo-bian-shu" aria-label="Anchor link for: ju-suo-bian-shu">🔗</a>局所変数</h3>
 <p>局所変数は<a rel="external" href="https://ja.wikipedia.org/wiki/%E3%82%B3%E3%83%BC%E3%83%AB%E3%82%B9%E3%82%BF%E3%83%83%E3%82%AF">コールスタック</a>に格納されています。これはプッシュ (<code>push</code>) とポップ (<code>pop</code>) という命令をサポートする<a rel="external" href="https://ja.wikipedia.org/wiki/%E3%82%B9%E3%82%BF%E3%83%83%E3%82%AF">スタックというデータ構造</a>です。関数に入るたびに、パラメータ、リターンアドレス、呼び出された関数の局所変数がコンパイラによってプッシュされます：</p>
-<p><img src="https://os.phil-opp.com/ja/heap-allocation/call-stack.svg" alt="outer()とinner(i: usize)関数。両方が局所変数を持っています。outerはinner(1)を呼びます。コールスタックには順に以下の領域があります：outerの局所変数、引数i=1、リターンアドレス、そしてinnerの局所変数。" /></p>
+<p><img src="https://os.phil-opp.com/ja/heap-allocation/call-stack.svg" alt="outer()関数とinner(i: usize)関数。outerはinner(1)を呼び出します。両方が局所変数を持っています。コールスタックには順に以下の領域があります：outerの局所変数、引数i = 1、リターンアドレス、そしてinnerの局所変数。" /></p>
 <p>上の例は、<code>outer</code>関数が<code>inner</code>関数を呼び出した後のコールスタックを示しています。コールスタックは<code>outer</code>の局所変数を先に持っていることが分かります。<code>inner</code>を呼び出すと、パラメータ<code>1</code>とこの関数のリターンアドレスがプッシュされます。そこで制御は<code>inner</code>へと移り、<code>inner</code>は自身の局所変数をプッシュします。</p>
 <p><code>inner</code>関数がリターンすると、コールスタックのこの関数に対応する部分がポップされ、<code>outer</code>の局所変数のみが残ります：</p>
 <p><img src="https://os.phil-opp.com/ja/heap-allocation/call-stack-return.svg" alt="outerの局所変数しか持っていないコールスタック" /></p>
@@ -221,7 +217,7 @@
 <p>これらの欠点を回避するために、プログラミング言語はしばしば、変数を格納するための第三の領域である<strong>ヒープ</strong>をサポートします。ヒープは、<code>allocate</code>と<code>deallocate</code>という二つの関数を通じて、実行時の<strong>動的メモリ割り当て</strong>をサポートします。仕組みとしては以下のようになります：<code>allocate</code>関数は、変数を格納するのに使える、指定されたサイズの解放されたメモリの塊を返します。変数への参照を引数に<code>deallocate</code>関数を呼び出すことによってその変数を解放するまで、この変数は生存します。</p>
 <p>例を使って見てみましょう：</p>
 <p><img src="https://os.phil-opp.com/ja/heap-allocation/call-stack-heap.svg" alt="inner関数はallocate(size_of([u32; 3]))を呼び、z.write([1,2,3]);で書き込みを行い、(z as *mut u32).offset(i)を返します。outer関数は返された値yに対してdeallocate(y, size_of(u32))を行います。" /></p>
-<p>ここで<code>inner</code>関数は<code>z</code>を格納するために静的変数ではなくヒープメモリを使っています。まず要求されたサイズのメモリブロックを割り当て、<code>*mut u32</code>の<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch19-01-unsafe-rust.html#%E7%94%9F%E3%83%9D%E3%82%A4%E3%83%B3%E3%82%BF%E3%82%92%E5%8F%82%E7%85%A7%E5%A4%96%E3%81%97%E3%81%99%E3%82%8B">生ポインタ</a>を受け取ります。その後で<a rel="external" href="https://doc.rust-lang.org/core/ptr/fn.write.html"><code>ptr::write</code></a>メソッドを使ってこれに配列<code>[1,2,3]</code>を書き込みます。最後のステップとして、<a rel="external" href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a>関数を使って<code>i</code>番目の要素へのポインタを計算しそれを返します（簡単のため、必要なキャストやunsafeブロックをいくつか省略しました）。</p>
+<p>ここで<code>inner</code>関数は<code>z</code>を格納するために静的変数ではなくヒープメモリを使っています。まず要求されたサイズのメモリブロックを割り当て、<code>*mut u32</code>の<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch20-01-unsafe-rust.html#%E7%94%9F%E3%83%9D%E3%82%A4%E3%83%B3%E3%82%BF%E3%82%92%E5%8F%82%E7%85%A7%E5%A4%96%E3%81%97%E3%81%99%E3%82%8B">生ポインタ</a>を受け取ります。その後で<a rel="external" href="https://doc.rust-lang.org/core/ptr/fn.write.html"><code>ptr::write</code></a>メソッドを使ってこれに配列<code>[1,2,3]</code>を書き込みます。最後のステップとして、<a rel="external" href="https://doc.rust-lang.org/std/primitive.pointer.html#method.offset"><code>offset</code></a>関数を使って<code>i</code>番目の要素へのポインタを計算しそれを返します（簡単のため、必要なキャストやunsafeブロックをいくつか省略しました）。</p>
 <p>割り当てられたメモリは<code>deallocate</code>の呼び出しによって明示的に解放されるまで生存します。したがって、返されたポインタは、<code>inner</code>がリターンしコールスタックの対応する部分が破棄された後も有効です。スタティックメモリと比較したときのヒープメモリの長所は、解放（<code>outer</code>内の<code>deallocate</code>呼び出しでまさにこれを行っています）後に再利用できるということです。この呼び出しの後、状況は以下のようになります。</p>
 <p><img src="https://os.phil-opp.com/ja/heap-allocation/call-stack-heap-freed.svg" alt="コールスタックはouterの局所変数を持っており、ヒープはz[0]とz[2]を持っているが、z[1]はもう持っていない。" /></p>
 <p><code>z[1]</code>スロットが解放され、次の<code>allocate</code>呼び出しで再利用できることが分かります。しかし、<code>z[0]</code>と<code>z[2]</code>は永久にdeallocateされず、したがって永久に解放されないことも分かります。このようなバグは<strong>メモリリーク</strong>と呼ばれており、しばしばプログラムの過剰なメモリ消費を引き起こします（<code>inner</code>をループで何度も呼び出したらどんなことになるか、想像してみてください）。これ自体良くないことに思われるかもしれませんが、動的割り当てはもっと危険性の高いバグを発生させうるのです。</p>
@@ -231,7 +227,7 @@
 <li>もし変数に対して<code>deallocate</code>を呼んだ後にも間違ってそれを使い続けたら、いわゆる<ruby>use-after-free<rp> (</rp><rt>メモリ解放後に使用</rt><rp>) </rp></ruby>脆弱性が発生します。このようなバグは未定義動作を引き起こし、しばしば攻撃者が任意コードを実行するのに利用されます。</li>
 <li>間違ってある変数を二度解放したら、<ruby>double-free<rp> (</rp><rt>二重解放</rt><rp>) </rp></ruby>脆弱性が発生します。これが問題になるのは、最初の<code>deallocate</code>呼び出しの後に同じ場所にallocateされた別の割り当てを解放してしまうかもしれないからです。従って、これもまたuse-after-free脆弱性につながりかねません。</li>
 </ul>
-<p>これらの脆弱性は広く知られているため、回避する方法も解明されているはずだとお思いになるかもしれません。しかし答えはいいえで、このような脆弱性は未だ散見され、例えば最近でも任意コード実行を許す<a rel="external" href="https://securityboulevard.com/2019/02/linux-use-after-free-vulnerability-found-in-linux-2-6-through-4-20-11/">Linuxのuse-after-free脆弱性</a>が存在しました。このことは、最高のプログラマーであっても、複雑なプロジェクトにおいて常に正しく動的メモリを扱えはしないということを示しています。</p>
+<p>これらの脆弱性は広く知られているため、回避する方法も今や解明されているはずだとお思いになるかもしれません。しかし答えはいいえで、このような脆弱性は未だ散見されます。例えば、任意コード実行を許した<a rel="external" href="https://securityboulevard.com/2019/02/linux-use-after-free-vulnerability-found-in-linux-2-6-through-4-20-11/">Linuxのuse-after-free脆弱性</a>（2019年）が存在しました。<code>use-after-free linux {今年の年号}</code>のようなウェブ検索をすれば、おそらくいつでも結果が見つかるでしょう。このことは、最高のプログラマーであっても、複雑なプロジェクトにおいて常に正しく動的メモリを扱えはしないということを示しています。</p>
 <p>これらの問題を回避するため、JavaやPythonといった多くの言語では<a rel="external" href="https://ja.wikipedia.org/wiki/%E3%82%AC%E3%83%99%E3%83%BC%E3%82%B8%E3%82%B3%E3%83%AC%E3%82%AF%E3%82%B7%E3%83%A7%E3%83%B3"><strong>ガベージコレクション</strong></a>という技術を使って自動的に動的メモリを管理しています。発想としては、プログラマが絶対に自分の手で<code>deallocate</code>を呼び出すことがないようにするというものです。代わりに、プログラムが定期的に一時停止されてスキャンされ、未使用のヒープ変数が見つかったら自動的にdeallocateされるのです。従って、上のような脆弱性は絶対に発生し得ません。欠点としては，定期的にスキャンすることによる性能のオーバーヘッドが発生することと、一時停止の時間が長くなりがちであることが挙げられます。</p>
 <p>Rustはこの問題に対して別のアプローチを取ります：<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch04-01-what-is-ownership.html"><strong>所有権</strong></a>と呼ばれる概念を使って、動的メモリの操作の正確性をコンパイル時にチェックするのです。従って前述の脆弱性を回避するためのガベージコレクションの必要がなく、性能のオーバーヘッドが存在しません。このアプローチのもう一つの利点として、CやC++と同様、プログラマが動的メモリの使用に関して精緻な制御を行うことができるということが挙げられます。</p>
 <h3 id="rustniokeruge-ridang-te"><a class="zola-anchor" href="#rustniokeruge-ridang-te" aria-label="Anchor link for: rustniokeruge-ridang-te">🔗</a>Rustにおける割り当て</h3>
@@ -285,13 +281,8 @@
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: no global memory allocator found but one is required; link to std or add</span></span>
 <span class="giallo-l"><span>       #[global_allocator] to a static item that implements the GlobalAlloc trait.</span></span>
 <span class="giallo-l"><span>（エラー：グローバルメモリアロケータが見つかりませんが、一つ必要です。</span></span>
-<span class="giallo-l"><span>　stdをリンクするか、GlobalAllocトレイトを実装する静的な要素に#[global_allocator]を付けてください。）</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>error: `#[alloc_error_handler]` function required, but not found</span></span>
-<span class="giallo-l"><span>（エラー：`#[alloc_error_handler]`関数が必要ですが、見つかりません）</span></span></code></pre>
-<p>最初のエラーは、<code>alloc</code>クレートが、ヒープアロケータという<code>allocate</code>と<code>deallocate</code>関数を提供するオブジェクトを必要とするために発生します。Rustにおいては、ヒープアロケータ（の満たすべき性質）は<a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>トレイトによって記述されており、エラーメッセージでもそのことについて触れられています。クレートのヒープアロケータを設定するためには、<code>#[global_allocator]</code>属性を<code>GlobalAlloc</code>トレイトを実装する何らかの<code>static</code>変数に適用する必要があります。</p>
-<p>二つ目のエラーは、（主にメモリが不足している場合）<code>allocate</code>の呼び出しが失敗しうるために発生します。私たちのプログラムはこのケースに対処できるようになっている必要があり、そのために使われる関数が<code>#[alloc_error_handler]</code>なのです。</p>
-<p>次のセクションでこのトレイトと属性について説明します。</p>
+<span class="giallo-l"><span>　stdをリンクするか、GlobalAllocトレイトを実装する静的な要素に#[global_allocator]を付けてください。）</span></span></code></pre>
+<p>このエラーは、<code>alloc</code>クレートが、ヒープアロケータという<code>allocate</code>と<code>deallocate</code>関数を提供するオブジェクトを必要とするために発生します。Rustにおいては、ヒープアロケータ（の満たすべき性質）は<a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>トレイトによって記述されており、エラーメッセージでもそのことについて触れられています。クレートのヒープアロケータを設定するためには、<code>#[global_allocator]</code>属性を<code>GlobalAlloc</code>トレイトを実装する何らかの<code>static</code>変数に適用する必要があります。</p>
 <h3 id="globalalloctoreito"><a class="zola-anchor" href="#globalalloctoreito" aria-label="Anchor link for: globalalloctoreito">🔗</a><code>GlobalAlloc</code>トレイト</h3>
 <p><a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>トレイトはヒープアロケータの提供しなければならない関数を定義します。このトレイトは、プログラマが絶対に直接使わないという点において特別です。代わりに、<code>alloc</code>のアロケーション・コレクション型を使うときに、コンパイラがトレイトメソッドへの適切な呼び出しを自動的に挿入します。</p>
 <p>このトレイトを私たちのアロケータ型全てに実装しなければならないので、その宣言は詳しく見ておく価値があるでしょう：</p>
@@ -309,7 +300,7 @@
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p>このトレイトは<a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a>と<a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>という必須メソッドを定義しており、これは上の例で使った<code>allocate</code>と<code>deallocate</code>関数に相当します：</p>
 <ul>
-<li><a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a>メソッドは<a rel="external" href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>インスタンス（割り当てられたメモリの持つべきサイズとアラインメントを記述する）を引数として取ります。メソッドは割り当てられたメモリブロックの最初のバイトへの<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch19-01-unsafe-rust.html#%E7%94%9F%E3%83%9D%E3%82%A4%E3%83%B3%E3%82%BF%E3%82%92%E5%8F%82%E7%85%A7%E5%A4%96%E3%81%97%E3%81%99%E3%82%8B">生ポインタ</a>を返します。割り当てエラーが起きたことを示す際は、明示的なエラー値を返す代わりにヌルポインタを返します。このやり方は（Rustの）慣習とはやや外れていますが、同じ慣習に従っている既存のシステムのアロケータをラップするのが簡単になるという利点があります。</li>
+<li><a rel="external" href="https://doc.rust-lang.org/alloc/"><code>alloc</code></a>メソッドは<a rel="external" href="https://doc.rust-lang.org/alloc/alloc/struct.Layout.html"><code>Layout</code></a>インスタンス（割り当てられたメモリの持つべきサイズとアラインメントを記述する）を引数として取ります。メソッドは割り当てられたメモリブロックの最初のバイトへの<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch20-01-unsafe-rust.html#%E7%94%9F%E3%83%9D%E3%82%A4%E3%83%B3%E3%82%BF%E3%82%92%E5%8F%82%E7%85%A7%E5%A4%96%E3%81%97%E3%81%99%E3%82%8B">生ポインタ</a>を返します。割り当てエラーが起きたことを示す際は、明示的なエラー値を返す代わりにヌルポインタを返します。このやり方は（Rustの）慣習とはやや外れていますが、同じ慣習に従っている既存のシステムのアロケータをラップするのが簡単になるという利点があります。</li>
 <li><a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#tymethod.dealloc"><code>dealloc</code></a>はその対で、メモリブロックを開放する役割を持ちます。このメソッドは、<code>alloc</code>によって返されたポインタと割り当ての際に使われた<code>Layout</code>という二つの引数を取ります。</li>
 </ul>
 <p>このトレイトは<a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.alloc_zeroed"><code>alloc_zeroed</code></a>と<a rel="external" href="https://doc.rust-lang.org/alloc/alloc/trait.GlobalAlloc.html#method.realloc"><code>realloc</code></a>という二つのデフォルト実装付きメソッドも定義しています。</p>
@@ -354,20 +345,7 @@
 <span class="giallo-l"><span>#[global_allocator]</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">static</span><span> ALLOCATOR:</span><span style="color: #4EC9B0;"> Dummy</span><span> =</span><span style="color: #4EC9B0;"> Dummy</span><span>;</span></span></code></pre>
 <p><code>Dummy</code>アロケータは<a rel="external" href="https://doc.rust-jp.rs/rust-nomicon-ja/exotic-sizes.html#%E3%82%B5%E3%82%A4%E3%82%BA%E3%81%8C-0-%E3%81%AE%E5%9E%8Bzst-zero-sized-type">サイズがゼロの型</a>なので、初期化式でフィールドを指定する必要はありません。</p>
-<p>これをコンパイルしようとすると、最初のエラーは消えているはずです。残っている二つ目のエラーを修正しましょう：</p>
-<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="plain"><span class="giallo-l"><span>error: `#[alloc_error_handler]` function required, but not found</span></span></code></pre><h3 id="alloc-error-handler-shu-xing"><a class="zola-anchor" href="#alloc-error-handler-shu-xing" aria-label="Anchor link for: alloc-error-handler-shu-xing">🔗</a><code>#[alloc_error_handler]</code>属性</h3>
-<p><code>GlobalAlloc</code>トレイトについて議論したときに学んだように、<code>alloc</code>関数はヌルポインタを返すことによって割り当てエラーを示します。ここで生じる疑問は、そのように割り当てが失敗したときRustランタイムはどう対処するべきなのかということです。ここで<code>#[alloc_error_handler]</code>属性の出番です。この属性は、パニックが起こったときにパニックハンドラが呼ばれるのと同じように、割り当てエラーが起こったときに呼ばれる関数を指定するのです。</p>
-<p>コンパイルエラーを修正するためにそのような関数を追加してみましょう：</p>
-<pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/lib.rs</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>#![feature(alloc_error_handler)]</span><span style="color: #6A9955;"> // ファイルの先頭に書く</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>#[alloc_error_handler]</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">fn</span><span style="color: #DCDCAA;"> alloc_error_handler</span><span>(</span><span style="color: #9CDCFE;">layout</span><span>:</span><span style="color: #4EC9B0;"> alloc</span><span>::</span><span style="color: #4EC9B0;">alloc</span><span>::</span><span style="color: #4EC9B0;">Layout</span><span>) -&gt; ! {</span></span>
-<span class="giallo-l"><span style="color: #DCDCAA;">    panic!</span><span>(</span><span style="color: #CE9178;">&quot;allocation error: {:?}&quot;</span><span>,</span><span style="color: #9CDCFE;"> layout</span><span>)</span></span>
-<span class="giallo-l"><span>}</span></span></code></pre>
-<p><code>alloc_error_handler</code>関数はまだunstableなので、feature gateによってこれを有効化する必要があります。この関数は引数を一つ取ります：割り当てエラーが起こったとき<code>alloc</code>関数に渡されていた<code>Layout</code>のインスタンスです。割り当ての失敗を解決するためにできることはないので、<code>Layout</code>インスタンスを含めたメッセージを表示してただpanicすることにしましょう。</p>
-<p>この関数を追加したことで、コンパイルエラーは修正されたはずです。これで<code>alloc</code>のアロケーション・コレクション型を使えるようになりました。例えば、<a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>を使ってヒープに値を割り当てることができます：</p>
+<p>この静的変数によって、コンパイルエラーは修正されたはずです。これで<code>alloc</code>のアロケーション・コレクション型を使えるようになりました。例えば、<a rel="external" href="https://doc.rust-lang.org/alloc/boxed/struct.Box.html"><code>Box</code></a>を使ってヒープに値を割り当てることができます：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/main.rs</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">extern crate</span><span> alloc;</span></span>
@@ -386,9 +364,9 @@
 <span class="giallo-l"><span>}</span></span>
 <span class="giallo-l"></span></code></pre>
 <p><code>main.rs</code>においても<code>extern crate alloc</code>文を指定する必要があることに注意してください。<code>lib.rs</code>と<code>main.rs</code>は別のクレートとして取り扱われているためです。しかしながら、グローバルアロケータはプロジェクト内のすべてのクレートに適用されるため、<code>#[global_allocator]</code>静的変数をもう一つ作る必要はありません。実際、別のクレートで新しいアロケータを指定するとエラーになります。</p>
-<p>上のコードを実行すると、<code>alloc_error_handler</code>関数が呼ばれるのが分かります：</p>
+<p>上のコードを実行すると、パニックが起こるのが分かります：</p>
 <p><img src="https://os.phil-opp.com/ja/heap-allocation/qemu-dummy-output.png" alt="QEMUが“panicked at `allocation error: Layout { size_: 4, align_: 4 }, src/lib.rs:89:5“と出力している。" /></p>
-<p><code>Box::new</code>関数は暗黙のうちにグローバルアロケータの<code>alloc</code>関数を呼び出すため、エラーハンドラが呼ばれました。私たちのダミーアロケータは常にヌルポインタを返すので、あらゆる割り当てが失敗するのです。これを修正するためには、使用可能なメモリを実際に返すアロケータを作る必要があります。</p>
+<p><code>Box::new</code>関数は暗黙のうちにグローバルアロケータの<code>alloc</code>関数を呼び出すため、パニックが起こりました。私たちのダミーアロケータは常にヌルポインタを返すので、あらゆる割り当てが失敗するのです。これを修正するためには、使用可能なメモリを実際に返すアロケータを作る必要があります。</p>
 <h2 id="creating-a-kernel-heap"><a class="zola-anchor" href="#creating-a-kernel-heap" aria-label="Anchor link for: creating-a-kernel-heap">🔗</a>Creating a Kernel Heap</h2>
 <p>適切なアロケータを作りたいですが、その前にまず、そのアロケータがメモリを割り当てるためのヒープメモリ領域を作らないといけません。このために、ヒープ領域のための仮想メモリ範囲を定義し、その領域を物理フレームに対応付ける必要があります。仮想メモリとページテーブルの概要については、<a href="https://os.phil-opp.com/ja/paging-introduction/">ページング入門</a>の記事を読んでください。</p>
 <p>最初のステップはヒープのための仮想メモリ領域を定義することです。他のメモリ領域に使われていない限り、どんな仮想アドレス範囲でも構いません。ここでは、あとからそこがヒープポインタだと簡単に分かるよう、<code>0x_4444_4444_0000</code>から始まるメモリとしましょう。</p>
@@ -396,7 +374,7 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> HEAP_START:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 0x_4444_4444_0000</span><span>;</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">pub const</span><span> HEAP_SIZE:</span><span style="color: #4EC9B0;"> usize</span><span> =</span><span style="color: #B5CEA8;"> 100</span><span> *</span><span style="color: #B5CEA8;"> 1024</span><span>;</span><span style="color: #6A9955;"> // 100 KiB</span></span></code></pre>
-<p>今のところヒープの大きさは100 KiBとします。将来より多くの領域が必要になったら大きくすれば良いです。</p>
+<p>今のところヒープの大きさは100 KiBとします。将来より多くの領域が必要になったら大きくすれば良いです。</p>
 <p>今このヒープ領域を使おうとすると、仮想メモリ領域が物理メモリにまだ対応付けられていないためページフォルトが発生します。これを解決するために、<a href="https://os.phil-opp.com/ja/paging-implementation/">ページング入門</a>の記事で導入した<a href="https://os.phil-opp.com/ja/paging-implementation/#offsetpagetablewoshi-u"><code>Mapper</code> API</a>を使ってヒープページを対応付ける関数<code>init_heap</code>を作ります：</p>
 <pre class="giallo" style="color: #D4D4D4; background-color: #1E1E1E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #6A9955;">// in src/allocator.rs</span></span>
 <span class="giallo-l"></span>
@@ -413,7 +391,7 @@
 <span class="giallo-l"><span>) -&gt;</span><span style="color: #4EC9B0;"> Result</span><span>&lt;(),</span><span style="color: #4EC9B0;"> MapToError</span><span>&lt;</span><span style="color: #4EC9B0;">Size4KiB</span><span>&gt;&gt; {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">    let</span><span style="color: #9CDCFE;"> page_range</span><span> = {</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_start</span><span> =</span><span style="color: #4EC9B0;"> VirtAddr</span><span>::</span><span style="color: #DCDCAA;">new</span><span>(HEAP_START</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span>);</span></span>
-<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end</span><span> =</span><span style="color: #9CDCFE;"> heap_start</span><span> + HEAP_SIZE -</span><span style="color: #B5CEA8;"> 1</span><span style="color: #4EC9B0;">u64</span><span>;</span></span>
+<span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end</span><span> =</span><span style="color: #9CDCFE;"> heap_start</span><span> + HEAP_SIZE</span><span style="color: #569CD6;"> as</span><span style="color: #4EC9B0;"> u64</span><span> -</span><span style="color: #B5CEA8;"> 1</span><span style="color: #4EC9B0;">u64</span><span>;</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_start_page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">heap_start</span><span>);</span></span>
 <span class="giallo-l"><span style="color: #569CD6;">        let</span><span style="color: #9CDCFE;"> heap_end_page</span><span> =</span><span style="color: #4EC9B0;"> Page</span><span>::</span><span style="color: #DCDCAA;">containing_address</span><span>(</span><span style="color: #9CDCFE;">heap_end</span><span>);</span></span>
 <span class="giallo-l"><span style="color: #4EC9B0;">        Page</span><span>::</span><span style="color: #DCDCAA;">range_inclusive</span><span>(</span><span style="color: #9CDCFE;">heap_start_page</span><span>,</span><span style="color: #9CDCFE;"> heap_end_page</span><span>)</span></span>
@@ -431,23 +409,23 @@
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #4EC9B0;">    Ok</span><span>(())</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>この関数は<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a>と<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a>への可変参照を取ります。これらはどちらも<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a>をジェネリックパラメータとすることで4KiBページのみに制限しています。この関数の戻り値は<a rel="external" href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a>で、成功ヴァリアントが<code>()</code>、失敗ヴァリアントが（<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a>メソッドによって失敗時に返されるエラー型である）<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a>です。この関数における主なエラーの原因は<code>map_to</code>メソッドであるため、このエラー型を流用するのは理にかなっています。</p>
+<p>この関数は<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/mapper/trait.Mapper.html"><code>Mapper</code></a>と<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/trait.FrameAllocator.html"><code>FrameAllocator</code></a>への可変参照を取ります。これらはどちらも<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/page/enum.Size4KiB.html"><code>Size4KiB</code></a>をジェネリックパラメータとすることで4KiBページのみに制限しています。この関数の戻り値は<a rel="external" href="https://doc.rust-lang.org/core/result/enum.Result.html"><code>Result</code></a>で、成功ヴァリアントが<code>()</code>、失敗ヴァリアントが（<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a>メソッドによって失敗時に返されるエラー型である）<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/mapper/enum.MapToError.html"><code>MapToError</code></a>です。この関数における主なエラーの原因は<code>map_to</code>メソッドであるため、このエラー型を流用するのは理にかなっています。</p>
 <p>実装内容は以下の二つに分けられます：</p>
 <ul>
 <li>
-<p><strong>ページ範囲の作成:</strong> 対応付けたいページ領域を作成するために、ポインタ<code>HEAP_START</code>を<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a>型に変換します。つぎに<code>HEAP_SIZE</code>を足すことによってヒープの終端アドレスを計算します。<ruby>端が含まれる境界<rp> (</rp><rt>インクルーシブレンジ</rt><rp>) </rp></ruby>にしたい（ヒープの最後のバイトのアドレスとしたい）ので1を引きます。次に、これらのアドレスを<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.containing_address"><code>containing_address</code></a>関数を使って<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html"><code>Page</code></a>型に変換します。最後に、<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/page/struct.Page.html#method.range_inclusive"><code>Page::range_inclusive</code></a>関数を使って最初と最後のページからページ範囲を作成します。</p>
+<p><strong>ページ範囲の作成:</strong> 対応付けたいページ領域を作成するために、ポインタ<code>HEAP_START</code>を<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/addr/struct.VirtAddr.html"><code>VirtAddr</code></a>型に変換します。つぎに<code>HEAP_SIZE</code>を足すことによってヒープの終端アドレスを計算します。<ruby>端が含まれる境界<rp> (</rp><rt>インクルーシブレンジ</rt><rp>) </rp></ruby>にしたい（ヒープの最後のバイトのアドレスとしたい）ので1を引きます。次に、これらのアドレスを<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/page/struct.Page.html#method.containing_address"><code>containing_address</code></a>関数を使って<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/page/struct.Page.html"><code>Page</code></a>型に変換します。最後に、<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/page/struct.Page.html#method.range_inclusive"><code>Page::range_inclusive</code></a>関数を使って最初と最後のページからページ範囲を作成します。</p>
 </li>
 <li>
 <p><strong>ページの<ruby>対応付け<rp> (</rp><rt>マッピング</rt><rp>) </rp></ruby>:</strong> 二つ目のステップは、今作ったページ範囲のすべてのページに対して対応付けを行うことです。これを行うため、<code>for</code>ループを使ってこのページ範囲に対して繰り返し処理を行います。それぞれのページに対して以下を行います：</p>
 <ul>
 <li>
-<p><a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a>メソッドを使って、ページのマップされるべき物理フレームを割り当てます。このメソッドはもうフレームが残っていないとき<a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a>を返します。このケースに対処するため、<a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a>メソッドを使ってこれを<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a>に変換し、エラーの場合は<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch09-02-recoverable-errors-with-result.html#%E3%82%A8%E3%83%A9%E3%83%BC%E5%A7%94%E8%AD%B2%E3%81%AE%E3%82%B7%E3%83%A7%E3%83%BC%E3%83%88%E3%82%AB%E3%83%83%E3%83%88-%E6%BC%94%E7%AE%97%E5%AD%90"><code>?</code>演算子</a>を使って早期リターンしています。</p>
+<p><a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/trait.FrameAllocator.html#tymethod.allocate_frame"><code>FrameAllocator::allocate_frame</code></a>メソッドを使って、ページのマップされるべき物理フレームを割り当てます。このメソッドはもうフレームが残っていないとき<a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#variant.None"><code>None</code></a>を返します。このケースに対処するため、<a rel="external" href="https://doc.rust-lang.org/core/option/enum.Option.html#method.ok_or"><code>Option::ok_or</code></a>メソッドを使ってこれを<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/mapper/enum.MapToError.html#variant.FrameAllocationFailed"><code>MapToError::FrameAllocationFailed</code></a>に変換し、エラーの場合は<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch09-02-recoverable-errors-with-result.html#%E3%82%A8%E3%83%A9%E3%83%BC%E5%A7%94%E8%AD%B2%E3%81%AE%E3%82%B7%E3%83%A7%E3%83%BC%E3%83%88%E3%82%AB%E3%83%83%E3%83%88-%E6%BC%94%E7%AE%97%E5%AD%90"><code>?</code>演算子</a>を使って早期リターンしています。</p>
 </li>
 <li>
 <p>このページに対し、必要となる<code>PRESENT</code>フラグと<code>WRITABLE</code>フラグをセットします。これらのフラグにより読み書きのアクセスが許可されますが、これはヒープメモリとして理にかなっています。</p>
 </li>
 <li>
-<p><a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a>メソッドを使ってアクティブなページテーブルに対応付けを作成します。このメソッドは失敗しうるので、同様に<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch09-02-recoverable-errors-with-result.html#%E3%82%A8%E3%83%A9%E3%83%BC%E5%A7%94%E8%AD%B2%E3%81%AE%E3%82%B7%E3%83%A7%E3%83%BC%E3%83%88%E3%82%AB%E3%83%83%E3%83%88-%E6%BC%94%E7%AE%97%E5%AD%90"><code>?</code>演算子</a>を使ってエラーを呼び出し元に受け渡します。成功時には、このメソッドは<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a>インスタンスを返しますが、これを使って<a rel="external" href="https://docs.rs/x86_64/0.14.2/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a>メソッドを呼ぶことで<a href="https://os.phil-opp.com/ja/paging-introduction/#toransuresiyon-rutukuasaido-batuhua"><strong>トランスレーション・ルックアサイド・バッファ</strong></a>を更新することができます。</p>
+<p><a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/mapper/trait.Mapper.html#method.map_to"><code>Mapper::map_to</code></a>メソッドを使ってアクティブなページテーブルに対応付けを作成します。このメソッドは失敗しうるので、同様に<a rel="external" href="https://doc.rust-jp.rs/book-ja/ch09-02-recoverable-errors-with-result.html#%E3%82%A8%E3%83%A9%E3%83%BC%E5%A7%94%E8%AD%B2%E3%81%AE%E3%82%B7%E3%83%A7%E3%83%BC%E3%83%88%E3%82%AB%E3%83%83%E3%83%88-%E6%BC%94%E7%AE%97%E5%AD%90"><code>?</code>演算子</a>を使ってエラーを呼び出し元に受け渡します。成功時には、このメソッドは<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/mapper/struct.MapperFlush.html"><code>MapperFlush</code></a>インスタンスを返しますが、これを使って<a rel="external" href="https://docs.rs/x86_64/0.15.5/x86_64/structures/paging/mapper/struct.MapperFlush.html#method.flush"><code>flush</code></a>メソッドを呼ぶことで<a href="https://os.phil-opp.com/ja/paging-introduction/#toransuresiyon-rutukuasaido-batuhua"><strong>トランスレーション・ルックアサイド・バッファ</strong></a>を更新することができます。</p>
 </li>
 </ul>
 </li>
